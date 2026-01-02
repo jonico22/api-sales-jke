@@ -1,0 +1,47 @@
+services:
+  api:
+    build:
+      context: .
+      target: ${BUILD_TARGET:-production}
+    container_name: node_api_app
+    restart: always
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      - NODE_ENV=${NODE_ENV:-production}
+      - DATABASE_URL=${DATABASE_URL} # Se lee directo del .env
+      - REDIS_URL=${REDIS_URL} # Se lee directo del .env
+    env_file:
+      - .env
+    volumes:
+      - .:/app
+      - /app/node_modules
+    # Quitamos el depends_on estricto para que la API pueda iniciar sola 
+    # si la base de datos es externa (RDS).
+
+  db:
+    image: postgres:15-alpine
+    profiles: [ "local-services" ] # 👈 Solo inicia si se pide explícitamente
+    container_name: postgres_db
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}" ]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  redis:
+    image: redis:alpine
+    profiles: [ "local-services" ] # 👈 Solo inicia si se pide explícitamente
+    container_name: redis_cache
+    volumes:
+      - redis_data:/data
+
+volumes:
+  postgres_data:
+  redis_data:
