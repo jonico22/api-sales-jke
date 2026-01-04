@@ -1,45 +1,40 @@
-# 1. BASE: Instalación de dependencias comunes
+# 1. BASE: Instalación de dependencias y librerías de sistema
 FROM node:20-alpine AS base
+RUN apk add --no-cache openssl
 WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma/
-# Instalamos todas las dependencias (incluyendo devDependencies para compilar)
-RUN npm install
-# Generamos el cliente de Prisma aquí para que esté disponible en todas las etapas
-RUN npx prisma generate
 
-# 2. DEVELOPMENT: Etapa para programar (Hot Reload)
+# 2. DEVELOPMENT: Etapa para programar con Hot Reload
 FROM base AS development
-# Copiamos el resto del código
+# Instalamos todas las dependencias (incluye devDependencies)
+RUN npm install
 COPY . .
-# El comando se define en el docker-compose o entrypoint
+# Generación de cliente (con URL ficticia) para que TS no de errores en el build
+RUN DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder" npx prisma generate
+
+EXPOSE 3000
+# El control ahora es 100% de NPM
 CMD ["npm", "run", "dev"]
 
-# 3. BUILD: Compilación de TypeScript a JavaScript
-FROM base AS build
-COPY . .
+# 3. BUILD: Compilación de TS a JS
+FROM development AS build
 RUN npm run build
-# Eliminamos dependencias de desarrollo para que la imagen final sea ligera
 RUN npm prune --production
 
-# 4. PRODUCTION: La etapa que tú compartiste, optimizada
+# 4. PRODUCTION: Imagen ligera
 FROM node:20-alpine AS production
+RUN apk add --no-cache openssl
 WORKDIR /app
-
-# Definimos variables de entorno por defecto
 ENV NODE_ENV=production
 
-# Copiamos solo lo estrictamente necesario de las etapas anteriores
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package*.json ./
 COPY --from=build /app/prisma ./prisma
-COPY --from=build /app/entrypoint.sh ./
-
-# Permisos para el entrypoint
-RUN chmod +x entrypoint.sh
+COPY --from=build /app/src/generated ./src/generated
 
 EXPOSE 3000
-
-# El script decide si hace 'migrate deploy' o 'migrate dev'
-ENTRYPOINT ["./entrypoint.sh"]
+# En producción no solemos migrar automáticamente por seguridad, 
+# pero puedes usar un script de npm si lo prefieres.
+CMD ["npm", "run", "start:prod"]

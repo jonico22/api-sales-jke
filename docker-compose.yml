@@ -16,6 +16,8 @@ services:
     volumes:
       - .:/app
       - /app/node_modules
+      - /app/src/generated/prisma
+      - /app/node_modules/.prisma # Volumen anónimo específico para el cliente de Prisma
     # Quitamos el depends_on estricto para que la API pueda iniciar sola 
     # si la base de datos es externa (RDS).
 
@@ -23,6 +25,8 @@ services:
     image: postgres:15-alpine
     profiles: [ "local-services" ] # 👈 Solo inicia si se pide explícitamente
     container_name: postgres_db
+    ports:
+      - "5432:5432"
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -39,6 +43,8 @@ services:
     image: redis:alpine
     profiles: [ "local-services" ] # 👈 Solo inicia si se pide explícitamente
     container_name: redis_cache
+    ports:
+      - "6379:6379"
     volumes:
       - redis_data:/data
 

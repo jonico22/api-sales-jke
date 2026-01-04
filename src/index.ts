@@ -15,6 +15,8 @@ import { corsOptions } from '@/config/cors';
 import { limiter } from '@/config/rateLimit';
 import routes from './routes';
 
+import prisma from './config/prisma';
+
 const app = express();
 
 // 1. SEGURIDAD INICIAL: Helmet y CORS primero
@@ -65,7 +67,8 @@ app.use(globalErrorHandler);
 const startServer = async () => {
   try {
     await connectRedis();
-    
+    await prisma.$connect();
+    console.log('✅ Conectado a PostgreSQL con Prisma');
     app.listen(envs.PORT, () => {
       logger.info(`🚀 Servidor iniciado en puerto ${envs.PORT}`);
       logger.info(`🌍 Entorno actual: ${envs.NODE_ENV}`);
