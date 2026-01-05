@@ -46,8 +46,8 @@ model BussinessPartner {
   address        String?
   createdAt      DateTime      @default(now())
   updatedAt      DateTime      @updatedAt
-  societyId   String
-  society     Society @relation(fields: [societyId], references: [id])
+  societyId      String
+  society        Society       @relation(fields: [societyId], references: [id])
 
   isActive  Boolean    @default(true)
   isDeleted Boolean    @default(false)
@@ -82,8 +82,8 @@ model File {
   size       Int
   key        String   @unique
   uploadedAt DateTime @default(now())
-  societyId   String
-  society     Society @relation(fields: [societyId], references: [id])
+  societyId  String
+  society    Society  @relation(fields: [societyId], references: [id])
 
   // Relaciones
   uploadedById String?
@@ -146,6 +146,10 @@ model Society {
   Purchase                     Purchase[]
   Order                        Order[]
   OutgoingConsignmentAgreement OutgoingConsignmentAgreement[]
+  bussinessPartners            BussinessPartner[]
+  files                        File[]
+  categories                   Category[]
+  orderPayments                OrderPayment[]
 }
 
 model Product {
@@ -183,12 +187,12 @@ model Product {
 }
 
 model Category {
-  id       String    @id @default(uuid())
-  name     String
-  code     String    @unique
-  products Product[] // Relación uno a muchos con productos
-  societyId   String
-  society     Society @relation(fields: [societyId], references: [id])
+  id        String    @id @default(uuid())
+  name      String
+  code      String    @unique
+  products  Product[] // Relación uno a muchos con productos
+  societyId String
+  society   Society   @relation(fields: [societyId], references: [id])
 
   isActive  Boolean  @default(true)
   isDeleted Boolean  @default(false)
@@ -384,12 +388,11 @@ model OrderPayment {
   notes         String? // Observaciones del pago
   isConfirmed   Boolean            @default(false) // Para flujos con verificación manual
   confirmedAt   DateTime? // Fecha de confirmación (si aplica)
-  societyId   String
- 
+  societyId     String
 
   // Relaciones
-  order Order? @relation(fields: [orderId], references: [id])
-  society     Society @relation(fields: [societyId], references: [id])
+  order   Order?  @relation(fields: [orderId], references: [id])
+  society Society @relation(fields: [societyId], references: [id])
 
   // Auditoría
   createdAt DateTime @default(now())
