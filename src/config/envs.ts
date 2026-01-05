@@ -8,7 +8,7 @@ export const envs = {
   REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
   CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
   // Agrega aquí una validación simple
-  isProd: process.env.NODE_ENV === 'production',
+  isProd: process.env.NODE_ENV ,
 };
 
 // Validación: Si no hay DATABASE_URL, lanzamos error antes de que la app falle después

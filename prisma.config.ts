@@ -13,4 +13,6 @@ export default defineConfig({
   datasource: {
     url: env("DATABASE_URL"),
   },
+  // @ts-ignore - Prisma CLI requiere esta propiedad pero los tipos aún no la incluyen en v6
+  seed: 'npx tsx prisma/seed.ts',
 });
