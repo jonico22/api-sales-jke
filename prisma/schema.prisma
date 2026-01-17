@@ -142,6 +142,8 @@ model Society {
   Purchase                     Purchase[]
   Order                        Order[]
   OutgoingConsignmentAgreement OutgoingConsignmentAgreement[]
+
+  categories Category[]
 }
 
 model Product {
@@ -179,15 +181,16 @@ model Product {
 }
 
 model Category {
-  id       String    @id @default(uuid())
-  name     String
-  code     String    @unique
-  products Product[] // Relación uno a muchos con productos
-
-  isActive  Boolean  @default(true)
-  isDeleted Boolean  @default(false)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id        String    @id @default(uuid())
+  name      String
+  code      String    @unique
+  products  Product[] // Relación uno a muchos con productos
+  societyId String
+  society   Society   @relation(fields: [societyId], references: [id])
+  isActive  Boolean   @default(true)
+  isDeleted Boolean   @default(false)
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
   createdBy String?
   updatedBy String?
 }

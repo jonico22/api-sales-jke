@@ -79,5 +79,5 @@ const startServer = async () => {
     process.exit(1);
   }
 };
-
+console.log('Test hot-reload test')
 startServer();
