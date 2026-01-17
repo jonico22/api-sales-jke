@@ -8,6 +8,7 @@ export const CategorySchema = registry.register(
     id: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
     name: z.string().min(1).openapi({ example: 'Electrónicos', description: 'Nombre de la categoría' }),
     code: z.string().min(1).openapi({ example: 'CAT-001', description: 'Código único interno' }),
+    societyId: z.string().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
     isActive: z.boolean().default(true).openapi({ example: true }),
     isDeleted: z.boolean().default(false).openapi({ example: false }),
     createdBy: z.string().optional().openapi({ example: 'admin-uuid' }),
