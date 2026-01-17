@@ -1,11 +1,10 @@
-import 'newrelic';
+import * as newrelic from 'newrelic';
 import express from 'express';
 import helmet from 'helmet';
 import hpp from 'hpp';
 import cors from 'cors';
 
-import { apiReference } from '@scalar/express-api-reference';
-import { getSafeSwaggerDoc } from '@/config/swagger';
+//import { getSafeSwaggerDoc } from '@/config/swagger';
 
 import { envs } from '@/config/envs';
 import { connectRedis } from '@/config/redis';
@@ -37,14 +36,14 @@ app.use(hpp({
   whitelist: ['category']
 }));
 
-app.use(
+/*app.use(
   '/docs',
  apiReference({
     spec: {
       content: getSafeSwaggerDoc(),
     },
   })
-);
+);*/
 
 // 5. RUTAS: Una sola vez y después de los filtros de seguridad
 app.use('/api', routes);
@@ -79,5 +78,5 @@ const startServer = async () => {
     process.exit(1);
   }
 };
-console.log('Test hot-reload test')
+
 startServer();

@@ -11,15 +11,20 @@ services:
       # Variables generales (desarrollo y producción)
       - NODE_ENV=${NODE_ENV:-production}
       - DATABASE_URL
+      - LOG_LEVEL=${LOG_LEVEL:-info}
 
       # New Relic (opcional en desarrollo)
-      - NEW_RELIC_APP_NAME
-      - NEW_RELIC_LICENSE_KEY
-      - NEW_RELIC_ENABLED=${NEW_RELIC_ENABLED:-false}
-      - NEW_RELIC_LOG_LEVEL
+      - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME}
+      - NEW_RELIC_LICENSE_KEY=${NEW_RELIC_LICENSE_KEY}
+      - NEW_RELIC_ENABLED=${NEW_RELIC_ENABLED:-true}
+      - NEW_RELIC_LOG_LEVEL=${NEW_RELIC_LOG_LEVEL}
       - NEW_RELIC_NO_CONFIG_FILE=true
       - NEW_RELIC_ATTRIBUTES_INCLUDE="utils.prisma.*"
-
+      - NEW_RELIC_APPLICATION_LOGGING_ENABLED=true
+      - NEW_RELIC_APPLICATION_LOGGING_FORWARDING_ENABLED=true
+      - NEW_RELIC_APPLICATION_LOGGING_METRICS_ENABLED=true
+      - NEW_RELIC_PRISMA_ENABLED=true
+      - NEW_RELIC_TRANSACTION_TRACER_RECORD_SQL="obfuscated"
       # Infisical (solo producción - en desarrollo se usa 'infisical run' desde el host)
       - INFISICAL_MACHINE_IDENTITY_CLIENT_ID=${INFISICAL_CLIENT_ID}
       - INFISICAL_MACHINE_IDENTITY_CLIENT_SECRET=${INFISICAL_CLIENT_SECRET}

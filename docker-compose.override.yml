@@ -10,9 +10,9 @@ services:
       - INFISICAL_ENV=
       - INFISICAL_PROJECT_PATH=
 
-      # New Relic deshabilitado en desarrollo
-      - NEW_RELIC_ENABLED=false
-
+      - NEW_RELIC_ENABLED=true
+      - NEW_RELIC_PRISMA_ENABLED=true
+      - NEW_RELIC_DATASTORE_REPORTING_ENABLED=true
     volumes:
       - .:/app # Solo en desarrollo
       - /app/node_modules

@@ -11,16 +11,16 @@ export const CategoryService = {
   },
 
   create: async (data: unknown) => {
-    const parsed = createCategorySchema.parse(data);
-    return prisma.category.create({ data: parsed });
+    const parsed = createCategorySchema.parse({ body: data });
+    return prisma.category.create({ data: parsed.body });
   },
 
   update: async (id: string, data: unknown) => {
-    const parsed = updateCategorySchema.parse(data);
+    const parsed = updateCategorySchema.parse({ body: data });
     return prisma.category.update({
       where: { id },
       data: {
-        ...parsed,
+        ...parsed.body,
         updatedAt: new Date(),
       },
     });
