@@ -1,0 +1,15 @@
+{
+    "watch": [
+        "src",
+        "prisma",
+        ".env"
+    ],
+    "ext": "ts,json,prisma",
+    "ignore": [
+        "src/**/*.test.ts",
+        "node_modules"
+    ],
+    "exec": "tsx src/index.ts",
+    "legacyWatch": true,
+    "interval": 1000
+}

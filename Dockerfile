@@ -5,6 +5,12 @@ WORKDIR /app
 COPY package*.json ./
 COPY prisma ./prisma/
 
+# Instalamos dependencias mínimas para poder descargar e instalar Infisical
+# En Alpine necesitamos bash y curl para el script de instalación
+RUN apk add --no-cache bash curl && \
+    curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.alpine.sh' | bash && \
+    apk add --no-cache infisical
+
 # 2. DEVELOPMENT: Etapa para programar con Hot Reload
 FROM base AS development
 # Instalamos todas las dependencias (incluye devDependencies)
@@ -37,4 +43,4 @@ COPY --from=build /app/src/generated ./src/generated
 EXPOSE 3000
 # En producción no solemos migrar automáticamente por seguridad, 
 # pero puedes usar un script de npm si lo prefieres.
-CMD ["npm", "run", "start:prod"]
+CMD ["infisical", "run", "--", "node", "dist/index.js"]
