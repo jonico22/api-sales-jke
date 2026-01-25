@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "build": "npx prisma generate && tsc && tsc-alias",
+    "build": "node --max-old-space-size=2048 ./node_modules/.bin/tsc && tsc-alias",
     "start": "node dist/index.js",
     "start:prod": "npx prisma migrate deploy && npm run prisma:seed && node dist/index.js",
     "prisma:generate": "npx prisma generate",
@@ -12,6 +12,8 @@
     "prisma:studio": "npx prisma studio",
     "prisma:seed": "npx tsx prisma/seed.ts",
     "dev": "npm run prisma:generate && npm run prisma:migrate && npm run prisma:seed && npx nodemon --exec  'node --import tsx --require newrelic' src/index.ts",
+    "migrate:deploy": "npx prisma db push && npm run prisma:seed",
+    "start:prod-app": "npm run migrate:deploy && node -r tsconfig-paths/register dist/index.js",
     "dev:native": "node --env-file=.env -r tsx src/index.ts",
     "docker:prod": "docker-compose -f docker-compose.yml up --build api",
     "docker:dev": "cross-env NODE_ENV=development BUILD_TARGET=development infisical run --env=dev --path=/sales -- docker-compose --profile local-services up --build",
