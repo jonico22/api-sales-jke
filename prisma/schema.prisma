@@ -148,6 +148,12 @@ model Society {
   OutgoingConsignmentAgreement OutgoingConsignmentAgreement[]
 
   categories Category[]
+
+  files File[]
+
+  orderPayments OrderPayment[]
+
+  bussinessPartners BussinessPartner[]
 }
 
 model Product {
