@@ -7,20 +7,23 @@ const whiteList = envs.CORS_ORIGIN.split(',');
 
 export const corsOptions: CorsOptions = {
   origin: (origin, callback) => {
-    // Si estamos en desarrollo y no hay origen (como Postman o curl), permitir
-    if (!envs.isProd && !origin) {
+    // 1. Si no hay origen (Postman, CURL, Apps Móviles, tareas programadas)
+    // Lo permitimos siempre, o podrías limitarlo solo si quieres pruebas en prod
+    if (!origin) {
       return callback(null, true);
     }
 
-    // Si el origen está en la lista blanca
-    if (origin && (whiteList.includes(origin) || whiteList.includes('*'))) {
-      callback(null, true);
-    } else {
-      callback(new AppError('No permitido por CORS', 403));
-    }
+    // 2. Si el origen existe (petición desde un Navegador)
+    // Verificamos si está en la lista blanca o si permitimos todo con '*'
+    if (whiteList.includes(origin) || whiteList.includes('*')) {
+      return callback(null, true);
+    } 
+
+    // 3. Si no coincide con nada
+    callback(new AppError(`Dominio ${origin} no permitido por CORS`, 403));
   },
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
-  credentials: true, // Permitir envío de cookies/tokens
-  optionsSuccessStatus: 200 // Para navegadores viejos o smartTVs
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept'], // Agregué 'Accept'
+  credentials: true,
+  optionsSuccessStatus: 200
 };

@@ -2,6 +2,13 @@
 FROM node:20-alpine AS base
 RUN apk add --no-cache openssl
 WORKDIR /app
+
+ARG INFISICAL_CLIENT_ID
+ARG INFISICAL_CLIENT_SECRET
+ARG INFISICAL_ENV
+ARG INFISICAL_PROJECT_PATH
+ARG INFISICAL_PROJECT_ID
+
 COPY package*.json ./
 COPY prisma ./prisma/
 
@@ -43,4 +50,6 @@ COPY --from=build /app/src/generated ./src/generated
 EXPOSE 3000
 # En producción no solemos migrar automáticamente por seguridad, 
 # pero puedes usar un script de npm si lo prefieres.
-CMD ["infisical", "run", "--", "node", "dist/index.js"]
+# Tu comando CMD con el login (o el que te funcionó)
+CMD export INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id=$INFISICAL_CLIENT_ID --client-secret=$INFISICAL_CLIENT_SECRET --domain=${INFISICAL_API_URL:-https://app.infisical.com} --silent --plain) && \
+    infisical run --token=$INFISICAL_TOKEN --projectId=$INFISICAL_PROJECT_ID --env=$INFISICAL_ENV --path=$INFISICAL_PROJECT_PATH -- npm run start:prod-app
