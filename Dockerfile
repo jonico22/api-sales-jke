@@ -5,6 +5,12 @@ RUN curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.al
     apk add --no-cache infisical
 WORKDIR /app
 
+ARG INFISICAL_CLIENT_ID
+ARG INFISICAL_CLIENT_SECRET
+ARG INFISICAL_ENV
+ARG INFISICAL_PROJECT_PATH
+ARG INFISICAL_PROJECT_ID
+
 # 2. DEVELOPMENT: Aquí es donde fallaba
 FROM base AS development
 # Copiamos todo el proyecto primero para evitar errores de scripts (postinstall)
