@@ -4,17 +4,14 @@ import { PaymentMethodOrder } from '@prisma/client';
 
 export const orderPaymentService = {
   create: async (data: any) => {
-    const { orderId, paymentMethod, ...rest } = createOrderPaymentSchema.parse(data);
-    const orderData = orderId ? { order: { connect: { id: orderId } } } : {};
-
-    // Ensure paymentMethod is of enum type
-    const parsedPaymentMethod: PaymentMethodOrder = paymentMethod as PaymentMethodOrder;
+    const { orderId, societyId, paymentMethod, ...rest } = createOrderPaymentSchema.parse(data);
 
     return prisma.orderPayment.create({
       data: {
         ...rest,
-        ...orderData,
-        paymentMethod: parsedPaymentMethod,
+        paymentMethod: paymentMethod as PaymentMethodOrder,
+        society: { connect: { id: societyId } },
+        ...(orderId && { order: { connect: { id: orderId } } }),
       },
     });
   },
@@ -43,19 +40,15 @@ export const orderPaymentService = {
   },
 
   update: async (id: string, data: any) => {
-    const { orderId, paymentMethod, ...rest } = updateOrderPaymentSchema.parse(data);
-    const orderData = orderId ? { order: { connect: { id: orderId } } } : {};
-
-    // Ensure paymentMethod is of enum type
-    const parsedPaymentMethod: PaymentMethodOrder | undefined = paymentMethod ? (paymentMethod as PaymentMethodOrder) : undefined;
-
+    const { orderId, societyId, paymentMethod, ...rest } = updateOrderPaymentSchema.parse(data);
 
     return prisma.orderPayment.update({
       where: { id },
       data: {
         ...rest,
-        ...orderData,
-        ...(parsedPaymentMethod && { paymentMethod: parsedPaymentMethod }), // Only update if provided
+        ...(paymentMethod && { paymentMethod: paymentMethod as PaymentMethodOrder }),
+        ...(societyId && { society: { connect: { id: societyId } } }),
+        ...(orderId && { order: { connect: { id: orderId } } }),
       },
     });
   },
