@@ -1,6 +1,6 @@
 # 1. BASE: Herramientas del sistema e Infisical (Común para todo)
 FROM node:20-alpine AS base
-RUN apk add --no-cache openssl bash curl python3 make g++ build-base
+RUN apk add --no-cache openssl bash curl python3 make g++ build-base libc6-compat
 RUN curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.alpine.sh' | bash && \
     apk add --no-cache infisical
 WORKDIR /app
@@ -30,12 +30,13 @@ RUN DATABASE_URL="postgresql://placeholder:5432/db" npx prisma generate
 EXPOSE 3000
 CMD ["npm", "run", "dev"]
 
-
-# 1. FORZAR la generación de Prisma antes de compilar
-RUN npx prisma generate
-
 # 3. BUILD: Compilación de la app
 FROM development AS build
+
+# --- PASO DE DIAGNÓSTICO ---
+RUN ls -R prisma/ && echo "Ubicación actual: $(pwd)"
+# Prisma a veces se queja si no ve una variable DATABASE_URL aunque sea falsa
+RUN DATABASE_URL="postgresql://user:pass@localhost:5432/db" npx prisma generate
 RUN npm run build
 # Limpiamos dependencias de desarrollo para la imagen final
 RUN npm prune --production
