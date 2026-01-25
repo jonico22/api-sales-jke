@@ -30,6 +30,10 @@ RUN DATABASE_URL="postgresql://placeholder:5432/db" npx prisma generate
 EXPOSE 3000
 CMD ["npm", "run", "dev"]
 
+
+# 1. FORZAR la generación de Prisma antes de compilar
+RUN npx prisma generate
+
 # 3. BUILD: Compilación de la app
 FROM development AS build
 RUN npm run build
