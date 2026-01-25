@@ -11,6 +11,13 @@ ARG INFISICAL_ENV
 ARG INFISICAL_PROJECT_PATH
 ARG INFISICAL_PROJECT_ID
 
+# ... (dentro de tu etapa de build)
+ARG SERVICE_URL_API
+ARG SERVICE_FQDN_API
+# Esto hace que el valor esté disponible para el código Node durante el build
+ENV SERVICE_URL_API=$SERVICE_URL_API
+ENV SERVICE_FQDN_API=$SERVICE_FQDN_API
+
 # 2. DEVELOPMENT: Aquí es donde fallaba
 FROM base AS development
 # Copiamos todo el proyecto primero para evitar errores de scripts (postinstall)
