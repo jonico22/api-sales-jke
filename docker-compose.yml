@@ -34,9 +34,10 @@ services:
       - NEW_RELIC_PRISMA_ENABLED=true
       - NEW_RELIC_TRANSACTION_TRACER_RECORD_SQL="obfuscated"
       # Infisical (solo producción - en desarrollo se usa 'infisical run' desde el host)
+      - INFISICAL_CLIENT_ID=${INFISICAL_CLIENT_ID}
+      - INFISICAL_CLIENT_SECRET=${INFISICAL_CLIENT_SECRET}
       - INFISICAL_ENV=${INFISICAL_ENV}
       - INFISICAL_PROJECT_PATH=${INFISICAL_PROJECT_PATH:-/api}
-      - NODE_ENV=${NODE_ENV:-production}
       - INFISICAL_PROJECT_ID=${INFISICAL_PROJECT_ID}
       - INFISICAL_API_URL=${INFISICAL_API_URL:-https://app.infisical.com}
     # Los volúmenes para desarrollo se definen en docker-compose.override.yml
