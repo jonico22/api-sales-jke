@@ -3,6 +3,13 @@ services:
     build:
       context: .
       target: ${BUILD_TARGET:-production}
+      args:
+        - INFISICAL_CLIENT_ID=${INFISICAL_CLIENT_ID}
+        - INFISICAL_CLIENT_SECRET=${INFISICAL_CLIENT_SECRET}
+        - INFISICAL_ENV=${INFISICAL_ENV}
+        - INFISICAL_PROJECT_PATH=${INFISICAL_PROJECT_PATH}
+        - INFISICAL_PROJECT_ID=${INFISICAL_PROJECT_ID}
+        - NODE_ENV=${NODE_ENV:-production}
     container_name: node_api_app
     restart: always
     ports:
@@ -26,12 +33,15 @@ services:
       - NEW_RELIC_PRISMA_ENABLED=true
       - NEW_RELIC_TRANSACTION_TRACER_RECORD_SQL="obfuscated"
       # Infisical (solo producción - en desarrollo se usa 'infisical run' desde el host)
-      - INFISICAL_MACHINE_IDENTITY_CLIENT_ID=${INFISICAL_CLIENT_ID}
-      - INFISICAL_MACHINE_IDENTITY_CLIENT_SECRET=${INFISICAL_CLIENT_SECRET}
       - INFISICAL_ENV=${INFISICAL_ENV}
       - INFISICAL_PROJECT_PATH=${INFISICAL_PROJECT_PATH:-/api}
+      - NODE_ENV=${NODE_ENV:-production}
+      - INFISICAL_PROJECT_ID=${INFISICAL_PROJECT_ID}
+      - INFISICAL_API_URL=${INFISICAL_API_URL:-https://app.infisical.com}
     # Los volúmenes para desarrollo se definen en docker-compose.override.yml
     # En producción, el código viene empaquetado en la imagen Docker
+    networks:
+      - coolify
 
   db:
     image: postgres:15-alpine
@@ -50,6 +60,8 @@ services:
       retries: 5
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - coolify
 
   redis:
     image: redis:alpine
@@ -59,7 +71,14 @@ services:
       - "6379:6379"
     volumes:
       - redis_data:/data
+    networks:
+      - coolify
 
 volumes:
   postgres_data:
   redis_data:
+
+    # 2. ESTO DEFINE LA RED (Fuera de services)
+networks:
+  coolify:
+    external: true
