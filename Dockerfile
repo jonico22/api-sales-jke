@@ -5,35 +5,36 @@ RUN curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.al
     apk add --no-cache infisical
 WORKDIR /app
 
-# 2. DEVELOPMENT
+# 2. DEVELOPMENT (Aquí arreglamos el problema)
 FROM base AS development
+# --- CORRECCIÓN CRÍTICA ---
+# Forzamos entorno de desarrollo para que npm install instale TypeScript
+ENV NODE_ENV=development 
+# --------------------------
 COPY package*.json ./
 COPY prisma ./prisma/
 RUN npm install
 COPY . .
-# Placeholder para generar cliente en dev
+# Generamos Prisma
 RUN DATABASE_URL="postgresql://placeholder:5432/db" npx prisma generate
 
-# 3. BUILD (Aquí está la magia)
+# 3. BUILD
 FROM development AS build
 ARG SERVICE_URL_API
 ARG SERVICE_FQDN_API
+# Aquí volvemos a producción para el build
 ENV NODE_ENV=production
-# Aumentamos memoria al máximo
+# Aumentamos RAM
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
-# ---------------------------------------------------------
-# DIAGNÓSTICO DE ERRORES:
-# Ejecutamos tsc directamente. Si falla, imprimirá la lista de errores.
-# El 'exit 1' asegura que el deploy se detenga aquí si hay fallos.
-# ---------------------------------------------------------
+# Ejecutamos el diagnóstico. Ahora SÍ encontrará el binario de TSC.
 RUN ./node_modules/.bin/tsc --project tsconfig.json --noEmit > error_log.txt 2>&1 || \
     (echo "🔥 INICIO DEL REPORTE DE ERRORES 🔥" && \
     cat error_log.txt && \
     echo "🔥 FIN DEL REPORTE DE ERRORES 🔥" && \
     exit 1)
 
-# Si pasamos la línea anterior, es seguro compilar
+# Si pasa el diagnóstico, compilamos de verdad
 RUN npm run build
 RUN npm prune --production
 

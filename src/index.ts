@@ -1,4 +1,4 @@
-//import 'newrelic';
+import 'newrelic';
 import express from 'express';
 import cors from 'cors';
 
@@ -9,7 +9,7 @@ import { globalErrorHandler } from '@/utils/errorHandler';
 import { AppError } from '@/utils/AppError';
 import logger from '@/config/logger';
 import { corsOptions } from '@/config/cors';
-//import routes from './routes';
+import routes from './routes';
 
 import prisma from './config/prisma';
 
@@ -27,7 +27,7 @@ app.use(express.json());
   })
 );*/
 
-//app.use('/api', routes);
+app.use('/api', routes);
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'up', 
