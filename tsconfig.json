@@ -3,7 +3,7 @@
     "target": "es2020",
     "module": "commonjs",
     "outDir": "./dist",
-    "rootDir": ".", // 👈 CAMBIO CLAVE: Permitimos leer archivos de la raíz
+    "rootDir": ".",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -17,7 +17,7 @@
   },
   "include": [
     "src/**/*"
-  ], // Solo incluimos src para compilar
+  ],
   "exclude": [
     "node_modules",
     "dist",
