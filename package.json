@@ -13,7 +13,7 @@
     "prisma:seed": "npx tsx prisma/seed.ts",
     "migrate:deploy": "npx prisma db push && npm run prisma:seed",
     "dev": "npm run prisma:generate && npm run prisma:migrate && npm run prisma:seed && npx nodemon --exec  'node --import tsx --require newrelic' src/index.ts",
-    "start:prod-app": "npm run migrate:deploy && node -r tsconfig-paths/register -r newrelic dist/src/index.js",
+    "start:prod-app": "npm run migrate:deploy && node -r tsconfig-paths/register -r dist/src/index.js",
     "dev:native": "node --env-file=.env -r tsx src/index.ts",
     "docker:prod": "docker-compose -f docker-compose.yml up --build api",
     "docker:dev": "cross-env NODE_ENV=development BUILD_TARGET=development infisical run --env=dev --path=/sales -- docker-compose --profile local-services up --build",
