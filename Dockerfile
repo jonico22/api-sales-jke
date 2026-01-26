@@ -27,7 +27,11 @@ ENV NODE_OPTIONS="--max-old-space-size=4096"
 # Ejecutamos tsc directamente. Si falla, imprimirá la lista de errores.
 # El 'exit 1' asegura que el deploy se detenga aquí si hay fallos.
 # ---------------------------------------------------------
-RUN ./node_modules/.bin/tsc --project tsconfig.json --noEmit || exit 1
+RUN ./node_modules/.bin/tsc --project tsconfig.json --noEmit > error_log.txt 2>&1 || \
+    (echo "🔥 INICIO DEL REPORTE DE ERRORES 🔥" && \
+    cat error_log.txt && \
+    echo "🔥 FIN DEL REPORTE DE ERRORES 🔥" && \
+    exit 1)
 
 # Si pasamos la línea anterior, es seguro compilar
 RUN npm run build
