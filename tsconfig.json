@@ -3,7 +3,7 @@
     "target": "es2020",
     "module": "commonjs",
     "outDir": "./dist",
-    "rootDir": "./", // 👈 CAMBIO: Permitimos que el compilador vea la raíz
+    "rootDir": "./src", // 👈 Volvemos a poner src para que el build sea limpio
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -16,11 +16,11 @@
     }
   },
   "include": [
-    "src/**/*",
-    "prisma/**/*" // 👈 CAMBIO: Incluimos la carpeta prisma por si hay seeds
-  ],
+    "src/**/*"
+  ], // 👈 Solo compilamos lo que está en src
   "exclude": [
     "node_modules",
-    "dist"
-  ]
+    "dist",
+    "prisma"
+  ] // 👈 Excluimos prisma del build de la API
 }
