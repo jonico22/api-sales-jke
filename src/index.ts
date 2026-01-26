@@ -1,4 +1,4 @@
-import 'newrelic';
+//import 'newrelic';
 import express from 'express';
 import cors from 'cors';
 
