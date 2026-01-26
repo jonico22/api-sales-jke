@@ -27,7 +27,7 @@ app.use(express.json());
   })
 );*/
 
-app.use('/api', routes);
+//app.use('/api', routes);
 app.get('/health', (req, res) => {
   res.json({ 
     status: 'up', 
