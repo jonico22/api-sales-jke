@@ -3,7 +3,7 @@
     "target": "es2020",
     "module": "commonjs",
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": "./", // 👈 CAMBIO: Permitimos que el compilador vea la raíz
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
@@ -19,9 +19,11 @@
     }
   },
   "include": [
-    "src/**/*"
+    "src/**/*",
+    "prisma/**/*" // 👈 CAMBIO: Incluimos la carpeta prisma por si hay seeds
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "dist"
   ]
 }
