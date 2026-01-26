@@ -3,7 +3,7 @@
     "target": "es2020",
     "module": "commonjs",
     "outDir": "./dist",
-    "rootDir": "./src", // 👈 Volvemos a poner src para que el build sea limpio
+    "rootDir": "src", // 👈 Volvemos a poner src para que el build sea limpio
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
