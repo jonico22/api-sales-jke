@@ -23,9 +23,12 @@ ENV SERVICE_URL_API=$SERVICE_URL_API
 ENV SERVICE_FQDN_API=$SERVICE_FQDN_API
 ENV NODE_ENV=production
 
-# Ejecutamos el build. Al estar en node_modules, tsc encontrará los tipos de Prisma automáticamente
-RUN npm run build
-# IMPORTANTE: No hacemos prune todavía para no perder el generador si el seed lo necesita
+# 1. Regeneramos Prisma con el placeholder para que TSC tenga los tipos listos
+RUN DATABASE_URL="postgresql://placeholder:5432/db" npx prisma generate
+
+# 2. Ejecutamos el build. 
+# Si falla, usamos "||" para obligar a mostrar los errores de TS en el log de Coolify
+RUN npm run build || (npx tsc --project tsconfig.json --pretty false && exit 1)
 RUN npm prune --production
 
 # 4. PRODUCTION
