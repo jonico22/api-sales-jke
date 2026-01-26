@@ -1,4 +1,4 @@
-import * as newrelic from 'newrelic';
+//import * as newrelic from 'newrelic';
 import { PrismaClient } from '@prisma/client';
 
 export const prisma = new PrismaClient({
