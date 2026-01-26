@@ -6,7 +6,6 @@
 
 generator client {
   provider      = "prisma-client-js"
-  output        = "./src/generated"
   // Añadimos compatibilidad para tu Docker (Alpine y Debian Slim)
   binaryTargets = ["native", "linux-musl-openssl-3.0.x", "debian-openssl-3.0.x"]
 }
