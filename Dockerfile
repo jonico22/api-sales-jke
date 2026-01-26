@@ -22,14 +22,17 @@ ARG SERVICE_URL_API
 ARG SERVICE_FQDN_API
 ENV NODE_ENV=production
 
+# 1. Regeneramos Prisma (usando placeholder para evitar error de conexión)
+RUN DATABASE_URL="postgresql://placeholder:5432/db" npx prisma generate
 
-# Esto ejecuta SOLO el chequeo de tipos. Si falla, IMPRIME los errores.
-RUN echo "⬇️ INICIO DE ERRORES DE TYPESCRIPT ⬇️" && \
-    ./node_modules/.bin/tsc --project tsconfig.json --noEmit || true && \
-    echo "⬆️ FIN DE ERRORES DE TYPESCRIPT ⬆️"
+# 2. Compilamos. 
+# Usamos "tsc" directo para ver logs, y luego "tsc-alias" para arreglar los imports @/
+# Si falla, el "||" nos mostrará el error en pantalla.
+RUN ./node_modules/.bin/tsc --project tsconfig.json || \
+    (echo "❌ ERROR DE TYPESCRIPT DETECTADO:" && ./node_modules/.bin/tsc --project tsconfig.json --noEmit && exit 1)
 
-# Compilamos (Ahora que tsconfig está corregido, esto PASARÁ)
-RUN npm run build
+# 3. Ejecutamos los alias (reemplaza @/ por rutas relativas)
+RUN npx tsc-alias -p tsconfig.json
 RUN npm prune --production
 
 # 4. PRODUCTION
