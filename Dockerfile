@@ -48,7 +48,11 @@ COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package*.json ./
 COPY --from=build /app/prisma ./prisma
 
-EXPOSE 3000
+# 👇 AÑADE ESTA LÍNEA (Vital para que funcionen los alias @/)
+COPY --from=build /app/tsconfig.json ./tsconfig.json
+EXPOSE 4500
+
+RUN echo "📂 CONTENIDO DE DIST:" && ls -R dist
 
 CMD export INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id=$INFISICAL_CLIENT_ID --client-secret=$INFISICAL_CLIENT_SECRET --domain=${INFISICAL_API_URL:-https://app.infisical.com} --silent --plain) && \
     infisical run --token=$INFISICAL_TOKEN --projectId=$INFISICAL_PROJECT_ID --env=$INFISICAL_ENV --path=$INFISICAL_PROJECT_PATH -- npm run start:prod-app
