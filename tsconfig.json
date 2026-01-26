@@ -16,11 +16,15 @@
     }
   },
   "include": [
-    "src/**/*"
+    "src/index.ts",
+    "src/config/**/*",
+    "src/utils/**/*"
   ],
   "exclude": [
     "node_modules",
     "dist",
-    "prisma"
+    "prisma",
+    "src/module",
+    "src/routes"
   ]
 }
