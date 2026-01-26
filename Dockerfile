@@ -22,6 +22,12 @@ ARG SERVICE_URL_API
 ARG SERVICE_FQDN_API
 ENV NODE_ENV=production
 
+
+# Esto ejecuta SOLO el chequeo de tipos. Si falla, IMPRIME los errores.
+RUN echo "⬇️ INICIO DE ERRORES DE TYPESCRIPT ⬇️" && \
+    ./node_modules/.bin/tsc --project tsconfig.json --noEmit || true && \
+    echo "⬆️ FIN DE ERRORES DE TYPESCRIPT ⬆️"
+
 # Compilamos (Ahora que tsconfig está corregido, esto PASARÁ)
 RUN npm run build
 RUN npm prune --production
