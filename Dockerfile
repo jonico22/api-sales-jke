@@ -37,6 +37,7 @@ FROM development AS build
 RUN ls -R prisma/ && echo "Ubicación actual: $(pwd)"
 # Prisma a veces se queja si no ve una variable DATABASE_URL aunque sea falsa
 RUN DATABASE_URL="postgresql://user:pass@localhost:5432/db" npx prisma generate
+RUN npx tsc --project tsconfig.json --pretty false
 RUN npm run build
 # Limpiamos dependencias de desarrollo para la imagen final
 RUN npm prune --production
