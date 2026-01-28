@@ -50,7 +50,7 @@ services:
     profiles: [ "local-services" ] # 👈 Solo inicia si se pide explícitamente
     container_name: postgres_db
     ports:
-      - "5432:5432"
+      - "5432:5435"
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
@@ -70,7 +70,7 @@ services:
     profiles: [ "local-services" ] # 👈 Solo inicia si se pide explícitamente
     container_name: redis_cache
     ports:
-      - "6379:6379"
+      - "6377:6380"
     volumes:
       - redis_data:/data
     networks:
