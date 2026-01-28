@@ -17,6 +17,8 @@ RUN npm install
 COPY . .
 # Generamos Prisma
 RUN DATABASE_URL="postgresql://placeholder:5432/db" npx prisma generate
+EXPOSE 3000
+CMD ["npm", "run", "dev"]
 
 # 3. BUILD
 FROM development AS build

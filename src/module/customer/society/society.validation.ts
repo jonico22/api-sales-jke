@@ -10,6 +10,7 @@ export const createSocietySchema = z.object({
 export const updateSocietySchema = z.object({
   name: z.string().min(1).optional(),
   code: z.string().min(1).optional(),
+  subscriptionId: z.string().min(1).optional(),
   updatedBy: z.string().uuid().optional(),
 });
 

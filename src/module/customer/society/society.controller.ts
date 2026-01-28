@@ -21,7 +21,7 @@ export const findOne = async (req: Request, res: Response) => {
 
   const society = await service.getSocietyById(parse.data.id);
   if (!society) return res.status(404).json({ message: 'Society not found' });
-
+  console.log(society,'creo')
   res.json(society);
 };
 
