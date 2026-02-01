@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { CategoryService } from './category.service';
-import { categoryIdSchema } from './category.schema';
+import { categoryIdSchema, createCategorySchema, updateCategorySchema } from './category.schema';
 
 export const CategoryController = {
   getAll: async (_req: Request, res: Response) => {
@@ -16,13 +16,25 @@ export const CategoryController = {
   },
 
   create: async (req: Request, res: Response) => {
-    const result = await CategoryService.create(req.body);
+    const parse = createCategorySchema.safeParse({ body: req.body });
+    if (!parse.success) return res.status(400).json(parse.error.format());
+
+    const result = await CategoryService.create(parse.data.body);
     res.status(201).json(result);
   },
 
   update: async (req: Request, res: Response) => {
-    const { params } = categoryIdSchema.parse({ params: req.params });
-    const result = await CategoryService.update(params.id, req.body);
+    const idParse = categoryIdSchema.safeParse({ params: req.params });
+    const bodyParse = updateCategorySchema.safeParse({ body: req.body });
+
+    if (!idParse.success || !bodyParse.success) {
+      return res.status(400).json({
+        ...(idParse.error?.format?.() ?? {}),
+        ...(bodyParse.error?.format?.() ?? {}),
+      });
+    }
+
+    const result = await CategoryService.update(idParse.data.params.id, bodyParse.data.body);
     res.json(result);
   },
 

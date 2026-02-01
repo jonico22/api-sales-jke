@@ -1,6 +1,7 @@
 # 1. BASE
 FROM node:20-alpine AS base
-RUN apk add --no-cache openssl bash curl python3 make g++ build-base libc6-compat
+ENV TZ=America/Lima
+RUN apk add --no-cache openssl bash curl python3 make g++ build-base libc6-compat tzdata
 RUN curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.alpine.sh' | bash && \
     apk add --no-cache infisical
 WORKDIR /app
@@ -43,6 +44,7 @@ RUN npm prune --production
 # 4. PRODUCTION
 FROM base AS production
 ENV NODE_ENV=production
+ENV TZ=America/Lima
 WORKDIR /app
 
 COPY --from=build /app/dist ./dist

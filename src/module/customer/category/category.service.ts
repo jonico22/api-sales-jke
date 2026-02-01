@@ -1,5 +1,10 @@
 import prisma from '@/config/prisma';
+import { z } from 'zod';
 import { createCategorySchema, updateCategorySchema } from './category.schema';
+
+// Tipos inferidos de los schemas
+type CreateCategoryInput = z.infer<typeof createCategorySchema>['body'];
+type UpdateCategoryInput = z.infer<typeof updateCategorySchema>['body'];
 
 export const CategoryService = {
   getAll: async () => {
@@ -7,32 +12,29 @@ export const CategoryService = {
   },
 
   getById: async (id: string) => {
-    return prisma.category.findUnique({ where: { id } });
-  },
-
-  create: async (data: unknown) => {
-    const parsed = createCategorySchema.parse({ body: data });
-    return prisma.category.create({ data: parsed.body });
-  },
-
-  update: async (id: string, data: unknown) => {
-    const parsed = updateCategorySchema.parse({ body: data });
-    return prisma.category.update({
-      where: { id },
-      data: {
-        ...parsed.body,
-        updatedAt: new Date(),
-      },
+    return prisma.category.findFirst({
+      where: { id, isDeleted: false }
     });
   },
 
-  delete: async (id: string) => {
+  create: async (data: CreateCategoryInput) => {
+    return prisma.category.create({ data });
+  },
+
+  update: async (id: string, data: UpdateCategoryInput) => {
+    return prisma.category.update({
+      where: { id },
+      data,
+    });
+  },
+
+  delete: async (id: string, updatedBy?: string) => {
     return prisma.category.update({
       where: { id },
       data: {
         isDeleted: true,
         isActive: false,
-        updatedAt: new Date(),
+        updatedBy,
       },
     });
   },
