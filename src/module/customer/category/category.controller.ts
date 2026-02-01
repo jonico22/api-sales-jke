@@ -1,10 +1,18 @@
 import { Request, Response } from 'express';
 import { CategoryService } from './category.service';
 import { categoryIdSchema, createCategorySchema, updateCategorySchema } from './category.schema';
+import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
 export const CategoryController = {
-  getAll: async (_req: Request, res: Response) => {
-    const result = await CategoryService.getAll();
+  getAll: async (req: Request, res: Response) => {
+    const parse = paginationQuerySchema.safeParse({ query: req.query });
+
+    if (!parse.success) {
+      return res.status(400).json(parse.error.format());
+    }
+
+    const societyId = req.query.societyId as string | undefined;
+    const result = await CategoryService.getAll(parse.data.query, societyId);
     res.json(result);
   },
 
@@ -20,6 +28,8 @@ export const CategoryController = {
     if (!parse.success) return res.status(400).json(parse.error.format());
 
     const result = await CategoryService.create(parse.data.body);
+    if (!result) return res.status(400).json({ message: 'Código de sociedad inválido' });
+
     res.status(201).json(result);
   },
 
@@ -35,12 +45,13 @@ export const CategoryController = {
     }
 
     const result = await CategoryService.update(idParse.data.params.id, bodyParse.data.body);
+    if (!result) return res.status(400).json({ message: 'No se pudo actualizar: Categoría o Código de sociedad no encontrado' });
     res.json(result);
   },
 
   delete: async (req: Request, res: Response) => {
     const { params } = categoryIdSchema.parse({ params: req.params });
-    const result = await CategoryService.delete(params.id);
+    const result = await CategoryService.delete(params.id, req.body?.updatedBy);
     res.json({ message: 'Category deleted', data: result });
   },
 };

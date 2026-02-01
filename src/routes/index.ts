@@ -15,6 +15,7 @@ import outgoingConsignmentAgreementRoutes from '@/module/customer/outgoingConsig
 import deliveredConsignmentAgreementRoutes from '@/module/customer/deliveredConsignmentAgreement/deliveredConsignmentAgreement.route';
 import receivedConsignmentSettlementRoutes from '@/module/customer/receivedConsignmentSettlement/receivedConsignmentSettlement.route';
 import bussinessPartnerRoutes from '@/module/customer/bussinesspartner/bussinesspartner.route';
+import categoryRoutes from '@/module/customer/category/category.route';
 
 const router = Router();
 
@@ -33,5 +34,6 @@ router.use('/outgoing-consignment-agreements', outgoingConsignmentAgreementRoute
 router.use('/delivered-consignment-agreements', deliveredConsignmentAgreementRoutes);
 router.use('/received-consignment-settlements', receivedConsignmentSettlementRoutes);
 router.use('/bussinesspartners', bussinessPartnerRoutes);
+router.use('/categories', categoryRoutes);
 
 export default router;

@@ -5,15 +5,19 @@ import {
     updateBussinessPartnerSchema,
     bussinessPartnerIdSchema,
 } from './bussinesspartner.schema';
+import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
 export const BussinessPartnerController = {
     /**
      * GET /api/bussinesspartners
-     * Obtener todos los socios de negocio
+     * Obtener todos los socios de negocio con paginación
      */
     getAll: async (req: Request, res: Response) => {
+        const parse = paginationQuerySchema.safeParse({ query: req.query });
+        if (!parse.success) return res.status(400).json(parse.error.format());
+
         const societyId = req.query.societyId as string | undefined;
-        const result = await BussinessPartnerService.getAll(societyId);
+        const result = await BussinessPartnerService.getAll(parse.data.query, societyId);
         res.json(result);
     },
 
