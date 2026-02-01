@@ -54,4 +54,13 @@ export const CategoryController = {
     const result = await CategoryService.delete(params.id, req.body?.updatedBy);
     res.json({ message: 'Category deleted', data: result });
   },
+
+  /**
+   * Obtener categorías para select/dropdown (sin paginación)
+   */
+  getForSelect: async (req: Request, res: Response) => {
+    const societyId = req.query.societyId as string | undefined;
+    const result = await CategoryService.getForSelect(societyId);
+    res.json(result);
+  },
 };

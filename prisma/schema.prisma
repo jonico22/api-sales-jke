@@ -161,8 +161,10 @@ model Product {
   name        String
   description String?
   price       Decimal @db.Decimal(10, 2)
+  priceCost   Decimal @db.Decimal(10, 2)
   stock       Int     @default(0)
-  minStock    Int     @default(0) // Mínimo de stock para alertas
+  minStock    Int     @default(0)
+  code        String  @default("TEMP-CODE") // Mínimo de stock para alertas
   societyId   String
   society     Society @relation(fields: [societyId], references: [id])
 

@@ -90,4 +90,32 @@ export const CategoryService = {
       },
     });
   },
+
+  /**
+   * Obtener categorías para select/dropdown (sin paginación)
+   * Retorna solo campos necesarios: id, name, code
+   */
+  getForSelect: async (societyCode?: string) => {
+    const whereClause: any = { isDeleted: false, isActive: true };
+
+    // Si se envía código de sociedad, buscar su ID
+    if (societyCode) {
+      const society = await prisma.society.findUnique({ where: { code: societyCode } });
+      if (society) {
+        whereClause.societyId = society.id;
+      } else {
+        return [];
+      }
+    }
+
+    return prisma.category.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        name: true,
+        code: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+  },
 };

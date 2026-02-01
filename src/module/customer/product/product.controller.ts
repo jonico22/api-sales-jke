@@ -1,52 +1,104 @@
 import { Request, Response } from 'express';
-import * as ProductService from './product.service';
-import { createProductSchema, updateProductSchema } from './product.schema';
+import { ProductService } from './product.service';
+import { createProductSchema, updateProductSchema, productIdSchema } from './product.schema';
+import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
-export const create = async (req: Request, res: Response) => {
-  const parsed = createProductSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.format() });
-  }
+export const ProductController = {
+  /**
+   * Obtener todos los productos con paginación
+   */
+  getAll: async (req: Request, res: Response) => {
+    const parse = paginationQuerySchema.safeParse({ query: req.query });
+    if (!parse.success) {
+      return res.status(400).json(parse.error.format());
+    }
 
-  const product = await ProductService.createProduct(parsed.data as any);
-  res.status(201).json(product);
-};
+    const societyId = req.query.societyId as string | undefined;
+    const categoryId = req.query.categoryId as string | undefined;
 
-export const getAll = async (req: Request, res: Response) => {
-  const { page, limit, isActive, societyId, categoryId } = req.query;
+    const result = await ProductService.getAll(parse.data.query, societyId, categoryId);
+    res.json(result);
+  },
 
-  const filters = {
-    page: Number(page) || 1,
-    limit: Number(limit) || 10,
-    isActive: isActive !== undefined ? isActive === 'true' : undefined,
-    societyId: societyId?.toString(),
-    categoryId: categoryId?.toString()
-  };
+  /**
+   * Obtener producto por ID
+   */
+  getById: async (req: Request, res: Response) => {
+    const parse = productIdSchema.safeParse({ params: req.params });
+    if (!parse.success) {
+      return res.status(400).json(parse.error.format());
+    }
 
-  const result = await ProductService.getProducts(filters);
-  res.json(result);
-};
+    const product = await ProductService.getById(parse.data.params.id);
+    if (!product) {
+      return res.status(404).json({ message: 'Producto no encontrado' });
+    }
+    res.json(product);
+  },
 
-export const getById = async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const product = await ProductService.getProductById(id);
-  if (!product) return res.status(404).json({ error: 'Product not found' });
-  res.json(product);
-};
+  /**
+   * Crear un nuevo producto
+   */
+  create: async (req: Request, res: Response) => {
+    const parse = createProductSchema.safeParse({ body: req.body });
+    if (!parse.success) {
+      return res.status(400).json(parse.error.format());
+    }
 
-export const update = async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const parsed = updateProductSchema.safeParse(req.body);
-  if (!parsed.success) {
-    return res.status(400).json({ error: parsed.error.format() });
-  }
+    const result = await ProductService.create(parse.data.body);
 
-  const updated = await ProductService.updateProduct(id, parsed.data);
-  res.json(updated);
-};
+    // Verificar si hubo error de validación
+    if ('error' in result) {
+      return res.status(400).json({ message: result.error });
+    }
 
-export const remove = async (req: Request, res: Response) => {
-  const { id } = req.params;
-  const deleted = await ProductService.deleteProduct(id);
-  res.json(deleted);
+    res.status(201).json(result);
+  },
+
+  /**
+   * Actualizar un producto
+   */
+  update: async (req: Request, res: Response) => {
+    const idParse = productIdSchema.safeParse({ params: req.params });
+    const bodyParse = updateProductSchema.safeParse({ body: req.body });
+
+    if (!idParse.success || !bodyParse.success) {
+      return res.status(400).json({
+        ...(idParse.error?.format?.() ?? {}),
+        ...(bodyParse.error?.format?.() ?? {}),
+      });
+    }
+
+    const result = await ProductService.update(idParse.data.params.id, bodyParse.data.body);
+
+    // Verificar si hubo error de validación
+    if (result && 'error' in result) {
+      return res.status(400).json({ message: result.error });
+    }
+
+    res.json(result);
+  },
+
+  /**
+   * Eliminar un producto (soft delete)
+   */
+  delete: async (req: Request, res: Response) => {
+    const parse = productIdSchema.safeParse({ params: req.params });
+    if (!parse.success) {
+      return res.status(400).json(parse.error.format());
+    }
+
+    const result = await ProductService.delete(parse.data.params.id, req.body?.updatedBy);
+    res.json({ message: 'Producto eliminado', data: result });
+  },
+
+  /**
+   * Obtener productos para select/dropdown (sin paginación)
+   */
+  getForSelect: async (req: Request, res: Response) => {
+    const societyId = req.query.societyId as string | undefined;
+    const categoryId = req.query.categoryId as string | undefined;
+    const result = await ProductService.getForSelect(societyId, categoryId);
+    res.json(result);
+  },
 };
