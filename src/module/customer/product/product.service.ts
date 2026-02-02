@@ -9,14 +9,22 @@ import {
 } from '@/utils/pagination';
 import { Product } from '@prisma/client';
 import { formatToLimaTime } from '@/utils/dateFormatter';
+import { redis } from '@/config/redis';
 
 // Tipos inferidos de los schemas
 type CreateProductInput = z.infer<typeof createProductSchema>['body'];
 type UpdateProductInput = z.infer<typeof updateProductSchema>['body'];
 
+// Constantes de cache
+const CACHE_PREFIX = 'products:';
+const CACHE_TTL_LIST = 300; // 5 minutos para listas
+const CACHE_TTL_SINGLE = 600; // 10 minutos para registro individual
+const CACHE_TTL_SELECT = 900; // 15 minutos para select (datos que cambian poco)
+
 export const ProductService = {
   /**
    * Obtener todos los productos con paginación y filtros
+   * Con cache de Redis
    */
   getAll: async (
     paginationQuery?: PaginationQuery,
@@ -25,12 +33,22 @@ export const ProductService = {
   ): Promise<PaginatedResult<Product>> => {
     const page = paginationQuery?.page ?? 1;
     const limit = paginationQuery?.limit ?? 10;
-    const sortBy = paginationQuery?.sortBy;
+    const sortBy = paginationQuery?.sortBy ?? 'createdAt';
     const sortOrder = paginationQuery?.sortOrder ?? 'desc';
 
-    const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
+    // Construir clave de cache única para esta combinación de filtros
+    const cacheKey = `${CACHE_PREFIX}list:${societyCode || 'all'}:${categoryCode || 'all'}:${page}:${limit}:${sortBy}:${sortOrder}`;
 
-    // Construir filtro base
+    // 1. Intentar obtener del cache
+    const cached = await redis.get<PaginatedResult<Product>>(cacheKey);
+    if (cached) {
+      console.log(`[Cache HIT] ${cacheKey}`);
+      return cached;
+    }
+
+    console.log(`[Cache MISS] ${cacheKey}`);
+
+    const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
     const whereClause: any = { isDeleted: false };
 
     // Resolver código de sociedad a UUID
@@ -55,7 +73,7 @@ export const ProductService = {
       }
     }
 
-    // Ejecutar en transacción
+    // 2. Buscar en DB
     const [data, total] = await prisma.$transaction([
       prisma.product.findMany({
         where: whereClause,
@@ -87,21 +105,38 @@ export const ProductService = {
       prisma.product.count({ where: whereClause }),
     ]);
 
-    // Formatear createdAt a zona horaria de Lima
+    // Formatear fechas
     const formattedData = data.map(item => ({
       ...item,
       createdAt: formatToLimaTime(item.createdAt) as any,
       updatedAt: item.updatedAt ? formatToLimaTime(item.updatedAt) as any : item.updatedAt,
     }));
 
-    return buildPaginatedResult(formattedData, page, limit, total);
+    const result = buildPaginatedResult(formattedData, page, limit, total);
+
+    // 3. Guardar en cache
+    await redis.set(cacheKey, result, CACHE_TTL_LIST);
+
+    return result;
   },
 
   /**
-   * Obtener producto por ID
+   * Obtener producto por ID con cache
    */
   getById: async (id: string) => {
-    return prisma.product.findFirst({
+    const cacheKey = `${CACHE_PREFIX}${id}`;
+
+    // 1. Intentar obtener del cache
+    const cached = await redis.get<Product>(cacheKey);
+    if (cached) {
+      console.log(`[Cache HIT] ${cacheKey}`);
+      return cached;
+    }
+
+    console.log(`[Cache MISS] ${cacheKey}`);
+
+    // 2. Buscar en DB
+    const product = await prisma.product.findFirst({
       where: { id, isDeleted: false },
       include: {
         society: { select: { id: true, name: true, code: true } },
@@ -109,10 +144,17 @@ export const ProductService = {
         image: true,
       },
     });
+
+    // 3. Guardar en cache
+    if (product) {
+      await redis.set(cacheKey, product, CACHE_TTL_SINGLE);
+    }
+
+    return product;
   },
 
   /**
-   * Crear un nuevo producto
+   * Crear un nuevo producto e invalidar cache de listas
    */
   create: async (data: CreateProductInput) => {
     // Resolver código de sociedad
@@ -126,7 +168,7 @@ export const ProductService = {
     if (!category) return { error: 'Código de categoría inválido' };
 
     // Crear producto con UUIDs resueltos
-    return prisma.product.create({
+    const created = await prisma.product.create({
       data: {
         name: data.name,
         description: data.description,
@@ -146,10 +188,16 @@ export const ProductService = {
         image: true,
       },
     });
+
+    // Invalidar cache de listas
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+
+    return created;
   },
 
   /**
-   * Actualizar un producto
+   * Actualizar un producto e invalidar cache
    */
   update: async (id: string, data: UpdateProductInput) => {
     const updateData: any = { ...data };
@@ -170,7 +218,7 @@ export const ProductService = {
       updateData.categoryId = category.id;
     }
 
-    return prisma.product.update({
+    const updated = await prisma.product.update({
       where: { id },
       data: updateData,
       include: {
@@ -179,13 +227,20 @@ export const ProductService = {
         image: true,
       },
     });
+
+    // Invalidar cache del registro individual y listas
+    await redis.del(`${CACHE_PREFIX}${id}`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+
+    return updated;
   },
 
   /**
-   * Eliminar producto (soft delete)
+   * Eliminar producto (soft delete) e invalidar cache
    */
   delete: async (id: string, updatedBy?: string) => {
-    return prisma.product.update({
+    const deleted = await prisma.product.update({
       where: { id },
       data: {
         isDeleted: true,
@@ -193,13 +248,30 @@ export const ProductService = {
         updatedBy,
       },
     });
+
+    // Invalidar cache
+    await redis.del(`${CACHE_PREFIX}${id}`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+
+    return deleted;
   },
 
   /**
-   * Obtener productos para select/dropdown (sin paginación)
-   * Retorna solo campos necesarios: id, name, code (si existe), price
+   * Obtener productos para select/dropdown con cache largo
    */
   getForSelect: async (societyCode?: string, categoryCode?: string) => {
+    const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}:${categoryCode || 'all'}`;
+
+    // 1. Intentar obtener del cache
+    const cached = await redis.get<any[]>(cacheKey);
+    if (cached) {
+      console.log(`[Cache HIT] ${cacheKey}`);
+      return cached;
+    }
+
+    console.log(`[Cache MISS] ${cacheKey}`);
+
     const whereClause: any = { isDeleted: false, isActive: true };
 
     // Si se envía código de sociedad, buscar su ID
@@ -224,7 +296,7 @@ export const ProductService = {
       }
     }
 
-    return prisma.product.findMany({
+    const products = await prisma.product.findMany({
       where: whereClause,
       select: {
         id: true,
@@ -241,5 +313,18 @@ export const ProductService = {
       },
       orderBy: { name: 'asc' },
     });
+
+    // Guardar en cache con TTL largo
+    await redis.set(cacheKey, products, CACHE_TTL_SELECT);
+
+    return products;
+  },
+
+  /**
+   * Invalidar todo el cache de productos (para uso manual si es necesario)
+   */
+  invalidateAllCache: async () => {
+    await redis.deleteKeysByPrefix(CACHE_PREFIX);
+    console.log('[Cache] Todo el cache de productos ha sido invalidado');
   },
 };
