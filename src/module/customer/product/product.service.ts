@@ -8,6 +8,7 @@ import {
   PaginationQuery,
 } from '@/utils/pagination';
 import { Product } from '@prisma/client';
+import { formatToLimaTime } from '@/utils/dateFormatter';
 
 // Tipos inferidos de los schemas
 type CreateProductInput = z.infer<typeof createProductSchema>['body'];
@@ -61,7 +62,24 @@ export const ProductService = {
         skip: prismaParams.skip,
         take: prismaParams.take,
         orderBy: prismaParams.orderBy ?? { createdAt: sortOrder },
-        include: {
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          description: true,
+          price: true,
+          priceCost: true,
+          stock: true,
+          minStock: true,
+          societyId: true,
+          categoryId: true,
+          imageId: true,
+          isActive: true,
+          isDeleted: true,
+          createdAt: true,
+          createdBy: true,
+          updatedAt: true,
+          updatedBy: true,
           category: { select: { name: true } },
           image: true,
         },
@@ -69,7 +87,14 @@ export const ProductService = {
       prisma.product.count({ where: whereClause }),
     ]);
 
-    return buildPaginatedResult(data, page, limit, total);
+    // Formatear createdAt a zona horaria de Lima
+    const formattedData = data.map(item => ({
+      ...item,
+      createdAt: formatToLimaTime(item.createdAt) as any,
+      updatedAt: item.updatedAt ? formatToLimaTime(item.updatedAt) as any : item.updatedAt,
+    }));
+
+    return buildPaginatedResult(formattedData, page, limit, total);
   },
 
   /**

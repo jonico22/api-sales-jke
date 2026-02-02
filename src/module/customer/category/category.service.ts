@@ -8,6 +8,7 @@ import {
   PaginationQuery,
 } from '@/utils/pagination';
 import { Category } from '@prisma/client';
+import { formatToLimaTime } from '@/utils/dateFormatter';
 
 // Tipos inferidos de los schemas
 type CreateCategoryInput = z.infer<typeof createCategorySchema>['body'];
@@ -47,11 +48,31 @@ export const CategoryService = {
         skip: prismaParams.skip,
         take: prismaParams.take,
         orderBy: prismaParams.orderBy ?? { createdAt: sortOrder },
+        select: {
+          id: true,
+          name: true,
+          code: true,
+          description: true,
+          societyId: true,
+          isActive: true,
+          isDeleted: true,
+          createdAt: true,
+          createdBy: true,
+          updatedAt: true,
+          updatedBy: true,
+        },
       }),
       prisma.category.count({ where: whereClause }),
     ]);
 
-    return buildPaginatedResult(data, page, limit, total);
+    // Formatear createdAt a zona horaria de Lima
+    const formattedData = data.map(item => ({
+      ...item,
+      createdAt: formatToLimaTime(item.createdAt) as any,
+      updatedAt: item.updatedAt ? formatToLimaTime(item.updatedAt) as any : item.updatedAt,
+    }));
+
+    return buildPaginatedResult(formattedData, page, limit, total);
   },
 
   getById: async (id: string) => {

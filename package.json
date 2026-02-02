@@ -54,6 +54,8 @@
     "@prisma/client": "^6.19.1",
     "@scalar/express-api-reference": "^0.8.30",
     "cors": "^2.8.5",
+    "date-fns": "^4.1.0",
+    "date-fns-tz": "^3.2.0",
     "express": "^5.2.1",
     "newrelic": "^13.9.0",
     "pino": "^10.1.0",
