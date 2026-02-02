@@ -8,7 +8,7 @@ import {
   PaginationQuery,
 } from '@/utils/pagination';
 import { Category } from '@prisma/client';
-import { formatToLimaTime } from '@/utils/dateFormatter';
+import { formatToLimaTime, convertLimaTimeToUTC, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
 import { redis } from '@/config/redis';
 
 // Tipos inferidos de los schemas
@@ -21,19 +21,52 @@ const CACHE_TTL_LIST = 300; // 5 minutos para listas
 const CACHE_TTL_SINGLE = 600; // 10 minutos para registro individual
 const CACHE_TTL_SELECT = 900; // 15 minutos para select (datos que cambian poco)
 
+// Tipo para los filtros de categoría
+export interface CategoryFilters {
+  societyCode?: string;
+  societyId?: string;
+  isActive?: boolean;
+  createdBy?: string;
+  createdAtFrom?: string;
+  createdAtTo?: string;
+  updatedAtFrom?: string;
+  updatedAtTo?: string;
+  search?: string;
+}
+
 export const CategoryService = {
   /**
-   * Obtener todas las categorías con paginación y filtro por sociedad
+   * Obtener todas las categorías con paginación y filtros
    * Con cache de Redis
    */
-  getAll: async (paginationQuery?: PaginationQuery, societyCode?: string): Promise<PaginatedResult<Category>> => {
+  getAll: async (
+    paginationQuery?: PaginationQuery,
+    filters?: CategoryFilters
+  ): Promise<PaginatedResult<Category>> => {
     const page = paginationQuery?.page ?? 1;
     const limit = paginationQuery?.limit ?? 10;
     const sortBy = paginationQuery?.sortBy ?? 'createdAt';
     const sortOrder = paginationQuery?.sortOrder ?? 'desc';
 
     // Construir clave de cache única para esta combinación de filtros
-    const cacheKey = `${CACHE_PREFIX}list:${societyCode || 'all'}:${page}:${limit}:${sortBy}:${sortOrder}`;
+    const societyCode = filters?.societyCode || filters?.societyId;
+    const cacheKeyParts = [
+      CACHE_PREFIX,
+      'list',
+      societyCode || 'all',
+      filters?.isActive !== undefined ? filters.isActive : 'all',
+      filters?.createdBy || 'all',
+      filters?.createdAtFrom || 'all',
+      filters?.createdAtTo || 'all',
+      filters?.updatedAtFrom || 'all',
+      filters?.updatedAtTo || 'all',
+      filters?.search || 'all',
+      page,
+      limit,
+      sortBy,
+      sortOrder
+    ];
+    const cacheKey = cacheKeyParts.join(':');
 
     // 1. Intentar obtener del cache
     const cached = await redis.get<PaginatedResult<Category>>(cacheKey);
@@ -47,13 +80,56 @@ export const CategoryService = {
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
     const whereClause: any = { isDeleted: false };
 
-    // Resolver código de sociedad
+    // Filtro por sociedad
     if (societyCode) {
       const society = await prisma.society.findUnique({ where: { code: societyCode } });
       if (society) {
         whereClause.societyId = society.id;
       } else {
         return buildPaginatedResult([], page, limit, 0);
+      }
+    }
+
+    // Búsqueda por nombre o código (case-insensitive)
+    if (filters?.search) {
+      whereClause.OR = [
+        { name: { contains: filters.search, mode: 'insensitive' } },
+        { code: { contains: filters.search, mode: 'insensitive' } }
+      ];
+    }
+
+
+    // Filtro por isActive
+    if (filters?.isActive !== undefined) {
+      whereClause.isActive = filters.isActive;
+    }
+
+    // Filtro por createdBy
+    if (filters?.createdBy) {
+      whereClause.createdBy = filters.createdBy;
+    }
+
+    // Filtro de rango de fechas para createdAt (convierte de Lima a UTC con soporte de rango completo)
+    if (filters?.createdAtFrom || filters?.createdAtTo) {
+      whereClause.createdAt = {};
+      const dateRange = convertLimaDateRangeToUTC(filters.createdAtFrom, filters.createdAtTo);
+      if (dateRange.from) {
+        whereClause.createdAt.gte = dateRange.from;
+      }
+      if (dateRange.to) {
+        whereClause.createdAt.lte = dateRange.to;
+      }
+    }
+
+    // Filtro de rango de fechas para updatedAt (convierte de Lima a UTC con soporte de rango completo)
+    if (filters?.updatedAtFrom || filters?.updatedAtTo) {
+      whereClause.updatedAt = {};
+      const dateRange = convertLimaDateRangeToUTC(filters.updatedAtFrom, filters.updatedAtTo);
+      if (dateRange.from) {
+        whereClause.updatedAt.gte = dateRange.from;
+      }
+      if (dateRange.to) {
+        whereClause.updatedAt.lte = dateRange.to;
       }
     }
 
@@ -99,6 +175,9 @@ export const CategoryService = {
   /**
    * Obtener categoría por ID con cache
    */
+  /**
+   * Obtener categoría por ID con cache
+   */
   getById: async (id: string) => {
     const cacheKey = `${CACHE_PREFIX}${id}`;
 
@@ -112,16 +191,41 @@ export const CategoryService = {
     console.log(`[Cache MISS] ${cacheKey}`);
 
     // 2. Buscar en DB
-    const category = await prisma.category.findFirst({
+    const category = await prisma.category.findUnique({
       where: { id, isDeleted: false }
     });
 
+    if (!category) return null;
+
     // 3. Guardar en cache
-    if (category) {
-      await redis.set(cacheKey, category, CACHE_TTL_SINGLE);
-    }
+    await redis.set(cacheKey, category, CACHE_TTL_SINGLE);
 
     return category;
+  },
+
+  /**
+   * Obtener lista de usuarios únicos que han actualizado categorías
+   * Filtrado opcionalmente por societyId
+   */
+  getUpdatedByUsers: async (societyId?: string): Promise<string[]> => {
+    const whereClause: any = { isDeleted: false, updatedBy: { not: null } };
+
+    if (societyId) {
+      whereClause.societyId = societyId;
+    }
+
+    const result = await prisma.category.findMany({
+      where: whereClause,
+      distinct: ['updatedBy'],
+      select: {
+        updatedBy: true
+      }
+    });
+
+    // Mapear a array de strings y filtrar nulos
+    return result
+      .map(item => item.updatedBy)
+      .filter((id): id is string => id !== null);
   },
 
   /**

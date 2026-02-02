@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { ProductService } from './product.service';
-import { createProductSchema, updateProductSchema, productIdSchema } from './product.schema';
+import { createProductSchema, updateProductSchema, productIdSchema, productFiltersSchema } from './product.schema';
 import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
 export const ProductController = {
@@ -8,16 +8,20 @@ export const ProductController = {
    * Obtener todos los productos con paginación
    */
   getAll: async (req: Request, res: Response) => {
-    const parse = paginationQuerySchema.safeParse({ query: req.query });
-    if (!parse.success) {
-      return res.status(400).json(parse.error.format());
+    const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
+    const filtersParse = productFiltersSchema.safeParse({ query: req.query });
+
+    if (!paginationParse.success || !filtersParse.success) {
+      return res.status(400).json({
+        ...(paginationParse.error?.format?.() ?? {}),
+        ...(filtersParse.error?.format?.() ?? {}),
+      });
     }
 
-    // Permitir societyCode o societyId (legacy)
-    const societyCode = (req.query.societyCode || req.query.societyId) as string | undefined;
-    const categoryCode = (req.query.categoryCode || req.query.categoryId) as string | undefined;
-
-    const result = await ProductService.getAll(parse.data.query, societyCode, categoryCode);
+    const result = await ProductService.getAll(
+      paginationParse.data.query,
+      filtersParse.data.query
+    );
     res.json(result);
   },
 
@@ -35,6 +39,12 @@ export const ProductController = {
       return res.status(404).json({ message: 'Producto no encontrado' });
     }
     res.json(product);
+  },
+
+  getUpdatedByUsers: async (req: Request, res: Response) => {
+    const societyId = req.query.societyId as string | undefined;
+    const result = await ProductService.getUpdatedByUsers(societyId);
+    res.json(result);
   },
 
   /**

@@ -1,19 +1,24 @@
 import { Request, Response } from 'express';
 import { CategoryService } from './category.service';
-import { categoryIdSchema, createCategorySchema, updateCategorySchema } from './category.schema';
+import { categoryIdSchema, createCategorySchema, updateCategorySchema, categoryFiltersSchema } from './category.schema';
 import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
 export const CategoryController = {
   getAll: async (req: Request, res: Response) => {
-    const parse = paginationQuerySchema.safeParse({ query: req.query });
+    const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
+    const filtersParse = categoryFiltersSchema.safeParse({ query: req.query });
 
-    if (!parse.success) {
-      return res.status(400).json(parse.error.format());
+    if (!paginationParse.success || !filtersParse.success) {
+      return res.status(400).json({
+        ...(paginationParse.error?.format?.() ?? {}),
+        ...(filtersParse.error?.format?.() ?? {}),
+      });
     }
 
-    // Permitir societyCode o societyId (legacy)
-    const societyCode = (req.query.societyCode || req.query.societyId) as string | undefined;
-    const result = await CategoryService.getAll(parse.data.query, societyCode);
+    const result = await CategoryService.getAll(
+      paginationParse.data.query,
+      filtersParse.data.query
+    );
     res.json(result);
   },
 
@@ -32,6 +37,12 @@ export const CategoryController = {
     if (!result) return res.status(400).json({ message: 'Código de sociedad inválido' });
 
     res.status(201).json(result);
+  },
+
+  getUpdatedByUsers: async (req: Request, res: Response) => {
+    const societyId = req.query.societyId as string | undefined;
+    const result = await CategoryService.getUpdatedByUsers(societyId);
+    res.json(result);
   },
 
   update: async (req: Request, res: Response) => {

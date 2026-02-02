@@ -20,6 +20,9 @@ router.get('/', CategoryController.getAll);
  *       200:
  *         description: Lista de categorías (id, name, code)
  */
+// Endpoint para obtener usuarios únicos que han actualizado (útil para filtros)
+router.get('/updated-by-users', CategoryController.getUpdatedByUsers);
+
 router.get('/select', CategoryController.getForSelect);
 
 router.get('/:id', CategoryController.getById);

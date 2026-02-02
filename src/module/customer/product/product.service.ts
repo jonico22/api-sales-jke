@@ -8,7 +8,7 @@ import {
   PaginationQuery,
 } from '@/utils/pagination';
 import { Product } from '@prisma/client';
-import { formatToLimaTime } from '@/utils/dateFormatter';
+import { formatToLimaTime, convertLimaTimeToUTC, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
 import { redis } from '@/config/redis';
 
 // Tipos inferidos de los schemas
@@ -21,6 +21,29 @@ const CACHE_TTL_LIST = 300; // 5 minutos para listas
 const CACHE_TTL_SINGLE = 600; // 10 minutos para registro individual
 const CACHE_TTL_SELECT = 900; // 15 minutos para select (datos que cambian poco)
 
+// Tipo para los filtros de producto
+export interface ProductFilters {
+  societyCode?: string;
+  societyId?: string;
+  categoryCode?: string;
+  categoryId?: string;
+  search?: string;
+  isActive?: boolean;
+  priceFrom?: number;
+  priceTo?: number;
+  priceCostFrom?: number;
+  priceCostTo?: number;
+  lowStock?: boolean;
+  stockFrom?: number;
+  stockTo?: number;
+  createdBy?: string;
+  updatedBy?: string;
+  createdAtFrom?: string;
+  createdAtTo?: string;
+  updatedAtFrom?: string;
+  updatedAtTo?: string;
+}
+
 export const ProductService = {
   /**
    * Obtener todos los productos con paginación y filtros
@@ -28,8 +51,7 @@ export const ProductService = {
    */
   getAll: async (
     paginationQuery?: PaginationQuery,
-    societyCode?: string,
-    categoryCode?: string
+    filters?: ProductFilters
   ): Promise<PaginatedResult<Product>> => {
     const page = paginationQuery?.page ?? 1;
     const limit = paginationQuery?.limit ?? 10;
@@ -37,7 +59,34 @@ export const ProductService = {
     const sortOrder = paginationQuery?.sortOrder ?? 'desc';
 
     // Construir clave de cache única para esta combinación de filtros
-    const cacheKey = `${CACHE_PREFIX}list:${societyCode || 'all'}:${categoryCode || 'all'}:${page}:${limit}:${sortBy}:${sortOrder}`;
+    const societyCode = filters?.societyCode || filters?.societyId;
+    const categoryCode = filters?.categoryCode || filters?.categoryId;
+    const cacheKeyParts = [
+      CACHE_PREFIX,
+      'list',
+      societyCode || 'all',
+      categoryCode || 'all',
+      filters?.search || 'all',
+      filters?.isActive !== undefined ? filters.isActive : 'all',
+      filters?.priceFrom || 'all',
+      filters?.priceTo || 'all',
+      filters?.priceCostFrom || 'all',
+      filters?.priceCostTo || 'all',
+      filters?.lowStock !== undefined ? filters.lowStock : 'all',
+      filters?.stockFrom || 'all',
+      filters?.stockTo || 'all',
+      filters?.createdBy || 'all',
+      filters?.updatedBy || 'all',
+      filters?.createdAtFrom || 'all',
+      filters?.createdAtTo || 'all',
+      filters?.updatedAtFrom || 'all',
+      filters?.updatedAtTo || 'all',
+      page,
+      limit,
+      sortBy,
+      sortOrder
+    ];
+    const cacheKey = cacheKeyParts.join(':');
 
     // 1. Intentar obtener del cache
     const cached = await redis.get<PaginatedResult<Product>>(cacheKey);
@@ -51,7 +100,7 @@ export const ProductService = {
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
     const whereClause: any = { isDeleted: false };
 
-    // Resolver código de sociedad a UUID
+    // Filtro por sociedad
     if (societyCode) {
       const society = await prisma.society.findUnique({ where: { code: societyCode } });
       if (society) {
@@ -61,7 +110,7 @@ export const ProductService = {
       }
     }
 
-    // Resolver código de categoría a UUID
+    // Filtro por categoría
     if (categoryCode) {
       const category = await prisma.category.findFirst({
         where: { code: categoryCode, isDeleted: false }
@@ -70,6 +119,93 @@ export const ProductService = {
         whereClause.categoryId = category.id;
       } else {
         return buildPaginatedResult([], page, limit, 0);
+      }
+    }
+
+    // Búsqueda por nombre o código (case-insensitive)
+    if (filters?.search) {
+      whereClause.OR = [
+        { name: { contains: filters.search, mode: 'insensitive' } },
+        { code: { contains: filters.search, mode: 'insensitive' } }
+      ];
+    }
+
+    // Filtro por isActive
+    if (filters?.isActive !== undefined) {
+      whereClause.isActive = filters.isActive;
+    }
+
+    // Filtro de rango de precio
+    if (filters?.priceFrom !== undefined || filters?.priceTo !== undefined) {
+      whereClause.price = {};
+      if (filters.priceFrom !== undefined) {
+        whereClause.price.gte = filters.priceFrom;
+      }
+      if (filters.priceTo !== undefined) {
+        whereClause.price.lte = filters.priceTo;
+      }
+    }
+
+    // Filtro de rango de precio de costo
+    if (filters?.priceCostFrom !== undefined || filters?.priceCostTo !== undefined) {
+      whereClause.priceCost = {};
+      if (filters.priceCostFrom !== undefined) {
+        whereClause.priceCost.gte = filters.priceCostFrom;
+      }
+      if (filters.priceCostTo !== undefined) {
+        whereClause.priceCost.lte = filters.priceCostTo;
+      }
+    }
+
+    // Filtro de stock bajo (stock <= minStock)
+    // Nota: Prisma no permite comparar campos directamente, así que lo haremos manualmente después
+    const applyLowStockFilter = filters?.lowStock === true;
+
+    // Filtro de rango de stock
+    if (filters?.stockFrom !== undefined || filters?.stockTo !== undefined) {
+      // Si ya existe filtro de lowStock, no aplicar este filtro
+      if (!applyLowStockFilter) {
+        whereClause.stock = {};
+        if (filters.stockFrom !== undefined) {
+          whereClause.stock.gte = filters.stockFrom;
+        }
+        if (filters.stockTo !== undefined) {
+          whereClause.stock.lte = filters.stockTo;
+        }
+      }
+    }
+
+    // Filtro por createdBy
+    if (filters?.createdBy) {
+      whereClause.createdBy = filters.createdBy;
+    }
+
+    // Filtro por updatedBy
+    if (filters?.updatedBy) {
+      whereClause.updatedBy = filters.updatedBy;
+    }
+
+    // Filtro de rango de fechas para createdAt (convierte de Lima a UTC con soporte de rango completo)
+    if (filters?.createdAtFrom || filters?.createdAtTo) {
+      whereClause.createdAt = {};
+      const dateRange = convertLimaDateRangeToUTC(filters.createdAtFrom, filters.createdAtTo);
+      if (dateRange.from) {
+        whereClause.createdAt.gte = dateRange.from;
+      }
+      if (dateRange.to) {
+        whereClause.createdAt.lte = dateRange.to;
+      }
+    }
+
+    // Filtro de rango de fechas para updatedAt (convierte de Lima a UTC con soporte de rango completo)
+    if (filters?.updatedAtFrom || filters?.updatedAtTo) {
+      whereClause.updatedAt = {};
+      const dateRange = convertLimaDateRangeToUTC(filters.updatedAtFrom, filters.updatedAtTo);
+      if (dateRange.from) {
+        whereClause.updatedAt.gte = dateRange.from;
+      }
+      if (dateRange.to) {
+        whereClause.updatedAt.lte = dateRange.to;
       }
     }
 
@@ -105,14 +241,22 @@ export const ProductService = {
       prisma.product.count({ where: whereClause }),
     ]);
 
+    // Aplicar filtro de stock bajo si es necesario (post-procesamiento)
+    let filteredData = data;
+    let filteredTotal = total;
+    if (applyLowStockFilter) {
+      filteredData = data.filter(item => item.stock <= item.minStock);
+      filteredTotal = filteredData.length;
+    }
+
     // Formatear fechas
-    const formattedData = data.map(item => ({
+    const formattedData = filteredData.map(item => ({
       ...item,
       createdAt: formatToLimaTime(item.createdAt) as any,
       updatedAt: item.updatedAt ? formatToLimaTime(item.updatedAt) as any : item.updatedAt,
     }));
 
-    const result = buildPaginatedResult(formattedData, page, limit, total);
+    const result = buildPaginatedResult(formattedData, page, limit, filteredTotal);
 
     // 3. Guardar en cache
     await redis.set(cacheKey, result, CACHE_TTL_LIST);
@@ -136,7 +280,7 @@ export const ProductService = {
     console.log(`[Cache MISS] ${cacheKey}`);
 
     // 2. Buscar en DB
-    const product = await prisma.product.findFirst({
+    const product = await prisma.product.findUnique({
       where: { id, isDeleted: false },
       include: {
         society: { select: { id: true, name: true, code: true } },
@@ -145,12 +289,37 @@ export const ProductService = {
       },
     });
 
+    if (!product) return null;
+
     // 3. Guardar en cache
-    if (product) {
-      await redis.set(cacheKey, product, CACHE_TTL_SINGLE);
-    }
+    await redis.set(cacheKey, product, CACHE_TTL_SINGLE);
 
     return product;
+  },
+
+  /**
+   * Obtener lista de usuarios únicos que han actualizado productos
+   * Filtrado opcionalmente por societyId
+   */
+  getUpdatedByUsers: async (societyId?: string): Promise<string[]> => {
+    const whereClause: any = { isDeleted: false, updatedBy: { not: null } };
+
+    if (societyId) {
+      whereClause.societyId = societyId;
+    }
+
+    const result = await prisma.product.findMany({
+      where: whereClause,
+      distinct: ['updatedBy'],
+      select: {
+        updatedBy: true
+      }
+    });
+
+    // Mapear a array de strings y filtrar nulos
+    return result
+      .map(item => item.updatedBy)
+      .filter((id): id is string => id !== null);
   },
 
   /**
@@ -179,6 +348,7 @@ export const ProductService = {
         societyId: society.id,
         categoryId: category.id,
         imageId: data.imageId,
+        isActive: data.isActive,
         createdBy: data.createdBy,
         code: data.code,
       },

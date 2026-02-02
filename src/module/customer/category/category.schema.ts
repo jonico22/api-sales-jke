@@ -1,8 +1,7 @@
 import { z } from 'zod';
-import { registry } from '@/config/swagger'; // Importamos el registro que configuramos
+import { registry } from '@/config/swagger';
 
 
-// 1. Definimos el objeto base que representa a una Categoría en la BD
 export const CategorySchema = registry.register(
   'Category',
   z.object({
@@ -19,7 +18,6 @@ export const CategorySchema = registry.register(
   })
 );
 
-// 2. Esquema para CREAR - solo campos requeridos
 export const createCategorySchema = z.object({
   body: registry.register('CreateCategory', z.object({
     name: z.string().min(1).openapi({ example: 'Electrónicos', description: 'Nombre de la categoría' }),
@@ -31,7 +29,6 @@ export const createCategorySchema = z.object({
   }))
 });
 
-// 3. Esquema para ACTUALIZAR (hacemos los campos opcionales)
 export const updateCategorySchema = z.object({
   body: registry.register('UpdateCategory', CategorySchema.omit({
     id: true,
@@ -40,9 +37,48 @@ export const updateCategorySchema = z.object({
   }).partial())
 });
 
-// 4. Esquema para VALIDAR ID en la URL
 export const categoryIdSchema = z.object({
   params: z.object({
     id: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' })
+  })
+});
+
+export const categoryFiltersSchema = z.object({
+  query: z.object({
+    societyCode: z.string().optional().openapi({ example: 'SOC-001', description: 'Código de sociedad' }),
+    societyId: z.string().optional().openapi({ example: 'SOC-001', description: 'Código de sociedad (legacy)' }),
+
+    // Búsqueda por nombre o código
+    search: z.string().optional().openapi({
+      example: 'elect',
+      description: 'Búsqueda por nombre o código (case-insensitive)'
+    }),
+
+    isActive: z.string().transform(val => val === 'true').optional().openapi({
+      example: 'true',
+      description: 'Filtrar por estado activo/inactivo'
+    }),
+    createdBy: z.string().uuid().optional().openapi({
+      example: '550e8400-e29b-41d4-a716-446655440000',
+      description: 'UUID del usuario que creó la categoría'
+    }),
+
+    createdAtFrom: z.string().optional().openapi({
+      example: '2024-01-01',
+      description: 'Fecha inicial de creación. Formato: YYYY-MM-DD o ISO 8601'
+    }),
+    createdAtTo: z.string().optional().openapi({
+      example: '2024-12-31',
+      description: 'Fecha final de creación. Formato: YYYY-MM-DD o ISO 8601'
+    }),
+
+    updatedAtFrom: z.string().optional().openapi({
+      example: '2024-01-01',
+      description: 'Fecha inicial de actualización. Formato: YYYY-MM-DD o ISO 8601'
+    }),
+    updatedAtTo: z.string().optional().openapi({
+      example: '2024-12-31',
+      description: 'Fecha final de actualización. Formato: YYYY-MM-DD o ISO 8601'
+    }),
   })
 });
