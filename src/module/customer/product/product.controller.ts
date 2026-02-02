@@ -13,10 +13,11 @@ export const ProductController = {
       return res.status(400).json(parse.error.format());
     }
 
-    const societyId = req.query.societyId as string | undefined;
-    const categoryId = req.query.categoryId as string | undefined;
+    // Permitir societyCode o societyId (legacy)
+    const societyCode = (req.query.societyCode || req.query.societyId) as string | undefined;
+    const categoryCode = (req.query.categoryCode || req.query.categoryId) as string | undefined;
 
-    const result = await ProductService.getAll(parse.data.query, societyId, categoryId);
+    const result = await ProductService.getAll(parse.data.query, societyCode, categoryCode);
     res.json(result);
   },
 
@@ -96,9 +97,9 @@ export const ProductController = {
    * Obtener productos para select/dropdown (sin paginación)
    */
   getForSelect: async (req: Request, res: Response) => {
-    const societyId = req.query.societyId as string | undefined;
-    const categoryId = req.query.categoryId as string | undefined;
-    const result = await ProductService.getForSelect(societyId, categoryId);
+    const societyCode = (req.query.societyCode || req.query.societyId) as string | undefined;
+    const categoryCode = (req.query.categoryCode || req.query.categoryId) as string | undefined;
+    const result = await ProductService.getForSelect(societyCode, categoryCode);
     res.json(result);
   },
 };
