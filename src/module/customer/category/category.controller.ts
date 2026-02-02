@@ -11,8 +11,9 @@ export const CategoryController = {
       return res.status(400).json(parse.error.format());
     }
 
-    const societyId = req.query.societyId as string | undefined;
-    const result = await CategoryService.getAll(parse.data.query, societyId);
+    // Permitir societyCode o societyId (legacy)
+    const societyCode = (req.query.societyCode || req.query.societyId) as string | undefined;
+    const result = await CategoryService.getAll(parse.data.query, societyCode);
     res.json(result);
   },
 
