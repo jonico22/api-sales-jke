@@ -55,7 +55,7 @@ export const updateProductSchema = z.object({
     imageId: z.string().uuid().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
     isActive: z.boolean().optional().openapi({ example: true }),
     updatedBy: z.string().uuid().optional().openapi({ example: 'admin-uuid' }),
-    code: z.string().openapi({ example: 'PROD-001' }),
+    code: z.string().optional().openapi({ example: 'PROD-001' }),
   }))
 });
 
