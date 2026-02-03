@@ -1,17 +1,172 @@
 import { z } from 'zod';
+import { registry } from '@/config/swagger';
 
+// Schema base del Producto para OpenAPI
+export const ProductSchema = registry.register(
+  'Product',
+  z.object({
+    id: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+    name: z.string().min(1).openapi({ example: 'Laptop HP Pavilion', description: 'Nombre del producto' }),
+    description: z.string().optional().openapi({ example: 'Laptop con procesador Intel i5' }),
+    price: z.number().openapi({ example: 1500.00, description: 'Precio de venta' }),
+    priceCost: z.number().openapi({ example: 1200.00, description: 'Precio de costo' }),
+    stock: z.number().int().openapi({ example: 50, description: 'Stock actual' }),
+    minStock: z.number().int().openapi({ example: 10, description: 'Stock mínimo para alertas' }),
+    societyId: z.string().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+    categoryId: z.string().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+    imageId: z.string().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+    isActive: z.boolean().default(true).openapi({ example: true }),
+    isDeleted: z.boolean().default(false).openapi({ example: false }),
+    createdAt: z.string().datetime().openapi({ example: '2024-01-01T12:00:00Z' }),
+    createdBy: z.string().optional().openapi({ example: 'admin-uuid' }),
+    updatedBy: z.string().optional().openapi({ example: 'admin-uuid' }),
+    code: z.string().openapi({ example: 'PROD-001' }),
+  })
+);
+
+// Schema para CREAR producto
 export const createProductSchema = z.object({
-  name: z.string().min(1),
-  description: z.string().optional(),
-  price: z.coerce.number().gt(0),
-  stock: z.number().int().nonnegative(),
-  minStock: z.number().int().nonnegative().default(0),
-  societyId: z.string().uuid(),
-  categoryId: z.string().uuid(),
-  imageId: z.string().uuid().optional(),
-  createdBy: z.string().optional()
+  body: registry.register('CreateProduct', z.object({
+    name: z.string().min(1).openapi({ example: 'Laptop HP', description: 'Nombre del producto' }),
+    description: z.string().optional().openapi({ example: 'Descripción del producto' }),
+    price: z.coerce.number().gt(0).openapi({ example: 1500.00, description: 'Precio de venta' }),
+    priceCost: z.coerce.number().nonnegative().openapi({ example: 1200.00, description: 'Precio de costo' }),
+    stock: z.coerce.number().int().nonnegative().default(0).openapi({ example: 50 }),
+    minStock: z.coerce.number().int().nonnegative().default(0).openapi({ example: 10 }),
+    societyId: z.string().min(1).openapi({ example: 'SOC-001', description: 'Código de la Sociedad' }),
+    categoryId: z.string().min(1).openapi({ example: 'CAT-ELEC-01', description: 'Código de la Categoría' }),
+    imageId: z.string().uuid().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+    isActive: z.boolean().default(true).optional().openapi({ example: true, description: 'Indica si el producto está activo' }),
+    createdBy: z.string().uuid().optional().openapi({ example: 'admin-uuid' }),
+    code: z.string().openapi({ example: 'PROD-001' }),
+  }))
 });
 
-export const updateProductSchema = createProductSchema.partial().extend({
-  updatedBy: z.string().optional()
+// Schema para ACTUALIZAR producto (campos opcionales)
+export const updateProductSchema = z.object({
+  body: registry.register('UpdateProduct', z.object({
+    name: z.string().min(1).optional().openapi({ example: 'Laptop HP' }),
+    description: z.string().optional().openapi({ example: 'Descripción actualizada' }),
+    price: z.coerce.number().gt(0).optional().openapi({ example: 1500.00 }),
+    priceCost: z.coerce.number().nonnegative().optional().openapi({ example: 1200.00 }),
+    stock: z.coerce.number().int().nonnegative().optional().openapi({ example: 50 }),
+    minStock: z.coerce.number().int().nonnegative().optional().openapi({ example: 10 }),
+    societyId: z.string().min(1).optional().openapi({ example: 'SOC-001', description: 'Código de la Sociedad' }),
+    categoryId: z.string().min(1).optional().openapi({ example: 'CAT-ELEC-01', description: 'Código de la Categoría' }),
+    imageId: z.string().uuid().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+    isActive: z.boolean().optional().openapi({ example: true }),
+    updatedBy: z.string().uuid().optional().openapi({ example: 'admin-uuid' }),
+    code: z.string().optional().openapi({ example: 'PROD-001' }),
+  }))
 });
+
+// Schema para validar ID en params
+export const productIdSchema = z.object({
+  params: z.object({
+    id: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' })
+  })
+});
+
+// Tipos inferidos
+export type CreateProductInput = z.infer<typeof createProductSchema>['body'];
+export type UpdateProductInput = z.infer<typeof updateProductSchema>['body'];
+
+// Schema para FILTROS de consulta de productos
+export const productFiltersSchema = z.object({
+  query: z.object({
+    // Filtros de relación
+    societyCode: z.string().optional().openapi({
+      example: 'SOC-001',
+      description: 'Código de sociedad'
+    }),
+    societyId: z.string().optional().openapi({
+      example: 'SOC-001',
+      description: 'Código de sociedad (legacy)'
+    }),
+    categoryCode: z.string().optional().openapi({
+      example: 'CAT-001',
+      description: 'Código de categoría'
+    }),
+    categoryId: z.string().optional().openapi({
+      example: 'CAT-001',
+      description: 'Código de categoría (legacy)'
+    }),
+
+    // Búsqueda por nombre o código
+    search: z.string().optional().openapi({
+      example: 'laptop',
+      description: 'Búsqueda por nombre o código del producto (case-insensitive)'
+    }),
+
+    // Filtros de estado
+    isActive: z.string().transform(val => val === 'true').optional().openapi({
+      example: 'true',
+      description: 'Filtrar por estado activo/inactivo'
+    }),
+
+    // Filtros de precio
+    priceFrom: z.string().transform(val => parseFloat(val)).optional().openapi({
+      example: '100',
+      description: 'Precio mínimo de venta'
+    }),
+    priceTo: z.string().transform(val => parseFloat(val)).optional().openapi({
+      example: '1000',
+      description: 'Precio máximo de venta'
+    }),
+
+    // Filtros de precio de costo
+    priceCostFrom: z.string().transform(val => parseFloat(val)).optional().openapi({
+      example: '50',
+      description: 'Precio de costo mínimo'
+    }),
+    priceCostTo: z.string().transform(val => parseFloat(val)).optional().openapi({
+      example: '800',
+      description: 'Precio de costo máximo'
+    }),
+
+    // Filtros de stock
+    lowStock: z.string().transform(val => val === 'true').optional().openapi({
+      example: 'true',
+      description: 'Productos con stock bajo (stock <= minStock)'
+    }),
+    stockFrom: z.string().transform(val => parseInt(val)).optional().openapi({
+      example: '10',
+      description: 'Stock mínimo'
+    }),
+    stockTo: z.string().transform(val => parseInt(val)).optional().openapi({
+      example: '100',
+      description: 'Stock máximo'
+    }),
+
+    // Filtros de usuario
+    createdBy: z.string().uuid().optional().openapi({
+      example: '550e8400-e29b-41d4-a716-446655440000',
+      description: 'UUID del usuario que creó el producto'
+    }),
+    updatedBy: z.string().uuid().optional().openapi({
+      example: '550e8400-e29b-41d4-a716-446655440000',
+      description: 'UUID del usuario que actualizó el producto'
+    }),
+
+    // Filtros de rango de fechas para createdAt
+    createdAtFrom: z.string().optional().openapi({
+      example: '2024-01-01',
+      description: 'Fecha inicial de creación. Formato: YYYY-MM-DD o ISO 8601'
+    }),
+    createdAtTo: z.string().optional().openapi({
+      example: '2024-12-31',
+      description: 'Fecha final de creación. Formato: YYYY-MM-DD o ISO 8601'
+    }),
+
+    // Filtros de rango de fechas para updatedAt
+    updatedAtFrom: z.string().optional().openapi({
+      example: '2024-01-01',
+      description: 'Fecha inicial de actualización. Formato: YYYY-MM-DD o ISO 8601'
+    }),
+    updatedAtTo: z.string().optional().openapi({
+      example: '2024-12-31',
+      description: 'Fecha final de actualización. Formato: YYYY-MM-DD o ISO 8601'
+    }),
+  })
+});
+

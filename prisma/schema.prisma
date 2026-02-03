@@ -41,7 +41,7 @@ model BussinessPartner {
   companyName    String?
   contactEmail   String?
   email          String        @unique
-  phone          String
+  phone          String?
   telephone      String?
   address        String?
   createdAt      DateTime      @default(now())
@@ -161,8 +161,10 @@ model Product {
   name        String
   description String?
   price       Decimal @db.Decimal(10, 2)
+  priceCost   Decimal @db.Decimal(10, 2)
   stock       Int     @default(0)
-  minStock    Int     @default(0) // Mínimo de stock para alertas
+  minStock    Int     @default(0)
+  code        String  @default("TEMP-CODE") // Mínimo de stock para alertas
   societyId   String
   society     Society @relation(fields: [societyId], references: [id])
 
@@ -191,18 +193,19 @@ model Product {
 }
 
 model Category {
-  id        String    @id @default(uuid())
-  name      String
-  code      String    @unique
-  products  Product[] // Relación uno a muchos con productos
-  societyId String
-  society   Society   @relation(fields: [societyId], references: [id])
-  isActive  Boolean   @default(true)
-  isDeleted Boolean   @default(false)
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
-  createdBy String?
-  updatedBy String?
+  id          String    @id @default(uuid())
+  name        String
+  code        String    @unique
+  description String?
+  products    Product[] // Relación uno a muchos con productos
+  societyId   String
+  society     Society   @relation(fields: [societyId], references: [id])
+  isActive    Boolean   @default(true)
+  isDeleted   Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  createdBy   String?
+  updatedBy   String?
 }
 
 model BranchOffice {

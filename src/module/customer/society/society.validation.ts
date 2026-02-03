@@ -15,7 +15,7 @@ export const updateSocietySchema = z.object({
 });
 
 export const societyIdSchema = z.object({
-  id: z.string().uuid(),
+  code: z.string().uuid(),
 });
 
 
