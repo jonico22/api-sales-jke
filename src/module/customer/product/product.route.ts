@@ -55,6 +55,8 @@ router.get('/', ProductController.getAll);
  *       200:
  *         description: Lista de productos (id, name, price, stock, category)
  */
+// Endpoint para obtener usuarios únicos que han creado productos
+router.get('/created-by-users', ProductController.getCreatedByUsers);
 // Endpoint para obtener usuarios únicos que han actualizado productos
 router.get('/updated-by-users', ProductController.getUpdatedByUsers);
 

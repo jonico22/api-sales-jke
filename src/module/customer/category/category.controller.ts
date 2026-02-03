@@ -39,6 +39,12 @@ export const CategoryController = {
     res.status(201).json(result);
   },
 
+  getCreatedByUsers: async (req: Request, res: Response) => {
+    const societyId = req.query.societyId as string | undefined;
+    const result = await CategoryService.getCreatedByUsers(societyId);
+    res.json(result);
+  },
+
   getUpdatedByUsers: async (req: Request, res: Response) => {
     const societyId = req.query.societyId as string | undefined;
     const result = await CategoryService.getUpdatedByUsers(societyId);

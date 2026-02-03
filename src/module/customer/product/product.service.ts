@@ -298,6 +298,42 @@ export const ProductService = {
   },
 
   /**
+   * Obtener lista de usuarios únicos que han creado productos
+   * Filtrado opcionalmente por societyId
+   */
+  getCreatedByUsers: async (societyId?: string): Promise<string[]> => {
+    const whereClause: any = { isDeleted: false, createdBy: { not: null } };
+
+    if (societyId) {
+      const society = await prisma.society.findUnique({ where: { code: societyId } });
+
+      if (society) {
+        whereClause.societyId = society.id;
+      } else {
+        const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
+        if (isUuid) {
+          whereClause.societyId = societyId;
+        } else {
+          return [];
+        }
+      }
+    }
+
+    const result = await prisma.product.findMany({
+      where: whereClause,
+      distinct: ['createdBy'],
+      select: {
+        createdBy: true
+      }
+    });
+
+    // Mapear a array de strings y filtrar nulos o vacíos
+    return result
+      .map(item => item.createdBy)
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
+  },
+
+  /**
    * Obtener lista de usuarios únicos que han actualizado productos
    * Filtrado opcionalmente por societyId
    */
@@ -305,7 +341,18 @@ export const ProductService = {
     const whereClause: any = { isDeleted: false, updatedBy: { not: null } };
 
     if (societyId) {
-      whereClause.societyId = societyId;
+      const society = await prisma.society.findUnique({ where: { code: societyId } });
+
+      if (society) {
+        whereClause.societyId = society.id;
+      } else {
+        const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
+        if (isUuid) {
+          whereClause.societyId = societyId;
+        } else {
+          return [];
+        }
+      }
     }
 
     const result = await prisma.product.findMany({
@@ -316,10 +363,10 @@ export const ProductService = {
       }
     });
 
-    // Mapear a array de strings y filtrar nulos
+    // Mapear a array de strings y filtrar nulos o vacíos
     return result
       .map(item => item.updatedBy)
-      .filter((id): id is string => id !== null);
+      .filter((id): id is string => typeof id === 'string' && id.length > 0);
   },
 
   /**

@@ -20,6 +20,8 @@ router.get('/', CategoryController.getAll);
  *       200:
  *         description: Lista de categorías (id, name, code)
  */
+// Endpoint para obtener usuarios únicos que han creado (útil para filtros)
+router.get('/created-by-users', CategoryController.getCreatedByUsers);
 // Endpoint para obtener usuarios únicos que han actualizado (útil para filtros)
 router.get('/updated-by-users', CategoryController.getUpdatedByUsers);
 

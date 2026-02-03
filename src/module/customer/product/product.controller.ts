@@ -41,6 +41,12 @@ export const ProductController = {
     res.json(product);
   },
 
+  getCreatedByUsers: async (req: Request, res: Response) => {
+    const societyId = req.query.societyId as string | undefined;
+    const result = await ProductService.getCreatedByUsers(societyId);
+    res.json(result);
+  },
+
   getUpdatedByUsers: async (req: Request, res: Response) => {
     const societyId = req.query.societyId as string | undefined;
     const result = await ProductService.getUpdatedByUsers(societyId);
