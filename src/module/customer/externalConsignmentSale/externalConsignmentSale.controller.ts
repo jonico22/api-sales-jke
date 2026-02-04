@@ -1,44 +1,53 @@
-import { Request, Response } from 'express'
-import * as service from './externalConsignmentSale.service'
-import { createExternalConsignmentSaleSchema, updateExternalConsignmentSaleSchema } from './externalConsignmentSale.validation'
+import { Request, Response } from 'express';
+import * as service from './externalConsignmentSale.service';
+import {
+  createExternalConsignmentSaleSchema,
+  updateExternalConsignmentSaleSchema,
+  externalConsignmentSaleIdSchema,
+  filterExternalConsignmentSaleSchema,
+} from './externalConsignmentSale.validation';
+import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
 export const create = async (req: Request, res: Response) => {
-  const parsed = createExternalConsignmentSaleSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() })
+  const data = createExternalConsignmentSaleSchema.parse(req.body);
+  const created = await service.createExternalConsignmentSale(data);
+  res.status(201).json(created);
+};
 
-  const externalConsignmentSale = await service.createExternalConsignmentSale(parsed.data as any)
-  return res.status(201).json(externalConsignmentSale)
-}
+export const getAll = async (req: Request, res: Response) => {
+  const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
+  const filtersParse = filterExternalConsignmentSaleSchema.safeParse({ query: req.query });
 
-export const getAll = async (_req: Request, res: Response) => {
-  const data = await service.getAllExternalConsignmentSales()
-  return res.json(data)
-}
+  if (!paginationParse.success || !filtersParse.success) {
+    return res.status(400).json({
+      ...(paginationParse.error?.format?.() ?? {}),
+      ...(filtersParse.error?.format?.() ?? {}),
+    });
+  }
+
+  const data = await service.getAllExternalConsignmentSales(
+    paginationParse.data.query,
+    filtersParse.data.query
+  );
+  res.json(data);
+};
 
 export const getById = async (req: Request, res: Response) => {
-  const { id } = req.params
-  const data = await service.getExternalConsignmentSaleById(id)
-  if (!data) return res.status(404).json({ error: 'ExternalConsignmentSale not found' })
-  return res.json(data)
-}
+  const { id } = externalConsignmentSaleIdSchema.parse(req.params);
+  const data = await service.getExternalConsignmentSaleById(id);
+  if (!data) return res.status(404).json({ message: 'Sale not found' });
+  res.json(data);
+};
 
 export const update = async (req: Request, res: Response) => {
-  const { id } = req.params
-  const parsed = updateExternalConsignmentSaleSchema.safeParse(req.body)
-  if (!parsed.success) return res.status(400).json({ error: parsed.error.flatten() })
-
-  const exists = await service.getExternalConsignmentSaleById(id)
-  if (!exists) return res.status(404).json({ error: 'ExternalConsignmentSale not found' })
-
-  const updated = await service.updateExternalConsignmentSale(id, parsed.data)
-  return res.json(updated)
-}
+  const { id } = externalConsignmentSaleIdSchema.parse(req.params);
+  const data = updateExternalConsignmentSaleSchema.parse(req.body);
+  const updated = await service.updateExternalConsignmentSale(id, data);
+  res.json(updated);
+};
 
 export const remove = async (req: Request, res: Response) => {
-  const { id } = req.params
-  const exists = await service.getExternalConsignmentSaleById(id)
-  if (!exists) return res.status(404).json({ error: 'ExternalConsignmentSale not found' })
-
-  await service.deleteExternalConsignmentSale(id)
-  return res.status(204).send()
-}
+  const { id } = externalConsignmentSaleIdSchema.parse(req.params);
+  const deleted = await service.deleteExternalConsignmentSale(id);
+  res.json(deleted);
+};

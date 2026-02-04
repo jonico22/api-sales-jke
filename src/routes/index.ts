@@ -1,12 +1,10 @@
 import { Router } from 'express';
-
 import societyRoutes from '@/module/customer/society/society.route';
 import productRoutes from '@/module/customer/product/product.route';
 import branchOfficeRoutes from '@/module/customer/branchOffice/branchoffice.route';
 import branchOfficeProductRoutes from '@/module/customer/branchOfficeProduct/branchofficeproduct.route';
 import purchaseDetailRoutes from '@/module/customer/purchaseDetail/purchaseDetail.routes';
-import purchaseRoutes from '@/module/customer/purchase/purchase.routes';
-
+import purchaseRoutes from '@/module/customer/purchase/purchase.route';
 import orderRoutes from '@/module/customer/order/order.route';
 import orderItemRoutes from '@/module/customer/orderItem/orderItem.route';
 import orderPaymentRoutes from '@/module/customer/orderPayment/orderPayment.route';
@@ -16,12 +14,17 @@ import deliveredConsignmentAgreementRoutes from '@/module/customer/deliveredCons
 import receivedConsignmentSettlementRoutes from '@/module/customer/receivedConsignmentSettlement/receivedConsignmentSettlement.route';
 import bussinessPartnerRoutes from '@/module/customer/bussinesspartner/bussinesspartner.route';
 import categoryRoutes from '@/module/customer/category/category.route';
+import taxRoutes from '@/module/customer/tax/tax.routes';
+import currencyRoutes from '@/module/customer/currency/currency.routes';
+import ProductRoutes from '../module/customer/product/product.route';
+import FileRoutes from '../module/customer/file/file.route';
 
 const router = Router();
 
-// modulo de clientes
+// Modulo de Clientes (Customer Modules)
 router.use('/societies', societyRoutes);
-router.use('/products', productRoutes);
+router.use('/products', ProductRoutes);
+router.use('/files', FileRoutes);
 router.use('/branch-offices', branchOfficeRoutes);
 router.use('/branch-office-products', branchOfficeProductRoutes);
 router.use('/purchases', purchaseRoutes);
@@ -35,5 +38,9 @@ router.use('/delivered-consignment-agreements', deliveredConsignmentAgreementRou
 router.use('/received-consignment-settlements', receivedConsignmentSettlementRoutes);
 router.use('/bussinesspartners', bussinessPartnerRoutes);
 router.use('/categories', categoryRoutes);
+
+// Configuración Regional (New)
+router.use('/taxes', taxRoutes);
+router.use('/currencies', currencyRoutes);
 
 export default router;

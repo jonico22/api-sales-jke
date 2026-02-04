@@ -10,6 +10,18 @@ export const societyReceiptSchema = z.object({
   currencyId: z.string(),
   taxId: z.string(),
   receiptTypeId: z.string(),
+  societyId: z.string(),
+  subTotal: z.coerce.number().nonnegative(),
+  taxAmount: z.coerce.number().nonnegative(),
 })
 
 export const updateSocietyReceiptSchema = societyReceiptSchema.partial()
+
+export const societyReceiptFiltersSchema = z.object({
+  search: z.string().optional(),
+  societyId: z.string().optional(),
+  receiptTypeId: z.string().optional(),
+  status: z.enum(['issued', 'canceled', 'pending_send']).optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+})

@@ -1,10 +1,24 @@
 import { Request, Response } from 'express';
 import { BranchOfficeService } from './branchoffice.service';
-import { branchOfficeIdSchema } from './branchoffice.validation';
+import { branchOfficeFiltersSchema, branchOfficeIdSchema } from './branchoffice.validation';
+import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
 export const BranchOfficeController = {
-  getAll: async (_req: Request, res: Response) => {
-    const data = await BranchOfficeService.getAll();
+  getAll: async (req: Request, res: Response) => {
+    const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
+    const filtersParse = branchOfficeFiltersSchema.safeParse({ query: req.query });
+
+    if (!paginationParse.success || !filtersParse.success) {
+      return res.status(400).json({
+        ...(paginationParse.error?.format?.() ?? {}),
+        ...(filtersParse.error?.format?.() ?? {}),
+      });
+    }
+
+    const data = await BranchOfficeService.getAll(
+      paginationParse.data.query,
+      filtersParse.data.query
+    );
     res.json(data);
   },
 

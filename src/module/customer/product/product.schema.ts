@@ -16,11 +16,11 @@ export const ProductSchema = registry.register(
     categoryId: z.string().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
     imageId: z.string().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
     isActive: z.boolean().default(true).openapi({ example: true }),
-    isDeleted: z.boolean().default(false).openapi({ example: false }),
-    createdAt: z.string().datetime().openapi({ example: '2024-01-01T12:00:00Z' }),
-    createdBy: z.string().optional().openapi({ example: 'admin-uuid' }),
     updatedBy: z.string().optional().openapi({ example: 'admin-uuid' }),
     code: z.string().openapi({ example: 'PROD-001' }),
+    barcode: z.string().optional().openapi({ example: '775000000001', description: 'Código de barras (EAN/UPC)' }),
+    brand: z.string().optional().openapi({ example: 'HP', description: 'Marca del producto' }),
+    unitOfMeasure: z.string().default('NIU').openapi({ example: 'NIU', description: 'Unidad de medida (SUNAT)' }),
   })
 );
 
@@ -39,6 +39,9 @@ export const createProductSchema = z.object({
     isActive: z.boolean().default(true).optional().openapi({ example: true, description: 'Indica si el producto está activo' }),
     createdBy: z.string().uuid().optional().openapi({ example: 'admin-uuid' }),
     code: z.string().openapi({ example: 'PROD-001' }),
+    barcode: z.string().optional().openapi({ example: '775000000001', description: 'Código de barras (EAN/UPC)' }),
+    brand: z.string().optional().openapi({ example: 'HP', description: 'Marca del producto' }),
+    unitOfMeasure: z.string().default('NIU').optional().openapi({ example: 'NIU', description: 'Unidad de medida (SUNAT)' }),
   }))
 });
 
@@ -53,10 +56,12 @@ export const updateProductSchema = z.object({
     minStock: z.coerce.number().int().nonnegative().optional().openapi({ example: 10 }),
     societyId: z.string().min(1).optional().openapi({ example: 'SOC-001', description: 'Código de la Sociedad' }),
     categoryId: z.string().min(1).optional().openapi({ example: 'CAT-ELEC-01', description: 'Código de la Categoría' }),
-    imageId: z.string().uuid().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
     isActive: z.boolean().optional().openapi({ example: true }),
     updatedBy: z.string().uuid().optional().openapi({ example: 'admin-uuid' }),
     code: z.string().optional().openapi({ example: 'PROD-001' }),
+    barcode: z.string().optional().openapi({ example: '775000000001', description: 'Código de barras (EAN/UPC)' }),
+    brand: z.string().optional().openapi({ example: 'HP', description: 'Marca del producto' }),
+    unitOfMeasure: z.string().optional().openapi({ example: 'NIU', description: 'Unidad de medida (SUNAT)' }),
   }))
 });
 

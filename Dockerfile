@@ -56,6 +56,9 @@ COPY --from=build /app/prisma ./prisma
 COPY --from=build /app/tsconfig.json ./tsconfig.json
 EXPOSE 4500
 
+# Create Uploads Directory
+RUN mkdir -p /app/uploads/temp && chmod -R 777 /app/uploads
+
 RUN echo "📂 CONTENIDO DE DIST:" && ls -R dist
 
 CMD export INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id=$INFISICAL_CLIENT_ID --client-secret=$INFISICAL_CLIENT_SECRET --domain=${INFISICAL_API_URL:-https://app.infisical.com} --silent --plain) && \

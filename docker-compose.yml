@@ -50,7 +50,7 @@ services:
     profiles: [ "local-services" ] # 👈 Solo inicia si se pide explícitamente
     container_name: postgres_db
     ports:
-      - "5432:5435"
+      - "5435:5432"
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}

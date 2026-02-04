@@ -1,17 +1,21 @@
 import { Request, Response } from 'express'
 import { orderItemService } from './orderItem.service'
+import { createOrderItemSchema, updateOrderItemSchema } from './orderItem.validation'
 
 export const orderItemController = {
   create: async (req: Request, res: Response) => {
+    const parse = createOrderItemSchema.safeParse({ body: req.body });
+    if (!parse.success) return res.status(400).json(parse.error.format());
+
     try {
-      const orderItem = await orderItemService.create(req.body)
+      const orderItem = await orderItemService.create(parse.data.body)
       res.status(201).json(orderItem)
     } catch (error) {
       if (error instanceof Error) {
-      res.status(400).json({ error: error.message });
-    } else {
-      res.status(400).json({ error: 'An unknown error occurred' });
-    }
+        res.status(400).json({ error: error.message });
+      } else {
+        res.status(400).json({ error: 'An unknown error occurred' });
+      }
     }
   },
 
@@ -22,10 +26,10 @@ export const orderItemController = {
       res.json(items)
     } catch (error) {
       if (error instanceof Error) {
-      res.status(500).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: 'An unknown error occurred' });
-    }
+        res.status(500).json({ error: error.message });
+      } else {
+        res.status(500).json({ error: 'An unknown error occurred' });
+      }
     }
   },
 
@@ -36,23 +40,26 @@ export const orderItemController = {
       res.json(item)
     } catch (error) {
       if (error instanceof Error) {
-      res.status(500).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: 'An unknown error occurred' });
-    }
+        res.status(500).json({ error: error.message });
+      } else {
+        res.status(500).json({ error: 'An unknown error occurred' });
+      }
     }
   },
 
   update: async (req: Request, res: Response) => {
+    const parse = updateOrderItemSchema.safeParse({ body: req.body });
+    if (!parse.success) return res.status(400).json(parse.error.format());
+
     try {
-      const item = await orderItemService.update(req.params.id, req.body)
+      const item = await orderItemService.update(req.params.id, parse.data.body)
       res.json(item)
     } catch (error) {
       if (error instanceof Error) {
-      res.status(400).json({ error: error.message });
-    } else {
-      res.status(400).json({ error: 'An unknown error occurred' });
-    }
+        res.status(400).json({ error: error.message });
+      } else {
+        res.status(400).json({ error: 'An unknown error occurred' });
+      }
     }
   },
 
@@ -62,10 +69,10 @@ export const orderItemController = {
       res.status(204).send()
     } catch (error) {
       if (error instanceof Error) {
-      res.status(500).json({ error: error.message });
-    } else {
-      res.status(500).json({ error: 'An unknown error occurred' });
-    }
+        res.status(500).json({ error: error.message });
+      } else {
+        res.status(500).json({ error: 'An unknown error occurred' });
+      }
     }
   },
 }

@@ -1,14 +1,17 @@
 import { z } from 'zod'
 
 export const createOrderItemSchema = z.object({
-  orderId: z.string(),
-  productId: z.string(),
-  quantity: z.number().positive(),
-  unitPrice: z.number().nonnegative(),
-  subtotal: z.number().nonnegative(),
-  discount: z.number().nonnegative().optional(),
-  total: z.number().nonnegative().optional(),
-  createdBy: z.string().optional(),
+  body: z.object({
+    orderId: z.string().uuid(),
+    productId: z.string().uuid(),
+    quantity: z.number().int().positive(),
+    unitPrice: z.number().nonnegative(), // Precio CON IGV
+    discount: z.number().min(0).optional(),
+    comment: z.string().optional(),
+    createdBy: z.string().optional(),
+  })
 })
 
-export const updateOrderItemSchema = createOrderItemSchema.partial()
+export const updateOrderItemSchema = z.object({
+  body: createOrderItemSchema.shape.body.partial()
+})

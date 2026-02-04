@@ -17,7 +17,18 @@ export const BussinessPartnerController = {
         if (!parse.success) return res.status(400).json(parse.error.format());
 
         const societyId = req.query.societyId as string | undefined;
-        const result = await BussinessPartnerService.getAll(parse.data.query, societyId);
+
+        // Extract filters
+        const filters = {
+            search: req.query.search as string | undefined,
+            isActive: req.query.isActive as string | undefined,
+            typeBP: req.query.typeBP as string | undefined,
+            type: req.query.type as any, // Cast to any to pass to service, validation happens if needed or strict typing in service
+            createdAtFrom: req.query.createdAtFrom as string | undefined,
+            createdAtTo: req.query.createdAtTo as string | undefined,
+        };
+
+        const result = await BussinessPartnerService.getAll(parse.data.query, societyId, filters);
         res.json(result);
     },
 
