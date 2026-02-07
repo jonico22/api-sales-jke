@@ -1,3 +1,4 @@
+
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
 import { PaymentStatus } from '@prisma/client';
@@ -5,21 +6,23 @@ import {
   PaginatedResult,
   getPrismaPaginationParams,
   buildPaginatedResult,
+  PaginationQuery
 } from '@/utils/pagination';
 import { convertLimaDateRangeToUTC, formatToLimaTime } from '@/utils/dateFormatter';
 import { CashShiftService } from '../cashShift/cashShift.service';
+import { CreateOrderPaymentInput, PaymentFilters } from './orderPayment.schema';
 
 const CACHE_PREFIX = 'order_payments:';
 const CACHE_TTL_LIST = 300; // 5 min
 
-export const orderPaymentService = {
-  create: async (data: any) => {
+export const OrderPaymentService = {
+  create: async (data: CreateOrderPaymentInput) => {
     // Si el pago CONFIRMS la orden, actualizar el estado de la Orden (lógica de negocio futura)
 
     const created = await prisma.orderPayment.create({
       data: {
         ...data,
-        status: data.status || 'PENDING'
+        status: data.status || PaymentStatus.PENDING
       }
     });
 
@@ -29,7 +32,6 @@ export const orderPaymentService = {
       await redis.del(`orders:${created.orderId}`); // Invalidar orden también
 
       // [INTEGRATION] Cash Shift - Automatic Registration
-      // "If a box was registered... otherwise don't ask"
       try {
         const order = await prisma.order.findUnique({
           where: { id: created.orderId },
@@ -45,9 +47,6 @@ export const orderPaymentService = {
           );
         }
       } catch (error) {
-        // Graceful degradation: If cash logic fails (e.g. db error implies no critical block for sale)
-        // Or if we want strictness, we'd throw.
-        // User asked: "sino no le debe pedir" -> Non-blocking.
         console.error('Error auto-registering cash movement:', error);
       }
     }
@@ -55,23 +54,29 @@ export const orderPaymentService = {
     return created;
   },
 
-  findAll: async (filters: any = {}): Promise<PaginatedResult<any>> => {
-    const page = filters.page ?? 1;
-    const limit = filters.limit ?? 10;
-    const sortBy = filters.sortBy ?? 'createdAt';
-    const sortOrder = filters.sortOrder ?? 'desc';
+  getAll: async (
+    paginationQuery?: PaginationQuery,
+    filters?: PaymentFilters
+  ): Promise<PaginatedResult<any>> => {
+    const page = paginationQuery?.page ?? 1;
+    const limit = paginationQuery?.limit ?? 10;
+    const sortBy = paginationQuery?.sortBy ?? 'createdAt';
+    const sortOrder = paginationQuery?.sortOrder ?? 'desc';
 
     // Cache Key
     const cacheKeyParts = [
       CACHE_PREFIX,
       'list',
-      filters.societyId || 'all',
-      filters.orderId || 'all',
-      filters.status || 'all',
-      filters.paymentMethod || 'all',
-      filters.search || 'all',
-      filters.dateFrom || 'all',
-      filters.dateTo || 'all',
+      filters?.societyId || 'all',
+      filters?.orderId || 'all',
+      filters?.status || 'all',
+      filters?.paymentMethod || 'all',
+      filters?.search || 'all',
+      filters?.dateFrom || 'all',
+      filters?.dateTo || 'all',
+      filters?.createdBy || 'all',
+      filters?.amountFrom || 'all',
+      filters?.amountTo || 'all',
       page, limit, sortBy, sortOrder
     ];
     const cacheKey = cacheKeyParts.join(':');
@@ -83,12 +88,13 @@ export const orderPaymentService = {
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
     const whereClause: any = {};
 
-    if (filters.societyId) whereClause.societyId = filters.societyId;
-    if (filters.orderId) whereClause.orderId = filters.orderId;
-    if (filters.status) whereClause.status = filters.status;
-    if (filters.paymentMethod) whereClause.paymentMethod = filters.paymentMethod;
+    if (filters?.societyId) whereClause.societyId = filters.societyId;
+    if (filters?.orderId) whereClause.orderId = filters.orderId;
+    if (filters?.status) whereClause.status = filters.status;
+    if (filters?.paymentMethod) whereClause.paymentMethod = filters.paymentMethod;
+    if (filters?.createdBy) whereClause.createdBy = filters.createdBy;
 
-    if (filters.search) {
+    if (filters?.search) {
       whereClause.OR = [
         { referenceCode: { contains: filters.search, mode: 'insensitive' } },
         { notes: { contains: filters.search, mode: 'insensitive' } }
@@ -96,11 +102,18 @@ export const orderPaymentService = {
     }
 
     // Fechas
-    if (filters.dateFrom || filters.dateTo) {
+    if (filters?.dateFrom || filters?.dateTo) {
       whereClause.paymentDate = {};
       const dateRange = convertLimaDateRangeToUTC(filters.dateFrom, filters.dateTo);
       if (dateRange.from) whereClause.paymentDate.gte = dateRange.from;
       if (dateRange.to) whereClause.paymentDate.lte = dateRange.to;
+    }
+
+    // Amount Range
+    if (filters?.amountFrom || filters?.amountTo) {
+      whereClause.amount = {};
+      if (filters.amountFrom) whereClause.amount.gte = filters.amountFrom;
+      if (filters.amountTo) whereClause.amount.lte = filters.amountTo;
     }
 
     // 2. Query

@@ -1,3 +1,4 @@
+
 import { z } from 'zod';
 import { registry } from '@/config/swagger';
 import { PaymentMethodOrder, PaymentStatus } from '@prisma/client';
@@ -43,9 +44,11 @@ export const paymentFiltersSchema = z.object({
         sortBy: z.string().optional().openapi({ example: 'createdAt' }),
         sortOrder: z.string().optional().openapi({ example: 'desc' }),
 
-        // Filters
+        // Filters IDs
         societyId: z.string().optional().openapi({ example: 'uuid' }),
         orderId: z.string().optional().openapi({ example: 'uuid' }),
+
+        // Enum Filters
         status: z.nativeEnum(PaymentStatus).optional().openapi({ example: PaymentStatus.CONFIRMED }),
         paymentMethod: z.nativeEnum(PaymentMethodOrder).optional().openapi({ example: PaymentMethodOrder.CASH }),
 
@@ -55,5 +58,16 @@ export const paymentFiltersSchema = z.object({
         // Date Range
         dateFrom: z.string().optional().openapi({ example: '2024-01-01' }),
         dateTo: z.string().optional().openapi({ example: '2024-12-31' }),
+
+        // Amount Range
+        amountFrom: z.string().transform(val => parseFloat(val)).optional(),
+        amountTo: z.string().transform(val => parseFloat(val)).optional(),
+
+        // User Tracking
+        createdBy: z.string().optional()
     })
 });
+
+export type CreateOrderPaymentInput = z.infer<typeof createOrderPaymentSchema>['body'];
+export type UpdateOrderPaymentInput = z.infer<typeof updateOrderPaymentSchema>['body'];
+export type PaymentFilters = z.infer<typeof paymentFiltersSchema>['query'];

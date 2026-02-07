@@ -1,3 +1,4 @@
+
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
 import { CreateOrderInput, UpdateOrderInput, OrderFilters } from './order.schema';
@@ -7,9 +8,9 @@ import {
   buildPaginatedResult,
   PaginationQuery,
 } from '@/utils/pagination';
-import { Order, OrderStatus, Product } from '@prisma/client';
+import { Order, OrderStatus, Product, TransactionType } from '@prisma/client';
+import { InventoryService } from '@/module/inventory/inventory.service';
 import { toLimaTimezone, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
-import { Decimal } from '@prisma/client/runtime/library';
 
 const CACHE_PREFIX = 'orders:';
 const CACHE_TTL_LIST = 300;
@@ -67,7 +68,7 @@ export const OrderService = {
 
     const totalAmount = calculatedSubtotal - data.discount; // Aplicar descuento global si existe
 
-    // 4. Generar Código (Simple timestamp o sequence mock)
+    // 4. Generar Código
     const orderCode = data.orderCode || `ORD-${Date.now()}`;
 
     // 5. Transacción de creación
@@ -131,7 +132,10 @@ export const OrderService = {
       filters?.societyId || 'all',
       filters?.status || 'all',
       filters?.partnerId || 'all',
+      filters?.branchId || 'all',
       filters?.search || 'all',
+      filters?.totalAmountFrom || 'all',
+      filters?.totalAmountTo || 'all',
       page, limit, sortBy, sortOrder
     ].join(':');
 
@@ -146,6 +150,13 @@ export const OrderService = {
     if (filters?.branchId) whereClause.branchId = filters.branchId;
     if (filters?.status) whereClause.status = filters.status;
     if (filters?.createdBy) whereClause.createdBy = filters.createdBy;
+
+    // Numeric Filters
+    if (filters?.totalAmountFrom || filters?.totalAmountTo) {
+      whereClause.totalAmount = {};
+      if (filters.totalAmountFrom) whereClause.totalAmount.gte = filters.totalAmountFrom;
+      if (filters.totalAmountTo) whereClause.totalAmount.lte = filters.totalAmountTo;
+    }
 
     if (filters?.dateFrom || filters?.dateTo) {
       const dateRange = convertLimaDateRangeToUTC(filters.dateFrom, filters.dateTo);
@@ -164,6 +175,7 @@ export const OrderService = {
               { companyName: { contains: filters.search, mode: 'insensitive' } },
               { firstName: { contains: filters.search, mode: 'insensitive' } },
               { lastName: { contains: filters.search, mode: 'insensitive' } },
+              { documentNumber: { contains: filters.search, mode: 'insensitive' } }
             ]
           }
         }
@@ -177,8 +189,10 @@ export const OrderService = {
         take: prismaParams.take,
         orderBy: prismaParams.orderBy,
         include: {
-          partner: { select: { id: true, companyName: true, firstName: true, lastName: true, documentNumber: true } },
+          partner: { select: { id: true, companyName: true, firstName: true, lastName: true, documentNumber: true, email: true } },
           currency: { select: { code: true, symbol: true } },
+          society: { select: { id: true, name: true } },
+          branch: { select: { id: true, name: true } },
           _count: { select: { orderItems: true } }
         }
       }),
@@ -208,7 +222,7 @@ export const OrderService = {
         society: { select: { id: true, name: true } },
         orderItems: {
           include: {
-            product: { select: { id: true, name: true, code: true } }
+            product: { select: { id: true, name: true, code: true, imageId: true } }
           }
         },
         OrderPayment: true // Incluir pagos relacionados
@@ -223,27 +237,76 @@ export const OrderService = {
    * Actualizar Orden
    */
   update: async (id: string, data: UpdateOrderInput) => {
-    // Nota: Actualizar ítems es complejo, aquí permitimos actualizar cabecera
-    // Si se requiere actualizar ítems, lo ideal es una ruta dedicada o lógica de diff
-
-    // Por seguridad, recalculamos si se toca dinero, 
-    // pero para MVP permitimos editar campos de estado/notas directo.
-
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     const { orderItems, societyId, ...updateData } = data;
 
-    const updated = await prisma.order.update({
+    // Check for Status Change to COMPLETED
+    const currentOrder = await prisma.order.findUnique({
       where: { id },
-      data: {
-        ...updateData,
-        updatedAt: new Date()
+      include: { orderItems: true }
+    });
+
+    if (!currentOrder) throw new Error('Orden no encontrada');
+
+    const isCompleting = updateData.status === OrderStatus.COMPLETED && currentOrder.status !== OrderStatus.COMPLETED;
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Update Order Header
+      const updated = await tx.order.update({
+        where: { id },
+        data: {
+          ...updateData,
+          updatedAt: new Date()
+        },
+        include: { orderItems: true }
+      });
+
+      // 2. If completing, Process Stock Exit
+      if (isCompleting) {
+        for (const item of updated.orderItems) {
+          // A. Decrease Stock
+          await tx.branchOfficeProduct.upsert({
+            where: {
+              productId_branchOfficeId: {
+                productId: item.productId,
+                branchOfficeId: updated.branchId
+              }
+            },
+            update: {
+              physicalStock: { decrement: item.quantity },
+              availableStock: { decrement: item.quantity },
+            },
+            create: {
+              productId: item.productId,
+              branchOfficeId: updated.branchId,
+              physicalStock: -item.quantity,
+              availableStock: -item.quantity,
+            }
+          });
+
+          // B. Log Kardex
+          await InventoryService.logTransaction({
+            date: new Date(),
+            productId: item.productId,
+            branchOfficeId: updated.branchId,
+            type: TransactionType.SALE_EXIT,
+            quantity: -item.quantity, // Negative for EXIT
+            unitCost: Number(item.costPrice),
+            totalCost: Number(item.unitPrice) * item.quantity,
+            referenceId: updated.id,
+            referenceType: 'ORDER',
+            documentNumber: updated.orderCode
+          }, tx);
+        }
       }
+
+      return updated;
     });
 
     await redis.del(`${CACHE_PREFIX}${id}`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
 
-    return updated;
+    return result;
   },
 
   /**

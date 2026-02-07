@@ -1,78 +1,90 @@
-import { Request, Response } from 'express'
-import { orderItemService } from './orderItem.service'
-import { createOrderItemSchema, updateOrderItemSchema } from './orderItem.validation'
 
-export const orderItemController = {
+import { Request, Response } from 'express';
+import { OrderItemService } from './orderItem.service';
+import {
+  createOrderItemSchema,
+  updateOrderItemSchema,
+  orderItemFiltersSchema,
+  orderItemIdSchema
+} from './orderItem.schema';
+import { paginationQuerySchema } from '@/schemas/pagination.schema';
+
+export const OrderItemController = {
   create: async (req: Request, res: Response) => {
     const parse = createOrderItemSchema.safeParse({ body: req.body });
     if (!parse.success) return res.status(400).json(parse.error.format());
 
     try {
-      const orderItem = await orderItemService.create(parse.data.body)
-      res.status(201).json(orderItem)
-    } catch (error) {
-      if (error instanceof Error) {
-        res.status(400).json({ error: error.message });
-      } else {
-        res.status(400).json({ error: 'An unknown error occurred' });
-      }
+      const orderItem = await OrderItemService.create(parse.data.body);
+      res.status(201).json(orderItem);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   },
 
-  findAll: async (req: Request, res: Response) => {
+  getAll: async (req: Request, res: Response) => {
+    const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
+    const filtersParse = orderItemFiltersSchema.safeParse({ query: req.query });
+
+    if (!paginationParse.success || !filtersParse.success) {
+      return res.status(400).json({
+        ...(paginationParse.error?.format?.() ?? {}),
+        ...(filtersParse.error?.format?.() ?? {})
+      });
+    }
+
     try {
-      const filters = req.query
-      const items = await orderItemService.findAll(filters)
-      res.json(items)
-    } catch (error) {
-      if (error instanceof Error) {
-        res.status(500).json({ error: error.message });
-      } else {
-        res.status(500).json({ error: 'An unknown error occurred' });
-      }
+      const result = await OrderItemService.getAll(
+        paginationParse.data.query,
+        filtersParse.data.query
+      );
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   },
 
-  findById: async (req: Request, res: Response) => {
+  getById: async (req: Request, res: Response) => {
+    const parse = orderItemIdSchema.safeParse({ params: req.params });
+    if (!parse.success) return res.status(400).json(parse.error.format());
+
     try {
-      const item = await orderItemService.findById(req.params.id)
-      if (!item) return res.status(404).json({ error: 'Order item not found' })
-      res.json(item)
-    } catch (error) {
-      if (error instanceof Error) {
-        res.status(500).json({ error: error.message });
-      } else {
-        res.status(500).json({ error: 'An unknown error occurred' });
-      }
+      const item = await OrderItemService.getById(parse.data.params.id);
+      if (!item) return res.status(404).json({ message: 'Order item not found' });
+      res.json(item);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   },
 
   update: async (req: Request, res: Response) => {
-    const parse = updateOrderItemSchema.safeParse({ body: req.body });
-    if (!parse.success) return res.status(400).json(parse.error.format());
+    const idParse = orderItemIdSchema.safeParse({ params: req.params });
+    const bodyParse = updateOrderItemSchema.safeParse({ body: req.body });
+
+    if (!idParse.success || !bodyParse.success) {
+      return res.status(400).json({
+        ...(idParse.error?.format?.() ?? {}),
+        ...(bodyParse.error?.format?.() ?? {})
+      });
+    }
 
     try {
-      const item = await orderItemService.update(req.params.id, parse.data.body)
-      res.json(item)
-    } catch (error) {
-      if (error instanceof Error) {
-        res.status(400).json({ error: error.message });
-      } else {
-        res.status(400).json({ error: 'An unknown error occurred' });
-      }
+      const item = await OrderItemService.update(idParse.data.params.id, bodyParse.data.body);
+      res.json(item);
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   },
 
   delete: async (req: Request, res: Response) => {
+    const parse = orderItemIdSchema.safeParse({ params: req.params });
+    if (!parse.success) return res.status(400).json(parse.error.format());
+
     try {
-      await orderItemService.delete(req.params.id)
-      res.status(204).send()
-    } catch (error) {
-      if (error instanceof Error) {
-        res.status(500).json({ error: error.message });
-      } else {
-        res.status(500).json({ error: 'An unknown error occurred' });
-      }
+      await OrderItemService.delete(parse.data.params.id);
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ message: error.message });
     }
   },
-}
+};

@@ -8,7 +8,8 @@ import {
   buildPaginatedResult,
   PaginationQuery,
 } from '@/utils/pagination';
-import { Purchase, PartnerType } from '@prisma/client';
+import { InventoryService } from '@/module/inventory/inventory.service';
+import { Purchase, PartnerType, TransactionType, PurchaseStatus } from '@prisma/client';
 
 type CreatePurchaseInput = z.infer<typeof createPurchaseSchema>['body']; // [UPDATED]
 type UpdatePurchaseInput = z.infer<typeof updatePurchaseSchema>['body']; // [UPDATED]
@@ -176,19 +177,85 @@ export const updatePurchase = async (id: string, data: UpdatePurchaseInput) => {
     }
   }
 
-  const updated = await prisma.purchase.update({
+  // Check if status is changing to COMPLETED
+  const currentPurchase = await prisma.purchase.findUnique({
     where: { id },
-    data,
-    include: {
-      purchaseDetails: true
+    include: { purchaseDetails: true }
+  });
+
+  if (!currentPurchase) throw new Error('Compra no encontrada');
+
+  const isCompleting = data.status === PurchaseStatus.COMPLETED && currentPurchase.status !== PurchaseStatus.COMPLETED;
+
+  const result = await prisma.$transaction(async (tx) => {
+    // 1. Update the Purchase
+    const updated = await tx.purchase.update({
+      where: { id },
+      data,
+      include: {
+        purchaseDetails: true
+      }
+    });
+
+    // 2. If completing, Process Stock and Kardex
+    if (isCompleting) {
+      const details = updated.purchaseDetails;
+
+      for (const detail of details) {
+        // A. Update Branch Stock
+        const branchProduct = await tx.branchOfficeProduct.upsert({
+          where: {
+            productId_branchOfficeId: {
+              productId: detail.productId,
+              branchOfficeId: updated.branchOfficeId
+            }
+          },
+          update: {
+            physicalStock: { increment: detail.quantity },
+            availableStock: { increment: detail.quantity },
+            lastRestockedAt: new Date()
+          },
+          create: {
+            productId: detail.productId,
+            branchOfficeId: updated.branchOfficeId,
+            physicalStock: detail.quantity,
+            availableStock: detail.quantity,
+            lastRestockedAt: new Date()
+          }
+        });
+
+        // B. Update Product Cost (Last Purchase Price for simplicity, or Weighted Average could be here)
+        await tx.product.update({
+          where: { id: detail.productId },
+          data: {
+            priceCost: detail.unitPrice // Updating cost to latest purchase price
+          }
+        });
+
+        // C. Log to Kardex
+        await InventoryService.logTransaction({
+          date: new Date(),
+          productId: detail.productId,
+          branchOfficeId: updated.branchOfficeId,
+          type: TransactionType.PURCHASE_ENTRY,
+          quantity: detail.quantity,
+          unitCost: Number(detail.unitPrice),
+          totalCost: Number(detail.total),
+          referenceId: updated.id,
+          referenceType: 'PURCHASE',
+          documentNumber: updated.documentNumber || undefined
+        }, tx);
+      }
     }
-  })
+
+    return updated;
+  });
 
   // Invalidate Cache
   await redis.del(`${CACHE_PREFIX}${id}`);
   await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
 
-  return updated;
+  return result;
 }
 
 export const deletePurchase = async (id: string, deletedBy?: string) => {

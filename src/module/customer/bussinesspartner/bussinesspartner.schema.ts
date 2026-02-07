@@ -25,6 +25,7 @@ export const BussinessPartnerSchema = registry.register(
         middleName: z.string().optional().openapi({ example: 'Carlos' }),
         lastName: z.string().min(1).openapi({ example: 'Pérez', description: 'Apellido paterno' }),
         surname: z.string().optional().openapi({ example: 'García', description: 'Apellido materno' }),
+        sex: z.string().optional().openapi({ example: 'M', description: 'Género' }),
         companyName: z.string().optional().openapi({ example: 'Empresa SAC' }),
         tradeName: z.string().optional().openapi({ example: 'Comercial Name' }),
         website: z.string().optional().openapi({ example: 'https://site.com' }),
@@ -60,6 +61,7 @@ export const createBussinessPartnerSchema = z.object({
         middleName: z.string().optional(),
         lastName: z.string().min(1, 'Apellido es requerido'),
         surname: z.string().optional(),
+        sex: z.string().optional(),
         companyName: z.string().optional(),
 
         tradeName: z.string().optional(),
@@ -89,6 +91,7 @@ export const updateBussinessPartnerSchema = z.object({
         middleName: z.string().optional(),
         lastName: z.string().min(1).optional(),
         surname: z.string().optional(),
+        sex: z.string().optional(),
         companyName: z.string().optional(),
 
         tradeName: z.string().optional(),

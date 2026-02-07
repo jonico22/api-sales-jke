@@ -1,3 +1,4 @@
+
 import { z } from 'zod';
 import { registry } from '@/config/swagger';
 import { OrderStatus } from '@prisma/client';
@@ -58,7 +59,7 @@ export const orderIdSchema = z.object({
     })
 });
 
-// 5. Order Filters Schema
+// 5. Order Filters Schema (Standardized)
 export const orderFiltersSchema = z.object({
     query: z.object({
         // Standard Pagination
@@ -67,21 +68,26 @@ export const orderFiltersSchema = z.object({
         sortBy: z.string().optional().openapi({ example: 'createdAt' }),
         sortOrder: z.string().optional().openapi({ example: 'desc' }),
 
-        // Filters
+        // Filters IDs
         societyId: z.string().optional().openapi({ example: 'uuid' }),
-        societyCode: z.string().optional(),
         partnerId: z.string().optional().openapi({ example: 'uuid' }),
         branchId: z.string().optional().openapi({ example: 'uuid' }),
+
+        // Status (Single or Comma Separated support logic to be handled)
         status: OrderStatusEnum.optional().openapi({ example: OrderStatus.PENDING }),
 
         // Search
         search: z.string().optional().openapi({ example: 'ORD-001', description: 'Código o nombre de socio' }),
 
-        // Date Range
+        // Date Range (Creation / Order Date)
         dateFrom: z.string().optional().openapi({ example: '2024-01-01' }),
         dateTo: z.string().optional().openapi({ example: '2024-12-31' }),
 
-        // User
+        // Amount Range
+        totalAmountFrom: z.string().transform(val => parseFloat(val)).optional(),
+        totalAmountTo: z.string().transform(val => parseFloat(val)).optional(),
+
+        // User Tracking
         createdBy: z.string().optional()
     })
 });

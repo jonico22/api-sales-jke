@@ -38,6 +38,7 @@ model BussinessPartner {
   firstName      String?
   middleName     String?
   lastName       String?
+  sex            String? // M/F or specific value
   surname        String?
   companyName    String?
   contactEmail   String?
@@ -278,6 +279,7 @@ model Product {
   OrderItem OrderItem[]
 
   DeliveredConsignmentAgreement DeliveredConsignmentAgreement[]
+  inventoryTransactions         InventoryTransaction[]
 }
 
 model Category {
@@ -330,6 +332,7 @@ model BranchOffice {
   DeliveredConsignmentAgreement DeliveredConsignmentAgreement[]
   purchases                     Purchase[]
   cashShifts                    CashShift[]
+  inventoryTransactions         InventoryTransaction[]
 
   @@unique([societyId, code])
 }
@@ -867,4 +870,49 @@ model CashMovement {
   shift        CashShift     @relation(fields: [shiftId], references: [id])
   currency     Currency      @relation(fields: [currencyId], references: [id])
   orderPayment OrderPayment? @relation(fields: [orderPaymentId], references: [id])
+}
+
+// ------------------------------------
+// KARDEX (Centralized Inventory)
+// ------------------------------------
+
+model InventoryTransaction {
+  id   String   @id @default(uuid())
+  date DateTime @default(now())
+
+  productId      String
+  branchOfficeId String
+
+  type          TransactionType
+  quantity      Int // + for IN, - for OUT
+  previousStock Int
+  newStock      Int // The snapshot of stock AFTER this movement
+
+  // Costos Snapshot (Kardex Valorado)
+  unitCost  Decimal @db.Decimal(10, 2)
+  totalCost Decimal @db.Decimal(10, 2)
+
+  // Trazabilidad
+  referenceId    String? // ID of Purchase, Order, etc.
+  referenceType  String? // 'PURCHASE', 'ORDER', 'TRANSFER_IN', 'TRANSFER_OUT', 'ADJUSTMENT'
+  documentNumber String? // Optional external doc ref
+
+  // Relations
+  product      Product      @relation(fields: [productId], references: [id])
+  branchOffice BranchOffice @relation(fields: [branchOfficeId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+}
+
+enum TransactionType {
+  PURCHASE_ENTRY
+  SALE_EXIT
+  TRANSFER_OUT
+  TRANSFER_IN
+  CONSIGNMENT_OUT
+  CONSIGNMENT_RETURN
+  ADJUSTMENT_ADD
+  ADJUSTMENT_SUB
 }

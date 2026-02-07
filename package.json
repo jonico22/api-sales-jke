@@ -12,7 +12,7 @@
     "prisma:studio": "npx prisma studio",
     "prisma:seed": "npx tsx prisma/seed.ts",
     "migrate:deploy": "npx prisma db push && npm run prisma:seed",
-    "dev": "npx prisma migrate deploy && npm run prisma:migrate && npm run prisma:seed && npx nodemon --exec 'node --import tsx --require newrelic' src/index.ts",
+    "dev": "npx prisma db push --force-reset && npm run prisma:generate && npm run prisma:seed && npx nodemon --exec 'node --import tsx --require newrelic' src/index.ts",
     "start:prod-app": "npm run migrate:deploy && node -r tsconfig-paths/register -r newrelic dist/src/index.js",
     "dev:native": "node --env-file=.env -r tsx src/index.ts",
     "docker:prod": "docker-compose -f docker-compose.yml up --build api",

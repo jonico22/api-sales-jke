@@ -19,6 +19,7 @@ import currencyRoutes from '@/module/customer/currency/currency.routes';
 import ProductRoutes from '../module/customer/product/product.route';
 import FileRoutes from '../module/customer/file/file.route';
 import cashShiftRoutes from '@/module/customer/cashShift/cashShift.route';
+import inventoryRoutes from '@/module/inventory/inventory.route';
 
 const router = Router();
 
@@ -40,6 +41,7 @@ router.use('/received-consignment-settlements', receivedConsignmentSettlementRou
 router.use('/bussinesspartners', bussinessPartnerRoutes);
 router.use('/categories', categoryRoutes);
 router.use('/cash-shifts', cashShiftRoutes);
+router.use('/inventory', inventoryRoutes);
 
 // Configuración Regional (New)
 router.use('/taxes', taxRoutes);
