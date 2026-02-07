@@ -5,7 +5,7 @@ import {
   updatePurchaseSchema,
   purchaseIdSchema,
   purchaseFiltersSchema,
-} from './purchase.validation'
+} from './purchase.schema' // [FIXED]
 import { paginationQuerySchema } from '@/schemas/pagination.schema'
 
 export const getAll = async (req: Request, res: Response) => {
@@ -27,16 +27,16 @@ export const getAll = async (req: Request, res: Response) => {
 }
 
 export const getById = async (req: Request, res: Response) => {
-  const { id } = purchaseIdSchema.parse(req.params)
-  const purchase = await service.getPurchaseById(id)
+  const { params } = purchaseIdSchema.parse({ params: req.params })
+  const purchase = await service.getPurchaseById(params.id)
   if (!purchase) return res.status(404).json({ message: 'Purchase not found' })
   res.json(purchase)
 }
 
 export const create = async (req: Request, res: Response) => {
   try {
-    const data = createPurchaseSchema.parse(req.body)
-    const newPurchase = await service.createPurchase(data)
+    const { body } = createPurchaseSchema.parse({ body: req.body }) // [UPDATED] Wrapped
+    const newPurchase = await service.createPurchase(body)
     res.status(201).json(newPurchase)
   } catch (error: any) {
     if (error.message.includes('Proveedor') || error.message.includes('socio de negocio')) {
@@ -54,9 +54,9 @@ export const create = async (req: Request, res: Response) => {
 
 export const update = async (req: Request, res: Response) => {
   try {
-    const { id } = purchaseIdSchema.parse(req.params)
-    const data = updatePurchaseSchema.parse(req.body)
-    const updated = await service.updatePurchase(id, data)
+    const { params } = purchaseIdSchema.parse({ params: req.params })
+    const { body } = updatePurchaseSchema.parse({ body: req.body }) // [UPDATED] Wrapped
+    const updated = await service.updatePurchase(params.id, body)
     res.json(updated)
   } catch (error: any) {
     if (error.message.includes('Proveedor') || error.message.includes('socio de negocio')) {
@@ -67,7 +67,7 @@ export const update = async (req: Request, res: Response) => {
 }
 
 export const remove = async (req: Request, res: Response) => {
-  const { id } = purchaseIdSchema.parse(req.params)
-  const deleted = await service.deletePurchase(id, req.body.updatedBy)
+  const { params } = purchaseIdSchema.parse({ params: req.params })
+  const deleted = await service.deletePurchase(params.id, req.body.updatedBy)
   res.json({ message: 'Deleted successfully', deleted })
 }

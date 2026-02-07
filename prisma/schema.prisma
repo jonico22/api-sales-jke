@@ -99,6 +99,7 @@ model Currency {
   purchases                      Purchase[]
   outgoingConsignmentAgreements  OutgoingConsignmentAgreement[]
   receivedConsignmentSettlements ReceivedConsignmentSettlement[]
+  cashMovements                  CashMovement[]
 }
 
 model File {
@@ -228,6 +229,7 @@ model Society {
   // UI Customization (JSON)
   uiConfig        Json? // { theme: "dark", colors: {...}, fonts: "Inter" }
   societyReceipts SocietyReceipt[]
+  cashShifts      CashShift[]
 }
 
 enum Frequency {
@@ -327,6 +329,7 @@ model BranchOffice {
 
   DeliveredConsignmentAgreement DeliveredConsignmentAgreement[]
   purchases                     Purchase[]
+  cashShifts                    CashShift[]
 
   @@unique([societyId, code])
 }
@@ -582,6 +585,8 @@ model OrderPayment {
   SocietyReceipt SocietyReceipt[]
 
   ReceivedConsignmentSettlement ReceivedConsignmentSettlement[]
+
+  cashMovement CashMovement?
 }
 
 enum PaymentStatus {
@@ -792,4 +797,74 @@ model UbigeoPeru {
   bussinessPartners BussinessPartner[]
 
   @@map("UbigeoPeru")
+}
+
+// ------------------------------------
+// Cash Shift / Sesiones de Caja
+// ------------------------------------
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum MovementType {
+  INCOME
+  EXPENSE
+}
+
+model CashShift {
+  id String @id @default(uuid())
+
+  societyId String
+  branchId  String
+  userId    String // ID del cajero (No relation due to external user management)
+
+  status   ShiftStatus @default(OPEN)
+  openedAt DateTime    @default(now())
+  closedAt DateTime?
+
+  initialAmount Decimal @db.Decimal(10, 2) // Sencillo inicial
+
+  // Cierre
+  finalReportedAmount Decimal? @db.Decimal(10, 2)
+  finalSystemAmount   Decimal? @db.Decimal(10, 2)
+  difference          Decimal? @db.Decimal(10, 2)
+
+  // Acumulados Snapshots (calculados al cierre)
+  incomeCash     Decimal @default(0) @db.Decimal(10, 2)
+  incomeCard     Decimal @default(0) @db.Decimal(10, 2)
+  incomeTransfer Decimal @default(0) @db.Decimal(10, 2)
+  expenseCash    Decimal @default(0) @db.Decimal(10, 2)
+
+  movements CashMovement[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  society Society      @relation(fields: [societyId], references: [id])
+  branch  BranchOffice @relation(fields: [branchId], references: [id])
+}
+
+model CashMovement {
+  id      String @id @default(uuid())
+  shiftId String
+
+  type         MovementType // INCOME, EXPENSE
+  amount       Decimal      @db.Decimal(10, 2)
+  currencyId   String
+  exchangeRate Decimal      @default(1.0) @db.Decimal(10, 4)
+
+  paymentMethod PaymentMethodOrder
+
+  description String?
+
+  orderPaymentId String? @unique
+
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  shift        CashShift     @relation(fields: [shiftId], references: [id])
+  currency     Currency      @relation(fields: [currencyId], references: [id])
+  orderPayment OrderPayment? @relation(fields: [orderPaymentId], references: [id])
 }

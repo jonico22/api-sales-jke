@@ -30,6 +30,25 @@ router.get('/', BussinessPartnerController.getAll);
 
 /**
  * @openapi
+ * /bussinesspartners/select:
+ *   get:
+ *     summary: Obtener lista simplificada para selectores
+ *     tags: [BussinessPartner]
+ *     parameters:
+ *       - in: query
+ *         name: type
+ *         schema:
+ *           type: string
+ *           enum: [CUSTOMER, SUPPLIER, BOTH]
+ *         description: Filtrar por tipo (CUSTOMER incluye BOTH)
+ *     responses:
+ *       200:
+ *         description: Lista de socios simplificada
+ */
+router.get('/select', BussinessPartnerController.getForSelect);
+
+/**
+ * @openapi
  * /bussinesspartners/{id}:
  *   get:
  *     summary: Obtener un socio de negocio por ID

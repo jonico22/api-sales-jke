@@ -7,6 +7,7 @@ import {
   buildPaginatedResult,
 } from '@/utils/pagination';
 import { convertLimaDateRangeToUTC, formatToLimaTime } from '@/utils/dateFormatter';
+import { CashShiftService } from '../cashShift/cashShift.service';
 
 const CACHE_PREFIX = 'order_payments:';
 const CACHE_TTL_LIST = 300; // 5 min
@@ -26,6 +27,29 @@ export const orderPaymentService = {
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
     if (created.orderId) {
       await redis.del(`orders:${created.orderId}`); // Invalidar orden también
+
+      // [INTEGRATION] Cash Shift - Automatic Registration
+      // "If a box was registered... otherwise don't ask"
+      try {
+        const order = await prisma.order.findUnique({
+          where: { id: created.orderId },
+          select: { branchId: true }
+        });
+
+        if (order && order.branchId && data.createdBy) {
+          await CashShiftService.registerPaymentMovement(
+            created,
+            data.createdBy,
+            order.branchId,
+            data.societyId
+          );
+        }
+      } catch (error) {
+        // Graceful degradation: If cash logic fails (e.g. db error implies no critical block for sale)
+        // Or if we want strictness, we'd throw.
+        // User asked: "sino no le debe pedir" -> Non-blocking.
+        console.error('Error auto-registering cash movement:', error);
+      }
     }
 
     return created;

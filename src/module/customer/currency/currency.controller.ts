@@ -17,6 +17,15 @@ export const CurrencyController = {
         res.json(result);
     },
 
+    getForSelect: async (req: Request, res: Response) => {
+        try {
+            const result = await CurrencyService.getForSelect();
+            res.json(result);
+        } catch (error: any) {
+            res.status(500).json({ message: 'Error retrieving currencies', error: error.message });
+        }
+    },
+
     create: async (req: Request, res: Response) => {
         const parse = createCurrencySchema.safeParse({ body: req.body });
         if (!parse.success) return res.status(400).json(parse.error.format());

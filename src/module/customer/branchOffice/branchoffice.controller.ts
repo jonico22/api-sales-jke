@@ -29,6 +29,15 @@ export const BranchOfficeController = {
     res.json(result);
   },
 
+  getForSelect: async (req: Request, res: Response) => {
+    try {
+      const result = await BranchOfficeService.getForSelect();
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ message: 'Error retrieving branch offices list', error: error.message });
+    }
+  },
+
   create: async (req: Request, res: Response) => {
     const result = await BranchOfficeService.create(req.body);
     res.status(201).json(result);

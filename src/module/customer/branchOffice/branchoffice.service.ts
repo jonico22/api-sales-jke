@@ -112,6 +112,21 @@ export const BranchOfficeService = {
     return result;
   },
 
+  async getForSelect() {
+    return prisma.branchOffice.findMany({
+      where: {
+        isDeleted: false,
+        isActive: true,
+      },
+      select: {
+        id: true,
+        name: true,
+        code: true,
+      },
+      orderBy: { name: 'asc' },
+    });
+  },
+
   create: async (data: unknown) => {
     const parsed = createBranchOfficeSchema.parse(data);
     const created = await prisma.branchOffice.create({ data: parsed });

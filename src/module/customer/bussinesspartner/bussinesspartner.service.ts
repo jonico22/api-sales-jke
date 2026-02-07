@@ -269,4 +269,46 @@ export const BussinessPartnerService = {
             },
         });
     },
+
+    /**
+     * Obtener lista simple para selectores (dropdowns)
+     */
+    async getForSelect(societyId?: string, type?: PartnerType) {
+        const whereClause: any = {
+            isDeleted: false,
+            isActive: true,
+            ...(societyId && { societyId }),
+        };
+
+        if (type) {
+            // If requesting CUSTOMER, allow CUSTOMER and BOTH
+            if (type === 'CUSTOMER') {
+                whereClause.type = { in: ['CUSTOMER', 'BOTH'] };
+            } else if (type === 'SUPPLIER') {
+                whereClause.type = { in: ['SUPPLIER', 'BOTH'] };
+            } else {
+                whereClause.type = type;
+            }
+        }
+
+        const partners = await prisma.bussinessPartner.findMany({
+            where: whereClause,
+            select: {
+                id: true,
+                firstName: true,
+                lastName: true,
+                companyName: true,
+                documentNumber: true,
+                type: true,
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        return partners.map(p => ({
+            id: p.id,
+            name: p.companyName || `${p.firstName} ${p.lastName}`.trim(),
+            documentNumber: p.documentNumber,
+            type: p.type
+        }));
+    }
 };

@@ -1,5 +1,5 @@
 import prisma from '@/config/prisma';
-import { createPurchaseSchema, updatePurchaseSchema, purchaseFiltersSchema } from './purchase.validation';
+import { createPurchaseSchema, updatePurchaseSchema, purchaseFiltersSchema } from './purchase.schema'; // [UPDATED]
 import { z } from 'zod';
 import { redis } from '@/config/redis';
 import {
@@ -10,8 +10,8 @@ import {
 } from '@/utils/pagination';
 import { Purchase, PartnerType } from '@prisma/client';
 
-type CreatePurchaseInput = z.infer<typeof createPurchaseSchema>;
-type UpdatePurchaseInput = z.infer<typeof updatePurchaseSchema>;
+type CreatePurchaseInput = z.infer<typeof createPurchaseSchema>['body']; // [UPDATED]
+type UpdatePurchaseInput = z.infer<typeof updatePurchaseSchema>['body']; // [UPDATED]
 type PurchaseFilters = z.infer<typeof purchaseFiltersSchema>['query'];
 
 const CACHE_PREFIX = 'purchases:';

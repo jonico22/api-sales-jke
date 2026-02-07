@@ -4,6 +4,7 @@ import { BranchOfficeController } from './branchoffice.controller';
 const router = Router();
 
 router.get('/', BranchOfficeController.getAll);
+router.get('/select', BranchOfficeController.getForSelect);
 router.get('/:id', BranchOfficeController.getById);
 router.post('/', BranchOfficeController.create);
 router.put('/:id', BranchOfficeController.update);

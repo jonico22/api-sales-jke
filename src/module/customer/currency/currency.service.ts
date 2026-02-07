@@ -38,6 +38,19 @@ export const CurrencyService = {
         });
     },
 
+    getForSelect: async () => {
+        return prisma.currency.findMany({
+            where: { isActive: true },
+            select: {
+                id: true,
+                name: true,
+                code: true,
+                symbol: true
+            },
+            orderBy: { code: 'asc' }
+        });
+    },
+
     findById: async (id: string) => {
         return prisma.currency.findUnique({ where: { id } });
     },

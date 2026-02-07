@@ -1,81 +1,97 @@
-import { Request, Response } from 'express'
-import { orderService } from './order.service'
-import { createOrderSchema, updateOrderSchema, orderFiltersSchema } from './order.validation'
+import { Request, Response } from 'express';
+import { OrderService } from './order.service';
+import {
+  createOrderSchema,
+  updateOrderSchema,
+  orderFiltersSchema,
+  orderIdSchema
+} from './order.schema';
+import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
-export const orderController = {
+export const OrderController = {
+  /**
+   * GET /api/orders
+   */
+  getAll: async (req: Request, res: Response) => {
+    const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
+    const filtersParse = orderFiltersSchema.safeParse({ query: req.query });
+
+    if (!paginationParse.success || !filtersParse.success) {
+      return res.status(400).json({
+        ...(paginationParse.error?.format?.() ?? {}),
+        ...(filtersParse.error?.format?.() ?? {})
+      });
+    }
+
+    try {
+      const result = await OrderService.getAll(
+        paginationParse.data.query,
+        filtersParse.data.query
+      );
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ message: 'Error retrieving orders', error: error.message });
+    }
+  },
+
+  /**
+   * GET /api/orders/:id
+   */
+  getById: async (req: Request, res: Response) => {
+    const { params } = orderIdSchema.parse({ params: req.params });
+
+    try {
+      const order = await OrderService.getById(params.id);
+      if (!order) return res.status(404).json({ message: 'Order not found' });
+      res.json(order);
+    } catch (error: any) {
+      res.status(500).json({ message: 'Error retrieving order', error: error.message });
+    }
+  },
+
+  /**
+   * POST /api/orders
+   */
   create: async (req: Request, res: Response) => {
-    const parse = createOrderSchema.safeParse({ body: req.body });
-    if (!parse.success) return res.status(400).json(parse.error.format());
-
     try {
-      const order = await orderService.create(parse.data.body)
-      res.status(201).json(order)
-    } catch (error) {
-      if (error instanceof Error) {
-        res.status(400).json({ error: error.message });
-      } else {
-        res.status(400).json({ error: 'An unknown error occurred' });
+      // Validate body
+      const { body } = createOrderSchema.parse({ body: req.body });
+
+      const newOrder = await OrderService.create(body);
+      res.status(201).json(newOrder);
+    } catch (error: any) {
+      if (error instanceof Error && error.message.includes('not found')) {
+        return res.status(400).json({ message: error.message });
       }
+      res.status(500).json({ message: 'Error creating order', error: error.message });
     }
   },
 
-  findAll: async (req: Request, res: Response) => {
-    const parse = orderFiltersSchema.safeParse({ query: req.query });
-    if (!parse.success) return res.status(400).json(parse.error.format());
-
-    try {
-      const filters = parse.data.query;
-      const orders = await orderService.findAll(filters as any) // Casting as internal type is clearer in service
-      res.json(orders)
-    } catch (error) {
-      if (error instanceof Error) {
-        res.status(500).json({ error: error.message });
-      } else {
-        res.status(500).json({ error: 'An unknown error occurred' });
-      }
-    }
-  },
-
-  findById: async (req: Request, res: Response) => {
-    try {
-      const order = await orderService.findById(req.params.id)
-      if (!order) return res.status(404).json({ error: 'Order not found' })
-      res.json(order)
-    } catch (error) {
-      if (error instanceof Error) {
-        res.status(500).json({ error: error.message });
-      } else {
-        res.status(500).json({ error: 'An unknown error occurred' });
-      }
-    }
-  },
-
+  /**
+   * PUT /api/orders/:id
+   */
   update: async (req: Request, res: Response) => {
-    const parse = updateOrderSchema.safeParse({ body: req.body });
-    if (!parse.success) return res.status(400).json(parse.error.format());
-
     try {
-      const order = await orderService.update(req.params.id, parse.data.body)
-      res.json(order)
-    } catch (error) {
-      if (error instanceof Error) {
-        res.status(400).json({ error: error.message });
-      } else {
-        res.status(400).json({ error: 'An unknown error occurred' });
-      }
+      const { params } = orderIdSchema.parse({ params: req.params });
+      const { body } = updateOrderSchema.parse({ body: req.body });
+
+      const updated = await OrderService.update(params.id, body);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ message: 'Error updating order', error: error.message });
     }
   },
 
+  /**
+   * DELETE /api/orders/:id
+   */
   delete: async (req: Request, res: Response) => {
     try {
-      await orderService.delete(req.params.id)
-      res.status(204).send()
-    } catch (error) {
-      if (error instanceof Error) {
-        res.status(500).json({ error: error.message });
-      } else {
-        res.status(500).json({ error: 'An unknown error occurred' });
-      }
+      const { params } = orderIdSchema.parse({ params: req.params });
+      await OrderService.delete(params.id);
+      res.status(204).send();
+    } catch (error: any) {
+      res.status(500).json({ message: 'Error cancelling order', error: error.message });
     }
-  },
-}
+  }
+};

@@ -112,6 +112,22 @@ export const BussinessPartnerController = {
     },
 
     /**
+     * GET /api/bussinesspartners/select
+     * Lista ligera para dropdowns
+     */
+    getForSelect: async (req: Request, res: Response) => {
+        try {
+            const societyId = req.query.societyId as string | undefined;
+            const type = req.query.type as any;
+
+            const result = await BussinessPartnerService.getForSelect(societyId, type);
+            res.json(result);
+        } catch (error: any) {
+            res.status(500).json({ message: 'Error obteniendo lista de selección', error: error.message });
+        }
+    },
+
+    /**
      * DELETE /api/bussinesspartners/:id
      * Eliminar (soft delete) un socio de negocio
      */
