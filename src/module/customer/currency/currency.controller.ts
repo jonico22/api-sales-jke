@@ -2,18 +2,24 @@ import { Request, Response } from 'express';
 import { CurrencyService } from './currency.service';
 import { createCurrencySchema, updateCurrencySchema, currencyFiltersSchema } from './currency.validation';
 
+import { paginationQuerySchema } from '@/schemas/pagination.schema';
+
 export const CurrencyController = {
     getAll: async (req: Request, res: Response) => {
-        const parse = currencyFiltersSchema.safeParse({ query: req.query });
-        if (!parse.success) return res.status(400).json(parse.error.format());
+        const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
+        const filtersParse = currencyFiltersSchema.safeParse({ query: req.query });
 
-        // User context or query param
-        const filters = {
-            societyId: parse.data.query.societyId,
-            search: parse.data.query.search
-        };
+        if (!paginationParse.success || !filtersParse.success) {
+            return res.status(400).json({
+                ...(paginationParse.error?.format?.() ?? {}),
+                ...(filtersParse.error?.format?.() ?? {}),
+            });
+        }
 
-        const result = await CurrencyService.findAll(filters);
+        const result = await CurrencyService.getAll(
+            paginationParse.data.query,
+            filtersParse.data.query
+        );
         res.json(result);
     },
 

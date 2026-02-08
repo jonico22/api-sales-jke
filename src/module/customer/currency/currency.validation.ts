@@ -19,6 +19,7 @@ export const updateCurrencySchema = z.object({
 
 export const currencyFiltersSchema = z.object({
     query: z.object({
+        societyCode: z.string().optional(),
         societyId: z.string().optional(),
         search: z.string().optional(),
     })

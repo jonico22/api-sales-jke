@@ -31,7 +31,8 @@ export const BranchOfficeController = {
 
   getForSelect: async (req: Request, res: Response) => {
     try {
-      const result = await BranchOfficeService.getForSelect();
+      const societyCode = (req.query.societyCode || req.query.societyId) as string | undefined;
+      const result = await BranchOfficeService.getForSelect(societyCode);
       res.json(result);
     } catch (error: any) {
       res.status(500).json({ message: 'Error retrieving branch offices list', error: error.message });

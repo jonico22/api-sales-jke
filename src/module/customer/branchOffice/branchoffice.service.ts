@@ -15,6 +15,7 @@ export type BranchOfficeFilters = z.infer<typeof branchOfficeFiltersSchema>['que
 const CACHE_PREFIX = 'branch_offices:';
 const CACHE_TTL_LIST = 300; // 5 minutos
 const CACHE_TTL_SINGLE = 600; // 10 minutos
+const CACHE_TTL_SELECT = 900; // 15 minutos
 
 export const BranchOfficeService = {
   /**
@@ -125,12 +126,28 @@ export const BranchOfficeService = {
     return result;
   },
 
-  async getForSelect() {
-    return prisma.branchOffice.findMany({
-      where: {
-        isDeleted: false,
-        isActive: true,
-      },
+  async getForSelect(societyCode?: string) {
+    const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}`;
+    const cached = await redis.get<any[]>(cacheKey);
+    if (cached) return cached;
+
+    const whereClause: any = {
+      isDeleted: false,
+      isActive: true,
+    };
+
+    if (societyCode) {
+      const society = await prisma.society.findUnique({ where: { code: societyCode } });
+      if (society) {
+        whereClause.societyId = society.id;
+      } else {
+        // If societyCode provided but not found, return empty or handle as per logic (Category returns empty)
+        return [];
+      }
+    }
+
+    const data = await prisma.branchOffice.findMany({
+      where: whereClause,
       select: {
         id: true,
         name: true,
@@ -138,6 +155,9 @@ export const BranchOfficeService = {
       },
       orderBy: { name: 'asc' },
     });
+
+    await redis.set(cacheKey, data, CACHE_TTL_SELECT);
+    return data;
   },
 
   create: async (data: unknown) => {
@@ -146,6 +166,7 @@ export const BranchOfficeService = {
 
     // Invalidar cache
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
 
     return created;
   },
@@ -163,6 +184,7 @@ export const BranchOfficeService = {
     // Invalidar cache
     await redis.del(`${CACHE_PREFIX}${id}`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
 
     return updated;
   },
@@ -180,6 +202,7 @@ export const BranchOfficeService = {
     // Invalidar cache
     await redis.del(`${CACHE_PREFIX}${id}`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
 
     return deleted;
   },
