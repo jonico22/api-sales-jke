@@ -8,7 +8,7 @@ import {
   buildPaginatedResult,
   PaginationQuery
 } from '@/utils/pagination';
-import { convertLimaDateRangeToUTC, formatToLimaTime } from '@/utils/dateFormatter';
+import { convertLimaDateRangeToUTC, formatToLimaTime, toLimaTimezone } from '@/utils/dateFormatter';
 import { CashShiftService } from '../cashShift/cashShift.service';
 import { CreateOrderPaymentInput, PaymentFilters } from './orderPayment.schema';
 
@@ -19,9 +19,14 @@ export const OrderPaymentService = {
   create: async (data: CreateOrderPaymentInput) => {
     // Si el pago CONFIRMS la orden, actualizar el estado de la Orden (lógica de negocio futura)
 
+    const paymentDate = data.paymentDate
+      ? toLimaTimezone(data.paymentDate)
+      : toLimaTimezone(new Date());
+
     const created = await prisma.orderPayment.create({
       data: {
         ...data,
+        paymentDate,
         status: data.status || PaymentStatus.PENDING
       }
     });

@@ -46,18 +46,39 @@ export const OrderService = {
       const product = productMap.get(item.productId);
       if (!product) throw new Error(`Producto ${item.productId} no encontrado`);
 
-      // NOTA: Aquí podrías validar que item.unitPrice coincida con product.price 
-      // o permitir override si la lógica de negocio lo dicta (ej. descuentos manuales)
-      // Asumiremos que el precio enviado es el acordado, pero recalculamos totales.
+      // Logic: Automatic Discount Calculation
+      // List Price = product.price (Database)
+      // Sold Price = item.unitPrice (Frontend Input)
 
-      const subtotalItem = (item.quantity * item.unitPrice) - item.discount;
+      const listPrice = Number(product.price);
+      const soldPrice = item.unitPrice;
+
+      let finalUnitPrice = soldPrice;
+      let finalDiscount = 0;
+
+      // If Sold Price is LESS than List Price, record difference as discount
+      if (soldPrice < listPrice) {
+        finalUnitPrice = listPrice; // Record List Price
+        finalDiscount = (listPrice - soldPrice) * item.quantity;
+      } else {
+        // If sold at or above list price, record sold price (could be surcharge or normal)
+        finalUnitPrice = soldPrice;
+        finalDiscount = 0;
+      }
+
+      // Subtotal for this line item should reflect what customer pays: (Sold Price * Quantity)
+      // Math check: (List Price * Qty) - Discount = (List Price * Qty) - ((List - Sold) * Qty) 
+      //           = Qty * (List - List + Sold) = Qty * Sold. Correct.
+      const subtotalItem = (item.quantity * soldPrice);
+
       calculatedSubtotal += subtotalItem;
 
       return {
         productId: item.productId,
         quantity: item.quantity,
-        unitPrice: item.unitPrice,
-        discount: item.discount,
+        unitPrice: finalUnitPrice, // Using List Price if discounted
+        discount: finalDiscount,
+
         subtotal: subtotalItem,
         taxAmount: 0, // Por ahora 0, implementar lógica de impuestos si es necesario
         total: subtotalItem, // + Impuestos
