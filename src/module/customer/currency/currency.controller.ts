@@ -25,7 +25,8 @@ export const CurrencyController = {
 
     getForSelect: async (req: Request, res: Response) => {
         try {
-            const result = await CurrencyService.getForSelect();
+            const societyCode = (req.query.societyCode || req.query.societyId) as string | undefined;
+            const result = await CurrencyService.getForSelect(societyCode);
             res.json(result);
         } catch (error: any) {
             res.status(500).json({ message: 'Error retrieving currencies', error: error.message });

@@ -124,13 +124,38 @@ export const CurrencyService = {
         return result;
     },
 
-    getForSelect: async () => {
-        const cacheKey = `${CACHE_PREFIX}select`;
+    getForSelect: async (societyCode?: string) => {
+        const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}`;
         const cached = await redis.get<any[]>(cacheKey);
         if (cached) return cached;
 
+        const whereClause: any = { isActive: true };
+
+        // Logic similar to getAll: show Global OR Society Specific
+        if (societyCode && societyCode !== 'all') {
+            const society = await prisma.society.findUnique({ where: { code: societyCode } });
+            if (society) {
+                whereClause.OR = [
+                    { societyId: null }, // Global currencies
+                    { societyId: society.id } // Specific currencies
+                ];
+            } else {
+                // If society not found, maybe return only global? Or empty?
+                // CategoryService returns empty if society not found.
+                // However, Currencies are usually global. Let's return Global only if code invalid?
+                // Or stick to Category pattern: if context invalid, return nothing/empty to avoid data leak?
+                // Let's safe fallback to Global Only if society logic fails, OR empty.
+                // Given CategoryService returns [], let's try to be consistent but smart.
+                // If Code provided but not found -> [] sounds like "Access Denied".
+                return [];
+            }
+        } else {
+            // No society code -> Global only
+            whereClause.societyId = null;
+        }
+
         const data = await prisma.currency.findMany({
-            where: { isActive: true },
+            where: whereClause,
             select: {
                 id: true,
                 name: true,
@@ -164,7 +189,7 @@ export const CurrencyService = {
         const updated = await prisma.currency.update({ where: { id }, data });
         await redis.del(`${CACHE_PREFIX}${id}`);
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
         return updated;
     }
 };
