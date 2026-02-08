@@ -21,6 +21,8 @@ export interface BusinessPartnerFilters {
     type?: PartnerType; // New Filter
     createdAtFrom?: string;
     createdAtTo?: string;
+    societyCode?: string;
+    societyId?: string;
 }
 
 export const BussinessPartnerService = {
@@ -37,11 +39,25 @@ export const BussinessPartnerService = {
         const sortBy = paginationQuery?.sortBy ?? 'createdAt';
         const sortOrder = paginationQuery?.sortOrder ?? 'desc';
 
+        // Resolve societyId from args or filters (Code takes precedence for resolution if arg not present)
+        let resolvedSocietyId = societyId;
+        const societyCode = filters?.societyCode || filters?.societyId; // Handle like CategoryService
+
+        if (!resolvedSocietyId && societyCode) {
+            const society = await prisma.society.findUnique({ where: { code: societyCode } });
+            if (society) {
+                resolvedSocietyId = society.id;
+            } else {
+                // If code provided but not found, return empty result matches CategoryService behavior
+                return buildPaginatedResult([], page, limit, 0);
+            }
+        }
+
         // Cache Key Construction
         const cacheKeyParts = [
             CACHE_PREFIX,
             'list',
-            societyId || 'all',
+            resolvedSocietyId || 'all',
             filters?.search || 'all',
             filters?.isActive !== undefined ? String(filters.isActive) : 'all',
             filters?.typeBP || 'all',
@@ -65,7 +81,7 @@ export const BussinessPartnerService = {
 
         const whereClause: any = {
             isDeleted: false,
-            ...(societyId && { societyId }),
+            ...(resolvedSocietyId && { societyId: resolvedSocietyId }),
         };
 
         // Apply Filters

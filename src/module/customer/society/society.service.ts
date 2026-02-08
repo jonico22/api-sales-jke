@@ -1,3 +1,4 @@
+
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
 import { Society, PartnerType } from '@prisma/client';
@@ -72,14 +73,16 @@ export const SocietyService = {
 
       // B. Optional: Create Legal Entity (BusinessPartner)
       if (ruc || businessName) {
+        // si enviar el ruc debe asociarle el tipo de documento
+        const documentType = await tx.documentType.findUnique({ where: { code: 'RUC' } });
         const legalEntity = await tx.bussinessPartner.create({
           data: {
             societyId: createdSociety.id,
             type: PartnerType.BOTH, // The society itself acts as both Customer (inter-company) and Supplier
             typeBP: 'COMPANY', // Hardcoded as Company for the Society itself
-            companyName: businessName,
             tradeName: tradeName,
             documentNumber: ruc,
+            typeDocId: ruc !== "" ? documentType?.id : null,
             // If ruc provided, try to find DocumentType? For now assuming standard handling or manual mapping if needed. 
             // In schema 'typeDocId' is optional. We could default to 'RUC' if we fetched it, but keeping it simple.
             address: address,
@@ -137,7 +140,7 @@ export const SocietyService = {
   getAll: async (
     paginationQuery?: PaginationQuery,
     filters?: SocietyFilters
-  ): Promise<PaginatedResult<Society>> => {
+  ): Promise<PaginatedResult<any>> => { // Change return type to any since shape is custom
     const page = paginationQuery?.page ?? 1;
     const limit = paginationQuery?.limit ?? 10;
     const sortBy = paginationQuery?.sortBy ?? 'createdAt';
@@ -159,7 +162,7 @@ export const SocietyService = {
     const cacheKey = cacheKeyParts.join(':');
 
     // 1. Try Cache
-    const cached = await redis.get<PaginatedResult<Society>>(cacheKey);
+    const cached = await redis.get<PaginatedResult<any>>(cacheKey);
     if (cached) return cached;
 
     // 2. Database Query
@@ -190,19 +193,17 @@ export const SocietyService = {
         skip: prismaParams.skip,
         take: prismaParams.take,
         orderBy: prismaParams.orderBy ?? { createdAt: sortOrder },
-        include: { mainCurrency: true, taxes: true, logo: true }
+        include: {
+          mainCurrency: true,
+          taxes: true,
+          logo: true,
+          legalEntity: true
+        }
       }),
       prisma.society.count({ where: whereClause }),
     ]);
 
-    // Format Dates
-    const formattedData = data.map(item => ({
-      ...item,
-      createdAt: formatToLimaTime(item.createdAt) as any,
-      updatedAt: item.updatedAt ? formatToLimaTime(item.updatedAt) as any : item.updatedAt,
-    }));
-
-    const result = buildPaginatedResult(formattedData, page, limit, total);
+    const result = buildPaginatedResult(data, page, limit, total);
 
     // 3. Set Cache
     await redis.set(cacheKey, result, CACHE_TTL_LIST);
@@ -213,12 +214,36 @@ export const SocietyService = {
   getByCode: async (code: string) => {
     const cacheKey = `${CACHE_PREFIX}${code}`;
 
-    const cached = await redis.get<Society>(cacheKey);
+    const cached = await redis.get<any>(cacheKey);
     if (cached) return cached;
 
     const society = await prisma.society.findUnique({
       where: { code },
-      include: { mainCurrency: true, taxes: true, logo: true }
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        isActive: true,
+        legalEntityId: true,
+        stockNotificationFrequency: true,
+        salesNotificationFrequency: true,
+        backupFrequency: true,
+        dataRetentionDays: true,
+        uiConfig: true,
+        mainCurrency: {
+          select: { id: true, name: true, code: true, symbol: true }
+        },
+        taxes: {
+          select: { id: true, name: true, value: true, code: true }
+        },
+        logo: {
+          select: { id: true, path: true }
+        },
+        legalEntity: true,
+        // Optional: Regional configs if needed by frontend logic (formats etc), 
+        // but strictly removing dates/users as requested.
+        subscriptionId: true, // Needed for permission checks usually
+      }
     });
 
     if (society) await redis.set(cacheKey, society, CACHE_TTL_SINGLE);
@@ -238,7 +263,23 @@ export const SocietyService = {
           taxes: { set: taxIds.map((id: string) => ({ id })) }
         })
       },
-      include: { mainCurrency: true, taxes: true, logo: true }
+      // Return full object on update or optimized? usually full to update state
+      // but let's keep it consistent with getByCode for now or let it return default include
+      select: {
+        id: true,
+        name: true,
+        code: true,
+        isActive: true,
+        mainCurrency: {
+          select: { id: true, name: true, code: true, symbol: true }
+        },
+        taxes: {
+          select: { id: true, name: true, value: true, code: true }
+        },
+        logo: {
+          select: { id: true, path: true }
+        }
+      }
     });
 
     // Invalidate Cache
@@ -250,11 +291,7 @@ export const SocietyService = {
   },
 
   delete: async (code: string) => {
-    // Soft Delete usually implies updating isActive/isDeleted, but schema might not have isDeleted on Society?
-    // Checking previous code: it was 'prisma.society.delete'. If we want soft delete standard, we need to check schema.
-    // Assuming hard delete for now based on previous code, OR check if Society has isDeleted.
-    // Schema lines 135: `isDeleted Boolean @default(false)`. Yes, it has it.
-
+    // Soft Delete
     const deleted = await prisma.society.update({
       where: { code },
       data: { isDeleted: true, isActive: false }

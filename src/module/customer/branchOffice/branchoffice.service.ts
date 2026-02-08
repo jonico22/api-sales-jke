@@ -29,11 +29,24 @@ export const BranchOfficeService = {
     const sortBy = paginationQuery?.sortBy ?? 'createdAt';
     const sortOrder = paginationQuery?.sortOrder ?? 'desc';
 
+    // Resolve societyId
+    let resolvedSocietyId = filters?.societyId;
+    const societyCode = filters?.societyCode || filters?.societyId;
+
+    if (!resolvedSocietyId && societyCode) {
+      const society = await prisma.society.findUnique({ where: { code: societyCode } });
+      if (society) {
+        resolvedSocietyId = society.id;
+      } else {
+        return buildPaginatedResult([], page, limit, 0);
+      }
+    }
+
     // Construir clave de cache
     const cacheKeyParts = [
       CACHE_PREFIX,
       'list',
-      filters?.societyId || 'all',
+      resolvedSocietyId || 'all',
       filters?.search || 'all',
       filters?.isMain !== undefined ? filters.isMain : 'all',
       filters?.isActive !== undefined ? filters.isActive : 'all',
@@ -58,7 +71,7 @@ export const BranchOfficeService = {
     const whereClause: any = { isDeleted: false };
 
     // Filtros
-    if (filters?.societyId) whereClause.societyId = filters.societyId;
+    if (resolvedSocietyId) whereClause.societyId = resolvedSocietyId;
     if (filters?.isActive !== undefined) whereClause.isActive = filters.isActive;
     if (filters?.isMain !== undefined) whereClause.isMain = filters.isMain;
     if (filters?.code) whereClause.code = { contains: filters.code, mode: 'insensitive' };

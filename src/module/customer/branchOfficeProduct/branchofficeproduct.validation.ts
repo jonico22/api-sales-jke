@@ -40,5 +40,7 @@ export const branchOfficeProductFiltersSchema = z.object({
     isActive: z.string().transform(val => val === 'true').optional(),
     stockFrom: z.string().transform(val => parseInt(val)).optional(),
     stockTo: z.string().transform(val => parseInt(val)).optional(),
+    societyCode: z.string().optional(),
+    societyId: z.string().uuid().optional(),
   }),
 });

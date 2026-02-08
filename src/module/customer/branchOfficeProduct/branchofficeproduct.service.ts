@@ -25,6 +25,7 @@ export const BranchOfficeProductService = {
    */
   getAll: async (
     paginationQuery?: PaginationQuery,
+    societyId?: string,
     filters?: BranchOfficeProductFilters
   ): Promise<PaginatedResult<any>> => {
     const page = paginationQuery?.page ?? 1;
@@ -32,10 +33,24 @@ export const BranchOfficeProductService = {
     const sortBy = paginationQuery?.sortBy ?? 'createdAt';
     const sortOrder = paginationQuery?.sortOrder ?? 'desc';
 
+    // Resolve societyId
+    let resolvedSocietyId = societyId;
+    const societyCode = filters?.societyCode || filters?.societyId;
+
+    if (!resolvedSocietyId && societyCode) {
+      const society = await prisma.society.findUnique({ where: { code: societyCode } });
+      if (society) {
+        resolvedSocietyId = society.id;
+      } else {
+        return buildPaginatedResult([], page, limit, 0);
+      }
+    }
+
     // Clave de Cache
     const cacheKeyParts = [
       CACHE_PREFIX,
       'list',
+      resolvedSocietyId || 'all',
       filters?.branchOfficeId || 'all',
       filters?.productId || 'all',
       filters?.productName || 'all',
@@ -58,6 +73,12 @@ export const BranchOfficeProductService = {
 
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
     const whereClause: any = {};
+
+    if (resolvedSocietyId) {
+      whereClause.branchOffice = {
+        societyId: resolvedSocietyId
+      };
+    }
 
     // Filtros
     if (filters?.branchOfficeId) whereClause.branchOfficeId = filters.branchOfficeId;

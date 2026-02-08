@@ -15,8 +15,11 @@ export const BranchOfficeProductController = {
       });
     }
 
+    const societyId = req.query.societyId as string | undefined;
+
     const data = await BranchOfficeProductService.getAll(
       paginationParse.data.query,
+      societyId,
       filtersParse.data.query
     );
     res.json(data);

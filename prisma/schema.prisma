@@ -222,7 +222,7 @@ model Society {
 
   // Settings & Notifications
   stockNotificationFrequency Frequency @default(NEVER)
-  salesNotificationFrequency Frequency @default(NEVER)
+  salesNotificationFrequency Frequency @default(DAILY)
   backupFrequency            Frequency @default(NEVER)
 
   dataRetentionDays Int? // 30, 60, 90...
