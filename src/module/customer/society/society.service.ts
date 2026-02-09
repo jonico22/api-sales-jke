@@ -140,6 +140,24 @@ export const SocietyService = {
     return result;
   },
 
+  getById: async (id: string) => {
+    const cacheKey = `${CACHE_PREFIX}${id}`;
+    const cached = await redis.get<Society>(cacheKey);
+    if (cached) return cached;
+
+    const society = await prisma.society.findUnique({
+      where: { id },
+      include: {
+        legalEntity: true,
+        mainCurrency: true,
+        logo: true
+      }
+    });
+
+    if (society) await redis.set(cacheKey, society, CACHE_TTL_SINGLE);
+    return society;
+  },
+
   getAll: async (
     paginationQuery?: PaginationQuery,
     filters?: SocietyFilters
@@ -220,8 +238,10 @@ export const SocietyService = {
     const cached = await redis.get<any>(cacheKey);
     if (cached) return cached;
 
-    const society = await prisma.society.findUnique({
-      where: { code },
+    const society = await prisma.society.findFirst({
+      where: {
+        code: { equals: code, mode: 'insensitive' }
+      },
       select: {
         id: true,
         name: true,

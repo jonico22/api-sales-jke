@@ -30,6 +30,7 @@ export const findAll = async (req: Request, res: Response) => {
 };
 
 export const findOne = async (req: Request, res: Response) => {
+
   const parse = societyIdSchema.safeParse(req.params);
   if (!parse.success) return res.status(400).json(parse.error.format());
 
@@ -54,4 +55,36 @@ export const remove = async (req: Request, res: Response) => {
 
   await SocietyService.delete(parse.data.code);
   res.status(204).send();
+};
+
+export const current = async (req: any, res: Response) => {
+  try {
+    // 0. Try to get from Query Param (Priority)
+    const queryCode = req.query.societyCode as string;
+    if (queryCode) {
+      const society = await SocietyService.getByCode(queryCode);
+      if (society) return res.json(society);
+      // If code provided but not found, 404 specific
+      return res.status(404).json({ message: 'Society not found by code' });
+    }
+
+    // 1. Try to get from User Context (if authenticated)
+    const societyId = req.user?.societyId;
+    const societyCode = req.user?.societyCode;
+
+    if (societyId) {
+      const society = await SocietyService.getById(societyId);
+      if (society) return res.json(society);
+    }
+
+    if (societyCode) {
+      const society = await SocietyService.getByCode(societyCode);
+      if (society) return res.json(society);
+    }
+
+    // 2. If no user context, or not found, return 404
+    return res.status(404).json({ message: 'No current society context found' });
+  } catch (error: any) {
+    res.status(500).json({ message: 'Error Retrieving Current Society', error: error.message });
+  }
 };

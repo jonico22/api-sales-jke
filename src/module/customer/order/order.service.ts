@@ -224,25 +224,52 @@ export const OrderService = {
     const sortBy = paginationQuery?.sortBy ?? 'createdAt';
     const sortOrder = paginationQuery?.sortOrder ?? 'desc';
 
-    const cacheKey = [
-      CACHE_PREFIX, 'list',
-      filters?.societyId || 'all',
-      filters?.status || 'all',
-      filters?.partnerId || 'all',
+    // Construir clave de cache única
+    const societyCode = filters?.societyCode || filters?.societyId;
+    const cacheKeyParts = [
+      CACHE_PREFIX,
+      'list',
+      societyCode || 'all',
       filters?.branchId || 'all',
+      filters?.partnerId || 'all',
+      filters?.status || 'all',
       filters?.search || 'all',
+      filters?.dateFrom || 'all',
+      filters?.dateTo || 'all',
       filters?.totalAmountFrom || 'all',
       filters?.totalAmountTo || 'all',
-      page, limit, sortBy, sortOrder
-    ].join(':');
+      filters?.createdBy || 'all',
+      page,
+      limit,
+      sortBy,
+      sortOrder
+    ];
+    const cacheKey = cacheKeyParts.join(':');
 
+    // 1. Cache Check
     const cached = await redis.get<PaginatedResult<Order>>(cacheKey);
     if (cached) return cached;
 
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
     const whereClause: any = {};
 
-    if (filters?.societyId) whereClause.societyId = filters.societyId;
+    // 2. Resolve Society Code/ID
+    if (societyCode) {
+      if (filters?.societyCode) {
+        // Resolve Code -> ID
+        const society = await prisma.society.findUnique({ where: { code: filters.societyCode } });
+        if (society) {
+          whereClause.societyId = society.id;
+        } else {
+          // Si no encuentra por código, devolver vacío (filtro estricto)
+          return buildPaginatedResult([], page, limit, 0);
+        }
+      } else {
+        // Direct ID
+        whereClause.societyId = filters.societyId;
+      }
+    }
+
     if (filters?.partnerId) whereClause.partnerId = filters.partnerId;
     if (filters?.branchId) whereClause.branchId = filters.branchId;
     if (filters?.status) whereClause.status = filters.status;

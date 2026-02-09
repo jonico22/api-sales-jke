@@ -71,6 +71,7 @@ export const orderFiltersSchema = z.object({
 
         // Filters IDs
         societyId: z.string().optional().openapi({ example: 'uuid' }),
+        societyCode: z.string().optional().openapi({ example: 'SOCIETY_001' }),
         partnerId: z.string().optional().openapi({ example: 'uuid' }),
         branchId: z.string().optional().openapi({ example: 'uuid' }),
 
