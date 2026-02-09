@@ -162,6 +162,10 @@ export const BranchOfficeProductService = {
 
     // Invalidate list cache
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    // Invalidate Product Cache (Linked Stock)
+    await redis.deleteKeysByPrefix('products:');
+    await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
+
     return created;
   },
 
@@ -178,6 +182,9 @@ export const BranchOfficeProductService = {
     // Invalidate caches
     await redis.del(`${CACHE_PREFIX}${id}`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    // Invalidate Product Cache (Linked Stock)
+    await redis.deleteKeysByPrefix('products:');
+    await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
 
     return updated;
   },
@@ -190,6 +197,9 @@ export const BranchOfficeProductService = {
     // Invalidate caches
     await redis.del(`${CACHE_PREFIX}${id}`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    // Invalidate Product Cache (Linked Stock)
+    await redis.deleteKeysByPrefix('products:');
+    await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
 
     return deleted;
   },

@@ -22,12 +22,48 @@ export const OrderService = {
    */
   create: async (data: CreateOrderInput) => {
     // 1. Validar existencias básicas (Partner, Society, Branch, Currency)
-    const partner = await prisma.bussinessPartner.findUnique({ where: { id: data.partnerId } });
-    if (!partner) throw new Error('Cliente no encontrado');
+    // Validate Society (ID or Code)
+    let society = await prisma.society.findUnique({ where: { id: data.societyId } });
+    if (!society) {
+      society = await prisma.society.findUnique({ where: { code: data.societyId } });
+    }
+    if (!society) throw new Error(`Sociedad no encontrada (ID/Code: ${data.societyId})`);
 
-    const branch = await prisma.branchOffice.findUnique({ where: { id: data.branchId } });
-    if (!branch) throw new Error('Sucursal no encontrada');
+    // Validate Branch (ID or Code)
+    let branch = await prisma.branchOffice.findUnique({ where: { id: data.branchId } });
+    if (!branch) {
+      // Branch code is unique per society, so we need the resolved societyId
+      branch = await prisma.branchOffice.findUnique({
+        where: {
+          societyId_code: {
+            societyId: society.id,
+            code: data.branchId
+          }
+        }
+      });
+    }
+    if (!branch) throw new Error(`Sucursal no encontrada (ID/Code: ${data.branchId})`);
 
+    // Validate Partner (ID or Document Number?)
+    // Partner doesn't have a simple 'code' usually, but documentNumber is unique.
+    let partner = await prisma.bussinessPartner.findUnique({ where: { id: data.partnerId } });
+    if (!partner) {
+      partner = await prisma.bussinessPartner.findFirst({ where: { documentNumber: data.partnerId } });
+    }
+    if (!partner) throw new Error(`Cliente no encontrado (ID/Doc: ${data.partnerId})`);
+
+    // Validate Currency (ID or Code)
+    let currency = await prisma.currency.findUnique({ where: { id: data.currencyId } });
+    if (!currency) {
+      currency = await prisma.currency.findUnique({ where: { code: data.currencyId } });
+    }
+    if (!currency) throw new Error(`Moneda no encontrada (ID/Code: ${data.currencyId})`);
+
+    // Re-assign resolved IDs to data object to ensure database consistency
+    data.societyId = society.id;
+    data.branchId = branch.id;
+    data.partnerId = partner.id;
+    data.currencyId = currency.id;
     // 2. Obtener precios de productos para validar/calcular
     const productIds = data.orderItems.map(i => i.productId);
     const products = await prisma.product.findMany({
@@ -39,6 +75,7 @@ export const OrderService = {
     products.forEach(p => productMap.set(p.id, p));
 
     // 3. Calcular Totales
+    const TAX_RATE = 0.18; // IGV 18%
     let calculatedSubtotal = 0;
 
     // Preparar items para creación
@@ -70,6 +107,7 @@ export const OrderService = {
       // Math check: (List Price * Qty) - Discount = (List Price * Qty) - ((List - Sold) * Qty) 
       //           = Qty * (List - List + Sold) = Qty * Sold. Correct.
       const subtotalItem = (item.quantity * soldPrice);
+      const taxItem = subtotalItem * TAX_RATE;
 
       calculatedSubtotal += subtotalItem;
 
@@ -80,14 +118,16 @@ export const OrderService = {
         discount: finalDiscount,
 
         subtotal: subtotalItem,
-        taxAmount: 0, // Por ahora 0, implementar lógica de impuestos si es necesario
-        total: subtotalItem, // + Impuestos
+        taxAmount: taxItem,
+        total: subtotalItem + taxItem, // Subtotal + Tax
         comment: item.comment,
         costPrice: product.priceCost || 0 // Snapshot del costo actual
       };
     });
 
-    const totalAmount = calculatedSubtotal - data.discount; // Aplicar descuento global si existe
+    const taxBase = calculatedSubtotal - data.discount;
+    const totalTax = taxBase > 0 ? taxBase * TAX_RATE : 0;
+    const totalAmount = taxBase + totalTax;
 
     // 4. Generar Código
     const orderCode = data.orderCode || `ORD-${Date.now()}`;
@@ -114,6 +154,7 @@ export const OrderService = {
           // Financials Calculated
           subtotal: calculatedSubtotal,
           discount: data.discount,
+          taxAmount: totalTax,
           totalAmount: totalAmount > 0 ? totalAmount : 0,
           status: data.status || OrderStatus.PENDING,
 
@@ -127,11 +168,46 @@ export const OrderService = {
           orderItems: true
         }
       });
+
+      // 6. [STOCK] Reserve Stock ONLY if PENDING_PAYMENT or COMPLETED
+      // If PENDING (Draft), do not reserve.
+      if (newOrder.status === OrderStatus.PENDING_PAYMENT || newOrder.status === OrderStatus.COMPLETED) {
+        for (const item of itemsToCreate) {
+          await InventoryService.reserveStock(
+            item.productId,
+            data.branchId, // Use resolved data.branchId
+            item.quantity,
+            tx
+          );
+        }
+      }
+
+      // If created directly as COMPLETED, also Confirm Output
+      if (newOrder.status === OrderStatus.COMPLETED) {
+        for (const item of itemsToCreate) {
+          await InventoryService.confirmStockOutput({
+            productId: item.productId,
+            branchOfficeId: data.branchId,
+            quantity: item.quantity,
+            type: TransactionType.SALE_EXIT,
+            unitCost: 0, // Need to fetch cost? OrderItem has costPrice.
+            totalCost: 0, // update logic handled cost.
+            referenceId: newOrder.id,
+            referenceType: 'ORDER',
+            documentNumber: newOrder.orderCode
+          }, tx);
+        }
+      }
+
       return newOrder;
     });
 
     // Invalidate Cache
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    // Invalidate Product Cache (Stock Changed)
+    await redis.deleteKeysByPrefix('products:');
+    await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
+    await redis.deleteKeysByPrefix('branch_office_products:');
 
     return order;
   },
@@ -214,6 +290,7 @@ export const OrderService = {
           currency: { select: { code: true, symbol: true } },
           society: { select: { id: true, name: true } },
           branch: { select: { id: true, name: true } },
+          OrderPayment: { select: { paymentMethod: true, amount: true } }, // Include methods and amounts
           _count: { select: { orderItems: true } }
         }
       }),
@@ -243,7 +320,18 @@ export const OrderService = {
         society: { select: { id: true, name: true } },
         orderItems: {
           include: {
-            product: { select: { id: true, name: true, code: true, imageId: true } }
+            product: {
+              select: {
+                id: true,
+                name: true,
+                code: true,
+                imageId: true,
+                price: true,     // Current List Price
+                stock: true,     // Current Global Stock
+                priceCost: true, // Current Cost
+                description: true
+              }
+            }
           }
         },
         OrderPayment: true // Incluir pagos relacionados
@@ -270,6 +358,8 @@ export const OrderService = {
     if (!currentOrder) throw new Error('Orden no encontrada');
 
     const isCompleting = updateData.status === OrderStatus.COMPLETED && currentOrder.status !== OrderStatus.COMPLETED;
+    const isConfirmingPayment = updateData.status === OrderStatus.PENDING_PAYMENT && currentOrder.status === OrderStatus.PENDING;
+    const isCancelling = updateData.status === OrderStatus.CANCELLED && currentOrder.status === OrderStatus.PENDING_PAYMENT;
 
     const result = await prisma.$transaction(async (tx) => {
       // 1. Update Order Header
@@ -282,36 +372,42 @@ export const OrderService = {
         include: { orderItems: true }
       });
 
-      // 2. If completing, Process Stock Exit
+      // 2. Logic based on Status Transition
+
+      // A. PENDING -> PENDING_PAYMENT: Reserve Stock
+      if (isConfirmingPayment) {
+        for (const item of updated.orderItems) {
+          await InventoryService.reserveStock(
+            item.productId,
+            updated.branchId,
+            item.quantity,
+            tx
+          );
+        }
+      }
+
+      // B. ANY -> COMPLETED: Confirm Output
       if (isCompleting) {
         for (const item of updated.orderItems) {
-          // A. Decrease Stock
-          await tx.branchOfficeProduct.upsert({
-            where: {
-              productId_branchOfficeId: {
-                productId: item.productId,
-                branchOfficeId: updated.branchId
-              }
-            },
-            update: {
-              physicalStock: { decrement: item.quantity },
-              availableStock: { decrement: item.quantity },
-            },
-            create: {
-              productId: item.productId,
-              branchOfficeId: updated.branchId,
-              physicalStock: -item.quantity,
-              availableStock: -item.quantity,
-            }
-          });
+          // Check if we need to Reserve first (if coming from PENDING or other non-reserved status)
+          // Assumption: PENDING_PAYMENT is the only status where it's already reserved.
+          const wasReserved = currentOrder.status === OrderStatus.PENDING_PAYMENT;
 
-          // B. Log Kardex
-          await InventoryService.logTransaction({
-            date: new Date(),
+          if (!wasReserved) {
+            await InventoryService.reserveStock(
+              item.productId,
+              updated.branchId,
+              item.quantity,
+              tx
+            );
+          }
+
+          // Confirm Stock Output (Decrements Physical & Reserved)
+          await InventoryService.confirmStockOutput({
             productId: item.productId,
             branchOfficeId: updated.branchId,
+            quantity: item.quantity,
             type: TransactionType.SALE_EXIT,
-            quantity: -item.quantity, // Negative for EXIT
             unitCost: Number(item.costPrice),
             totalCost: Number(item.unitPrice) * item.quantity,
             referenceId: updated.id,
@@ -321,11 +417,27 @@ export const OrderService = {
         }
       }
 
+      // C. PENDING_PAYMENT -> CANCELLED: Release Reservation
+      if (isCancelling) {
+        for (const item of updated.orderItems) {
+          await InventoryService.cancelReservation(
+            item.productId,
+            updated.branchId,
+            item.quantity,
+            tx
+          );
+        }
+      }
+
       return updated;
     });
 
     await redis.del(`${CACHE_PREFIX}${id}`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    // Invalidate Product Cache (Stock Changed)
+    await redis.deleteKeysByPrefix('products:');
+    await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
+    await redis.deleteKeysByPrefix('branch_office_products:');
 
     return result;
   },
@@ -335,17 +447,47 @@ export const OrderService = {
    */
   delete: async (id: string) => {
     // Soft delete or Cancel logic
-    const deleted = await prisma.order.update({
+    // Soft delete or Cancel logic
+    const order = await prisma.order.findUnique({
       where: { id },
-      data: {
-        status: OrderStatus.CANCELLED,
-        cancellationReason: 'Deleted via API',
-        updatedAt: new Date()
+      include: { orderItems: true }
+    });
+
+    if (!order) throw new Error('Orden no encontrada');
+    if (order.status === OrderStatus.COMPLETED) throw new Error('No se puede cancelar una orden completada');
+    if (order.status === OrderStatus.CANCELLED) return order;
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. Return Stock if Pending Payment (Reserved)
+      if (order.status === OrderStatus.PENDING_PAYMENT) {
+        for (const item of order.orderItems) {
+          await InventoryService.cancelReservation(
+            item.productId,
+            order.branchId,
+            item.quantity,
+            tx
+          );
+        }
       }
+
+      // 2. Update Status
+      return tx.order.update({
+        where: { id },
+        data: {
+          status: OrderStatus.CANCELLED,
+          cancellationReason: 'Deleted/Cancelled via API',
+          updatedAt: new Date()
+        }
+      });
     });
 
     await redis.del(`${CACHE_PREFIX}${id}`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    return deleted;
+    // Invalidate Product Cache (Stock Changed)
+    await redis.deleteKeysByPrefix('products:');
+    await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
+    await redis.deleteKeysByPrefix('branch_office_products:');
+
+    return result;
   }
 };

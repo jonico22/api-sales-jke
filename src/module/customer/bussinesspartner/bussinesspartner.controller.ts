@@ -117,10 +117,10 @@ export const BussinessPartnerController = {
      */
     getForSelect: async (req: Request, res: Response) => {
         try {
-            const societyId = req.query.societyId as string | undefined;
+            const societyCode = (req.query.societyCode || req.query.societyId) as string | undefined;
             const type = req.query.type as any;
 
-            const result = await BussinessPartnerService.getForSelect(societyId, type);
+            const result = await BussinessPartnerService.getForSelect(societyCode, type);
             res.json(result);
         } catch (error: any) {
             res.status(500).json({ message: 'Error obteniendo lista de selección', error: error.message });

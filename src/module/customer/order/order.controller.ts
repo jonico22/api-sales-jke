@@ -38,10 +38,11 @@ export const OrderController = {
    * GET /api/orders/:id
    */
   getById: async (req: Request, res: Response) => {
-    const { params } = orderIdSchema.parse({ params: req.params });
+    const parse = orderIdSchema.safeParse({ params: req.params });
+    if (!parse.success) return res.status(400).json(parse.error.format());
 
     try {
-      const order = await OrderService.getById(params.id);
+      const order = await OrderService.getById(parse.data.params.id);
       if (!order) return res.status(404).json({ message: 'Order not found' });
       res.json(order);
     } catch (error: any) {
@@ -53,11 +54,14 @@ export const OrderController = {
    * POST /api/orders
    */
   create: async (req: Request, res: Response) => {
-    try {
-      // Validate body
-      const { body } = createOrderSchema.parse({ body: req.body });
+    // Validate body
+    const parse = createOrderSchema.safeParse({ body: req.body });
+    if (!parse.success) {
+      return res.status(400).json(parse.error.format());
+    }
 
-      const newOrder = await OrderService.create(body);
+    try {
+      const newOrder = await OrderService.create(parse.data.body);
       res.status(201).json(newOrder);
     } catch (error: any) {
       if (error instanceof Error && error.message.includes('not found')) {
@@ -71,11 +75,21 @@ export const OrderController = {
    * PUT /api/orders/:id
    */
   update: async (req: Request, res: Response) => {
-    try {
-      const { params } = orderIdSchema.parse({ params: req.params });
-      const { body } = updateOrderSchema.parse({ body: req.body });
+    const paramsParse = orderIdSchema.safeParse({ params: req.params });
+    const bodyParse = updateOrderSchema.safeParse({ body: req.body });
 
-      const updated = await OrderService.update(params.id, body);
+    if (!paramsParse.success || !bodyParse.success) {
+      return res.status(400).json({
+        ...(paramsParse.error?.format?.() ?? {}),
+        ...(bodyParse.error?.format?.() ?? {})
+      });
+    }
+
+    try {
+      const updated = await OrderService.update(
+        paramsParse.data.params.id,
+        bodyParse.data.body
+      );
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ message: 'Error updating order', error: error.message });

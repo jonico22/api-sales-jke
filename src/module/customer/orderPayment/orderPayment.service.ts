@@ -17,22 +17,50 @@ const CACHE_TTL_LIST = 300; // 5 min
 
 export const OrderPaymentService = {
   create: async (data: CreateOrderPaymentInput) => {
-    // Si el pago CONFIRMS la orden, actualizar el estado de la Orden (lógica de negocio futura)
+    // 1. Resolve & Validate Entities (ID or Code)
 
-    const paymentDate = data.paymentDate
-      ? toLimaTimezone(data.paymentDate)
-      : toLimaTimezone(new Date());
+    // Society
+    let society = await prisma.society.findUnique({ where: { id: data.societyId } });
+    if (!society) {
+      society = await prisma.society.findUnique({ where: { code: data.societyId } });
+    }
+    if (!society) throw new Error(`Sociedad no encontrada (ID/Code: ${data.societyId})`);
+
+    // Currency
+    let currency = await prisma.currency.findUnique({ where: { id: data.currencyId } });
+    if (!currency) {
+      currency = await prisma.currency.findUnique({ where: { code: data.currencyId } });
+    }
+    if (!currency) throw new Error(`Moneda no encontrada (ID/Code: ${data.currencyId})`);
+
+    // Order (Optional)
+    let orderId = data.orderId;
+    if (data.orderId) {
+      let order = await prisma.order.findUnique({ where: { id: data.orderId } });
+      if (!order) {
+        order = await prisma.order.findUnique({ where: { orderCode: data.orderId } });
+      }
+      if (!order) throw new Error(`Pedido no encontrado (ID/Code: ${data.orderId})`);
+      orderId = order.id;
+    }
+
+    // Update data with resolved IDs
+    const finalData = {
+      ...data,
+      societyId: society.id,
+      currencyId: currency.id,
+      orderId: orderId,
+      status: data.status || PaymentStatus.PENDING,
+      paymentDate: data.paymentDate ? toLimaTimezone(data.paymentDate) : toLimaTimezone(new Date())
+    };
 
     const created = await prisma.orderPayment.create({
-      data: {
-        ...data,
-        paymentDate,
-        status: data.status || PaymentStatus.PENDING
-      }
+      data: finalData
     });
 
     // Invalidar cache
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+
     if (created.orderId) {
       await redis.del(`orders:${created.orderId}`); // Invalidar orden también
 
@@ -48,7 +76,7 @@ export const OrderPaymentService = {
             created,
             data.createdBy,
             order.branchId,
-            data.societyId
+            society.id
           );
         }
       } catch (error) {

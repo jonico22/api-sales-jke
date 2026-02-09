@@ -552,6 +552,7 @@ export const ProductService = {
         name: true,
         price: true,
         stock: true,
+        code: true,
         category: {
           select: {
             id: true,

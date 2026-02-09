@@ -73,43 +73,46 @@ export const SocietyService = {
 
       // B. Optional: Create Legal Entity (BusinessPartner)
       if (ruc || businessName) {
-        // si enviar el ruc debe asociarle el tipo de documento
-        const documentType = await tx.documentType.findUnique({ where: { code: 'RUC' } });
-        const legalEntity = await tx.bussinessPartner.create({
-          data: {
-            societyId: createdSociety.id,
-            type: PartnerType.BOTH, // The society itself acts as both Customer (inter-company) and Supplier
-            typeBP: 'COMPANY', // Hardcoded as Company for the Society itself
-            tradeName: tradeName,
-            documentNumber: ruc,
-            typeDocId: ruc !== "" ? documentType?.id : null,
-            // If ruc provided, try to find DocumentType? For now assuming standard handling or manual mapping if needed. 
-            // In schema 'typeDocId' is optional. We could default to 'RUC' if we fetched it, but keeping it simple.
-            address: address,
-            email: email || `legal.${createdSociety.code}@placeholder.com`, // Email is unique, fallback if not provided?
-            // Better to ONLY set if email is truthy. 
-            // But schema says email is String @unique (Required). 
-            // Reviewing schema: email String @unique.
-            // So we MUST provide an email.
-            phone: phone,
-            isActive: true,
-            isDeleted: false,
-          }
-        });
+        // Check if a BusinessPartner with this RUC already exists
+        let legalEntity = null;
+        if (ruc) {
+          legalEntity = await tx.bussinessPartner.findUnique({
+            where: { documentNumber: ruc }
+          });
+        }
+
+        if (!legalEntity && (ruc || businessName)) {
+          // si enviar el ruc debe asociarle el tipo de documento
+          const documentType = await tx.documentType.findUnique({ where: { code: 'RUC' } });
+
+          legalEntity = await tx.bussinessPartner.create({
+            data: {
+              societyId: createdSociety.id,
+              type: PartnerType.BOTH,
+              typeBP: 'COMPANY',
+              tradeName: tradeName,
+              // Ensure null if empty string to avoid unique constraint issues
+              documentNumber: ruc || null,
+              typeDocId: ruc ? documentType?.id : null,
+              address: address,
+              // Check if email provided, else generic
+              email: email || `legal.${createdSociety.code}.${Date.now()}@placeholder.com`,
+              phone: phone,
+              isActive: true,
+              isDeleted: false,
+            }
+          });
+        }
 
         // C. Link back to Society
-        await tx.society.update({
-          where: { id: createdSociety.id },
-          data: { legalEntityId: legalEntity.id }
-        });
-
-        // Return updated society with legal entity? 
-        // For consistency, we might just return the originally created one, 
-        // or re-fetch if we need the legalEntity populated. 
-        // The original return 'created' was 'include: ...'. 
-        // Let's stick to returning 'createdSociety' but usually the caller might want to know about the legal link.
-        // We can attach the legalEntityId manually to the result object if needed.
-        createdSociety.legalEntityId = legalEntity.id;
+        if (legalEntity) {
+          await tx.society.update({
+            where: { id: createdSociety.id },
+            data: { legalEntityId: legalEntity.id }
+          });
+          // Update local object reference
+          createdSociety.legalEntityId = legalEntity.id;
+        }
       }
 
       // D. Create "General Public" BusinessPartner (Default Customer)

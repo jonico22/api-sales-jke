@@ -161,7 +161,7 @@ export const InventoryService = {
      */
     createAdjustment: async (data: CreateAdjustmentInput, userId?: string) => {
         // Transactional Update
-        return prisma.$transaction(async (tx) => {
+        const result = await prisma.$transaction(async (tx) => {
             // 1. Get current product cost if not provided
             let unitCost = data.unitCost;
             if (unitCost === undefined) {
@@ -171,10 +171,6 @@ export const InventoryService = {
             }
 
             // 2. Determine quantity sign (ADD or SUB)
-            // If type is ADD, quantity is positive.
-            // If type is SUB, quantity must be negative for the Log, but input is usually positive.
-            // Let's standardise: Input Quantity is always positive (absolute).
-            // Logic decides sign.
             const signedQuantity = data.type === TransactionType.ADJUSTMENT_SUB
                 ? -Math.abs(data.quantity)
                 : Math.abs(data.quantity);
@@ -190,16 +186,21 @@ export const InventoryService = {
                 update: {
                     physicalStock: { increment: signedQuantity },
                     availableStock: { increment: signedQuantity },
-                    // If adding stock, maybe update restocking date
                     ...(signedQuantity > 0 ? { lastRestockedAt: new Date() } : {})
                 },
                 create: {
                     productId: data.productId,
                     branchOfficeId: data.branchOfficeId,
-                    physicalStock: signedQuantity, // If creating, it starts with this adjustment
+                    physicalStock: signedQuantity,
                     availableStock: signedQuantity,
                     lastRestockedAt: new Date()
                 }
+            });
+
+            // 3.1 [NEW] Sync Global Product Stock (Physical)
+            await tx.product.update({
+                where: { id: data.productId },
+                data: { stock: { increment: signedQuantity } }
             });
 
             // 4. Log Transaction
@@ -212,9 +213,82 @@ export const InventoryService = {
                 unitCost: unitCost,
                 totalCost: unitCost * Math.abs(signedQuantity),
                 referenceType: 'MANUAL_ADJUSTMENT',
-                documentNumber: data.notes, // Store notes here for now
-                // referenceId could be userId or null
+                documentNumber: data.notes,
             }, tx);
+        });
+
+        // Invalidate Caches
+        await redis.deleteKeysByPrefix('products:');
+        await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
+        await redis.deleteKeysByPrefix('branch_office_products:');
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+
+        return result;
+    },
+
+    reserveStock: async (productId: string, branchId: string, quantity: number, tx: any) => {
+        // Reserve Stock: affects Available and Reserved, NOT Physical.
+        // So Global Product Stock (Physical) is UNCHANGED.
+        return tx.branchOfficeProduct.upsert({
+            where: {
+                productId_branchOfficeId: { productId, branchOfficeId: branchId }
+            },
+            update: {
+                availableStock: { decrement: quantity },
+                reservedStock: { increment: quantity }
+            },
+            create: {
+                productId,
+                branchOfficeId: branchId,
+                physicalStock: 0,
+                availableStock: -quantity,
+                reservedStock: quantity
+            }
+        });
+    },
+
+    confirmStockOutput: async (input: LogTransactionInput, tx: any) => {
+        // 1. Update Branch Stock
+        await tx.branchOfficeProduct.update({
+            where: {
+                productId_branchOfficeId: {
+                    productId: input.productId,
+                    branchOfficeId: input.branchOfficeId
+                }
+            },
+            data: {
+                physicalStock: { decrement: input.quantity },
+                reservedStock: { decrement: input.quantity }
+            }
+        });
+
+        // 1.1 [NEW] Sync Global Product Stock (Physical)
+        await tx.product.update({
+            where: { id: input.productId },
+            data: { stock: { decrement: input.quantity } }
+        });
+
+        // 2. Log Transaction (SALE_EXIT)
+        return InventoryService.logTransaction({
+            ...input,
+            quantity: -Math.abs(input.quantity), // Ensure negative for EXIT
+            type: TransactionType.SALE_EXIT
+        }, tx);
+    },
+
+    /**
+     * Cancel Reservation (Order Cancelled)
+     * Increases Available, Decreases Reserved. Physical remains same.
+     */
+    cancelReservation: async (productId: string, branchId: string, quantity: number, tx: any) => {
+        return tx.branchOfficeProduct.update({
+            where: {
+                productId_branchOfficeId: { productId, branchOfficeId: branchId }
+            },
+            data: {
+                availableStock: { increment: quantity },
+                reservedStock: { decrement: quantity }
+            }
         });
     }
 };

@@ -5,12 +5,12 @@ import { PaymentMethodOrder, PaymentStatus } from '@prisma/client';
 
 export const createOrderPaymentSchema = z.object({
     body: registry.register('CreateOrderPayment', z.object({
-        orderId: z.string().uuid().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
-        societyId: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+        orderId: z.string().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+        societyId: z.string().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
 
         // Financials
         amount: z.number().positive().openapi({ example: 150.00 }),
-        currencyId: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+        currencyId: z.string().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
         exchangeRate: z.number().positive().default(1.0).openapi({ example: 1.0 }),
 
         paymentDate: z.string().datetime().optional().openapi({ example: '2024-02-01T10:00:00Z' }),

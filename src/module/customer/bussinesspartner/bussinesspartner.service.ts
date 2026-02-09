@@ -194,8 +194,9 @@ export const BussinessPartnerService = {
             },
         });
 
-        // Invalidate List Cache
+        // Invalidate Cache
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
 
         return created;
     },
@@ -223,6 +224,7 @@ export const BussinessPartnerService = {
         // Invalidate Cache
         await redis.del(`${CACHE_PREFIX}${id}`);
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
 
         return updated;
     },
@@ -243,6 +245,7 @@ export const BussinessPartnerService = {
         // Invalidate Cache
         await redis.del(`${CACHE_PREFIX}${id}`);
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
 
         return deleted;
     },
@@ -258,6 +261,7 @@ export const BussinessPartnerService = {
         // Invalidate Cache
         await redis.del(`${CACHE_PREFIX}${id}`);
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
 
         return deleted;
     },
@@ -289,17 +293,32 @@ export const BussinessPartnerService = {
     /**
      * Obtener lista simple para selectores (dropdowns)
      */
-    async getForSelect(societyId?: string, type?: PartnerType) {
+    async getForSelect(societyCode?: string, type?: PartnerType) {
+        // Cache Key including societyCode and Type
+        const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}:${type || 'all'}`;
+        const cached = await redis.get<any[]>(cacheKey);
+        if (cached) return cached;
+
         const whereClause: any = {
             isDeleted: false,
             isActive: true,
-            ...(societyId && { societyId }),
         };
+
+        // Resolve Society Code
+        if (societyCode) {
+            const society = await prisma.society.findUnique({ where: { code: societyCode } });
+            if (society) {
+                whereClause.societyId = society.id;
+            } else {
+                // If code provided but not found, return empty to avoid leak
+                return [];
+            }
+        }
 
         if (type) {
             // If requesting CUSTOMER, allow CUSTOMER and BOTH
             if (type === 'CUSTOMER') {
-                whereClause.type = { in: ['CUSTOMER', 'BOTH'] };
+                whereClause.type = { in: ['CUSTOMER'] };
             } else if (type === 'SUPPLIER') {
                 whereClause.type = { in: ['SUPPLIER', 'BOTH'] };
             } else {
@@ -320,11 +339,14 @@ export const BussinessPartnerService = {
             orderBy: { createdAt: 'desc' }
         });
 
-        return partners.map(p => ({
+        const result = partners.map(p => ({
             id: p.id,
             name: p.companyName || `${p.firstName} ${p.lastName}`.trim(),
             documentNumber: p.documentNumber,
             type: p.type
         }));
+
+        await redis.set(cacheKey, result, 300); // 5 min cache for select
+        return result;
     }
 };

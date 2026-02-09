@@ -21,7 +21,7 @@ export const createOrderSchema = z.object({
         orderDate: z.string().datetime().optional().openapi({ example: '2024-01-01T10:00:00Z' }),
 
         // Header Financials
-        currencyId: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+        currencyId: z.string(),
         exchangeRate: z.number().positive().default(1.0).openapi({ example: 3.75 }),
         discount: z.number().min(0).default(0).openapi({ example: 0.0, description: 'Descuento global a la orden' }),
 
@@ -37,9 +37,10 @@ export const createOrderSchema = z.object({
         status: OrderStatusEnum.default(OrderStatus.PENDING).openapi({ example: OrderStatus.PENDING }),
 
         // Relations
-        societyId: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
-        partnerId: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
-        branchId: z.string().uuid().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+        // Relations
+        societyId: z.string().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+        partnerId: z.string().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+        branchId: z.string().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
         createdBy: z.string().optional().openapi({ example: 'userId' }),
 
         // Items
