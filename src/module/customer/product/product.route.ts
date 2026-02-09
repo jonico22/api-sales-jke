@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { ProductController } from './product.controller';
+import { ProductBulkController } from './product.bulk.controller';
 
 const router = Router();
 
@@ -100,6 +101,34 @@ router.get('/:id', ProductController.getById);
  *         description: Error de validación
  */
 router.post('/', ProductController.create);
+
+/**
+ * @openapi
+ * /products/bulk-upload:
+ *   post:
+ *     summary: Carga masiva de productos vía CSV
+ *     consumes:
+ *       - multipart/form-data
+ *     parameters:
+ *       - in: query
+ *         name: societyId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Carga procesada
+ */
+router.post('/bulk-upload', ProductBulkController.uploadMiddleware, ProductBulkController.bulkUpload);
 
 /**
  * @openapi

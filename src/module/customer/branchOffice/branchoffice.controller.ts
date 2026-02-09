@@ -1,10 +1,24 @@
 import { Request, Response } from 'express';
 import { BranchOfficeService } from './branchoffice.service';
-import { branchOfficeIdSchema } from './branchoffice.validation';
+import { branchOfficeFiltersSchema, branchOfficeIdSchema } from './branchoffice.validation';
+import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
 export const BranchOfficeController = {
-  getAll: async (_req: Request, res: Response) => {
-    const data = await BranchOfficeService.getAll();
+  getAll: async (req: Request, res: Response) => {
+    const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
+    const filtersParse = branchOfficeFiltersSchema.safeParse({ query: req.query });
+
+    if (!paginationParse.success || !filtersParse.success) {
+      return res.status(400).json({
+        ...(paginationParse.error?.format?.() ?? {}),
+        ...(filtersParse.error?.format?.() ?? {}),
+      });
+    }
+
+    const data = await BranchOfficeService.getAll(
+      paginationParse.data.query,
+      filtersParse.data.query
+    );
     res.json(data);
   },
 
@@ -13,6 +27,16 @@ export const BranchOfficeController = {
     const result = await BranchOfficeService.getById(id);
     if (!result) return res.status(404).json({ message: 'BranchOffice not found' });
     res.json(result);
+  },
+
+  getForSelect: async (req: Request, res: Response) => {
+    try {
+      const societyCode = (req.query.societyCode || req.query.societyId) as string | undefined;
+      const result = await BranchOfficeService.getForSelect(societyCode);
+      res.json(result);
+    } catch (error: any) {
+      res.status(500).json({ message: 'Error retrieving branch offices list', error: error.message });
+    }
   },
 
   create: async (req: Request, res: Response) => {

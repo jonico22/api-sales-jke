@@ -1,9 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
-// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
-// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
-
 generator client {
   provider      = "prisma-client-js"
   // Añadimos compatibilidad para tu Docker (Alpine y Debian Slim)
@@ -28,15 +22,23 @@ model DocumentType {
   BussinessPartner BussinessPartner[]
 }
 
+enum PartnerType {
+  CUSTOMER
+  SUPPLIER
+  BOTH
+}
+
 model BussinessPartner {
   id             String        @id @default(uuid())
+  type           PartnerType   @default(CUSTOMER) // Discriminator
   typeBP         String // Tipo de socio de negocio (persona, empresa, etc.)
   typeDocId      String?
   documentType   DocumentType? @relation(fields: [typeDocId], references: [id])
   documentNumber String?       @unique
-  firstName      String
+  firstName      String?
   middleName     String?
-  lastName       String
+  lastName       String?
+  sex            String? // M/F or specific value
   surname        String?
   companyName    String?
   contactEmail   String?
@@ -49,6 +51,18 @@ model BussinessPartner {
   societyId      String
   society        Society       @relation(fields: [societyId], references: [id])
 
+  // New Fields for Enhanced Business Partner Support
+  tradeName String? // Nombre Comercial (distinct from companyName/Reason Social)
+  website   String?
+
+  // Tax Info (SUNAT)
+  taxCondition String? // Habido, No Habido
+  taxStatus    String? // Activo, Baja
+
+  // Location
+  ubigeoId String?     @db.Char(6)
+  ubigeo   UbigeoPeru? @relation(fields: [ubigeoId], references: [id])
+
   isActive  Boolean    @default(true)
   isDeleted Boolean    @default(false)
   createdBy String?
@@ -57,6 +71,11 @@ model BussinessPartner {
   Order     Order[]
 
   OutgoingConsignmentAgreement OutgoingConsignmentAgreement[]
+
+  // Reverse relation for Society's legal entity
+  societyRepresented    Society?             @relation("SocietyLegalEntity")
+  branchOfficeProduct   BranchOfficeProduct? @relation(fields: [branchOfficeProductId], references: [id])
+  branchOfficeProductId String?
 }
 
 model Currency {
@@ -67,20 +86,32 @@ model Currency {
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
-
-  createdBy String?
   updatedBy String?
+  createdBy String?
 
-  SocietyReceipt SocietyReceipt[]
+  // Custom Currency ownership
+  societyId String?
+  society   Society? @relation("SocietyCustomCurrency", fields: [societyId], references: [id])
+
+  SocietyReceipt                 SocietyReceipt[]
+  Order                          Order[]
+  orderPayments                  OrderPayment[]
+  societies                      Society[]                       @relation("SocietyMainCurrency")
+  purchases                      Purchase[]
+  outgoingConsignmentAgreements  OutgoingConsignmentAgreement[]
+  receivedConsignmentSettlements ReceivedConsignmentSettlement[]
+  cashMovements                  CashMovement[]
 }
 
 model File {
-  id         String   @id @default(uuid())
-  name       String
-  path       String
-  mimeType   String
-  size       Int
-  key        String   @unique
+  id          String      @id @default(uuid())
+  name        String
+  path        String
+  mimeType    String?
+  size        Int?
+  key         String?     @unique
+  storageType StorageType @default(LOCAL)
+
   uploadedAt DateTime @default(now())
   societyId  String
   society    Society  @relation(fields: [societyId], references: [id])
@@ -89,8 +120,18 @@ model File {
   uploadedById String?
   uploadedBy   String?
 
-  Product        Product[]
-  SocietyReceipt SocietyReceipt[]
+  Product Product[]
+
+  orderPayments OrderPayment[]
+  societyLogo   Society?         @relation("SocietyLogo")
+  receiptPdf    SocietyReceipt[] @relation("ReceiptPdf")
+  receiptXml    SocietyReceipt[] @relation("ReceiptXml")
+}
+
+enum StorageType {
+  LOCAL
+  S3
+  EXTERNAL
 }
 
 model Tax {
@@ -105,6 +146,9 @@ model Tax {
   updatedAt   DateTime @updatedAt
 
   SocietyReceipt SocietyReceipt[]
+
+  societies Society[]
+  purchases Purchase[]
 }
 
 enum TaxType {
@@ -122,6 +166,8 @@ model ReceiptType {
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
   SocietyReceipt SocietyReceipt[]
+  societies      Society[]
+  purchases      Purchase[]
 }
 
 enum ReceiptStatus {
@@ -139,6 +185,12 @@ model Society {
   subscriptionId String   @unique
   createdBy      String?
   updatedBy      String?
+  isActive       Boolean  @default(true)
+  isDeleted      Boolean  @default(false)
+
+  // Link to the BusinessPartner record that represents THIS Society
+  legalEntityId String?           @unique
+  legalEntity   BussinessPartner? @relation("SocietyLegalEntity", fields: [legalEntityId], references: [id])
 
   // Relaciones
   Product                      Product[]
@@ -154,6 +206,38 @@ model Society {
   orderPayments OrderPayment[]
 
   bussinessPartners BussinessPartner[]
+
+  // Configuración Regional
+  mainCurrencyId String?
+  mainCurrency   Currency? @relation("SocietyMainCurrency", fields: [mainCurrencyId], references: [id])
+
+  taxes            Tax[]
+  customCurrencies Currency[]   @relation("SocietyCustomCurrency")
+  receiptType      ReceiptType? @relation(fields: [receiptTypeId], references: [id])
+  receiptTypeId    String?
+
+  // Personalización / Branding
+  logoId String? @unique
+  logo   File?   @relation("SocietyLogo", fields: [logoId], references: [id])
+
+  // Settings & Notifications
+  stockNotificationFrequency Frequency @default(NEVER)
+  salesNotificationFrequency Frequency @default(DAILY)
+  backupFrequency            Frequency @default(NEVER)
+
+  dataRetentionDays Int? // 30, 60, 90...
+
+  // UI Customization (JSON)
+  uiConfig        Json? // { theme: "dark", colors: {...}, fonts: "Inter" }
+  societyReceipts SocietyReceipt[]
+  cashShifts      CashShift[]
+}
+
+enum Frequency {
+  DAILY
+  WEEKLY
+  MONTHLY
+  NEVER
 }
 
 model Product {
@@ -167,6 +251,11 @@ model Product {
   code        String  @default("TEMP-CODE") // Mínimo de stock para alertas
   societyId   String
   society     Society @relation(fields: [societyId], references: [id])
+
+  // Identification & Characteristics
+  barcode       String? // EAN-13, UPC
+  brand         String?
+  unitOfMeasure String  @default("NIU") // NIU = Unidad
 
   imageId String?
   image   File?   @relation(fields: [imageId], references: [id])
@@ -190,6 +279,7 @@ model Product {
   OrderItem OrderItem[]
 
   DeliveredConsignmentAgreement DeliveredConsignmentAgreement[]
+  inventoryTransactions         InventoryTransaction[]
 }
 
 model Category {
@@ -224,6 +314,11 @@ model BranchOffice {
   updatedAt DateTime @updatedAt
   createdBy String?
   updatedBy String?
+  code      String? // Código interno de la sucursal
+  email     String? // Email de contacto
+  ubigeoId  String?  @db.Char(6)
+
+  ubigeo UbigeoPeru? @relation(fields: [ubigeoId], references: [id])
 
   BranchOfficeProduct BranchOfficeProduct[]
 
@@ -235,6 +330,11 @@ model BranchOffice {
   OutgoingConsignmentAgreement OutgoingConsignmentAgreement[]
 
   DeliveredConsignmentAgreement DeliveredConsignmentAgreement[]
+  purchases                     Purchase[]
+  cashShifts                    CashShift[]
+  inventoryTransactions         InventoryTransaction[]
+
+  @@unique([societyId, code])
 }
 
 model BranchOfficeProduct {
@@ -242,7 +342,13 @@ model BranchOfficeProduct {
   productId      String
   branchOfficeId String
 
-  availableStock  Int       @default(0)
+  availableStock Int     @default(0)
+  physicalStock  Int     @default(0) // Stock físico real
+  reservedStock  Int     @default(0) // Stock comprometido/reservado
+  defectiveStock Int     @default(0) // Stock defectuoso/merma
+  location       String? // Ubicación en almacén (ej: A-01-05)
+  isActive       Boolean @default(true)
+
   minStock        Int? // stock mínimo para alertas
   maxStock        Int? // stock máximo de referencia
   lastRestockedAt DateTime? // fecha del último ingreso de stock
@@ -252,8 +358,9 @@ model BranchOfficeProduct {
   createdBy String?
   updatedBy String?
 
-  product      Product      @relation(fields: [productId], references: [id])
-  branchOffice BranchOffice @relation(fields: [branchOfficeId], references: [id])
+  product           Product            @relation(fields: [productId], references: [id])
+  branchOffice      BranchOffice       @relation(fields: [branchOfficeId], references: [id])
+  bussinessPartners BussinessPartner[]
 
   @@unique([productId, branchOfficeId]) // evita duplicados por producto/sucursal
 }
@@ -266,7 +373,8 @@ model Purchase {
 
   purchaseDate DateTime       @default(now())
   status       PurchaseStatus @default(PENDING)
-  totalAmount  Decimal        @default(0.0)
+
+  // totalAmount moved down to group with financials
 
   notes         String? // observaciones generales de la compra
   purchaseCode  String? // código interno o número de orden
@@ -280,6 +388,27 @@ model Purchase {
 
   society  Society          @relation(fields: [societyId], references: [id])
   provider BussinessPartner @relation(fields: [providerId], references: [id])
+
+  // [NEW] Financials
+  currencyId   String
+  currency     Currency @relation(fields: [currencyId], references: [id])
+  exchangeRate Decimal  @default(1.0) @db.Decimal(10, 4)
+
+  subTotal    Decimal @default(0.0) @db.Decimal(10, 2)
+  taxAmount   Decimal @default(0.0) @db.Decimal(10, 2)
+  totalAmount Decimal @default(0.0) @db.Decimal(10, 2) // Kept existing field
+
+  taxId String?
+  tax   Tax?    @relation(fields: [taxId], references: [id])
+
+  // [NEW] Documentation
+  documentTypeId String?
+  documentType   ReceiptType? @relation(fields: [documentTypeId], references: [id])
+  documentNumber String?
+
+  // [NEW] Logistics
+  branchOfficeId String
+  branchOffice   BranchOffice @relation(fields: [branchOfficeId], references: [id])
 
   purchaseDetails PurchaseDetail[] // relación con detalle de productos comprados
 }
@@ -304,6 +433,14 @@ model PurchaseDetail {
 
   purchase Purchase @relation(fields: [purchaseId], references: [id])
   product  Product  @relation(fields: [productId], references: [id])
+
+  // [NEW] Financial breakdown per line
+  taxAmount Decimal @default(0.0) @db.Decimal(10, 2)
+  total     Decimal @default(0.0) @db.Decimal(10, 2) // subtotal + tax
+
+  // [NEW] Logistics
+  receivedQuantity Int       @default(0)
+  expirationDate   DateTime? // Fecha de vencimiento del lote
 }
 
 model ProductBranchMovement {
@@ -318,6 +455,11 @@ model ProductBranchMovement {
   notes         String? // Comentarios, justificación del movimiento
   referenceCode String? // Código interno o guía de traslado
   status        MovementStatus @default(PENDING) // Estado del movimiento
+
+  // Audit
+  batchId            String? // Grouping for bulk transfers
+  receivedAt         DateTime? // Confirmation time
+  cancellationReason String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -341,9 +483,24 @@ model Order {
   orderDate          DateTime    @default(now())
   totalAmount        Decimal     @default(0.0)
   status             OrderStatus @default(PENDING)
+  discount           Decimal     @default(0.0)
   notes              String?
   paymentDate        DateTime?
+  comment            String?
   cancellationReason String?
+
+  // Financial Breakdown
+  subtotal  Decimal @default(0.0)
+  taxAmount Decimal @default(0.0)
+
+  // Currency
+  currencyId   String
+  currency     Currency @relation(fields: [currencyId], references: [id])
+  exchangeRate Decimal  @default(1.0) @db.Decimal(10, 4)
+
+  // Logistics
+  deliveryDate    DateTime?
+  shippingAddress String?
 
   // Relacionales
   societyId String
@@ -361,40 +518,62 @@ model Order {
   updatedBy String?
 
   // Relaciones adicionales
-  orderItems OrderItem[]
-
+  orderItems   OrderItem[]
   OrderPayment OrderPayment[]
 }
 
 enum OrderStatus {
   PENDING
-  PAID
+  PENDING_PAYMENT
+  COMPLETED
   CANCELLED
 }
 
 model OrderItem {
-  id        String  @id @default(uuid())
+  id        String @id @default(uuid())
   orderId   String
   productId String
   quantity  Int
-  unitPrice Decimal
-  subtotal  Decimal
+
+  // Pricing & Financials
+  unitPrice Decimal @db.Decimal(10, 2)
+  costPrice Decimal @default(0.0) @db.Decimal(10, 2) // Snapshot del costo
+
+  subtotal  Decimal @db.Decimal(10, 2)
+  discount  Decimal @default(0.0) @db.Decimal(10, 2)
+  taxAmount Decimal @default(0.0) @db.Decimal(10, 2) // Referencia del impuesto (ej: IGV) para facturación
+  total     Decimal @default(0.0) @db.Decimal(10, 2) // subtotal - discount + tax
+
+  // Operational
+  comment String?
 
   order   Order   @relation(fields: [orderId], references: [id])
   product Product @relation(fields: [productId], references: [id])
 }
 
 model OrderPayment {
-  id            String             @id @default(uuid())
-  orderId       String?
-  amount        Decimal
+  id           String   @id @default(uuid())
+  orderId      String?
+  // Financials
+  amount       Decimal  @db.Decimal(10, 2)
+  currencyId   String
+  currency     Currency @relation(fields: [currencyId], references: [id])
+  exchangeRate Decimal  @default(1.0) @db.Decimal(10, 4)
+
   paymentDate   DateTime           @default(now())
   paymentMethod PaymentMethodOrder
+
+  // Status & Evidence
+  status        PaymentStatus @default(PENDING)
   referenceCode String? // Referencia de transferencia o número de operación
-  notes         String? // Observaciones del pago
-  isConfirmed   Boolean            @default(false) // Para flujos con verificación manual
-  confirmedAt   DateTime? // Fecha de confirmación (si aplica)
-  societyId     String
+  imageId       String?
+  image         File?         @relation(fields: [imageId], references: [id])
+
+  notes       String? // Observaciones del pago
+  // isConfirmed Boolean @default(false) // DEPRECATED: Use status instead
+  confirmedAt DateTime? // Fecha de confirmación (si aplica)
+
+  societyId String
 
   // Relaciones
   order   Order?  @relation(fields: [orderId], references: [id])
@@ -409,23 +588,45 @@ model OrderPayment {
   SocietyReceipt SocietyReceipt[]
 
   ReceivedConsignmentSettlement ReceivedConsignmentSettlement[]
+
+  cashMovement CashMovement?
+}
+
+enum PaymentStatus {
+  PENDING
+  CONFIRMED
+  REJECTED
+  REFUNDED
 }
 
 enum PaymentMethodOrder {
   CASH
   CARD
   TRANSFER
+  YAPE
+  PLIN
   OTHER
 }
 
 model SocietyReceipt {
-  id             String   @id @default(uuid())
+  id String @id @default(uuid())
+
+  societyId String
+  society   Society @relation(fields: [societyId], references: [id])
+
   orderPaymentId String
-  fileId         String? // Opcional: PDF, XML o imagen del comprobante
-  series         String // Serie del comprobante (ej: F001)
-  receiptNumber  String // Número correlativo del comprobante
-  issueDate      DateTime // Fecha de emisión del comprobante
-  totalAmount    Decimal // Monto total del comprobante
+
+  fileId    String? // PDF
+  xmlFileId String? // XML/CDR
+
+  series        String // Serie del comprobante (ej: F001)
+  receiptNumber String // Número correlativo del comprobante
+  issueDate     DateTime // Fecha de emisión del comprobante
+
+  subTotal    Decimal // Base Imponible
+  taxAmount   Decimal // IGV
+  totalAmount Decimal // Monto total del comprobante
+  status      ReceiptStatus @default(issued)
 
   currencyId String
   currency   Currency @relation(fields: [currencyId], references: [id])
@@ -438,13 +639,16 @@ model SocietyReceipt {
 
   // Relación con el pago
   orderPayment OrderPayment @relation(fields: [orderPaymentId], references: [id])
-  file         File?        @relation(fields: [fileId], references: [id])
+  file         File?        @relation("ReceiptPdf", fields: [fileId], references: [id])
+  xmlFile      File?        @relation("ReceiptXml", fields: [xmlFileId], references: [id])
 
   // Auditoría
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   createdBy String?
   updatedBy String?
+
+  @@unique([societyId, receiptTypeId, series, receiptNumber])
 }
 
 model OutgoingConsignmentAgreement {
@@ -459,7 +663,15 @@ model OutgoingConsignmentAgreement {
 
   agreementCode String?           @unique // Código único del acuerdo
   status        ConsignmentStatus @default(ACTIVE)
-  notes         String? // Comentarios adicionales o condiciones especiales
+
+  notes String? // Comentarios adicionales o condiciones especiales
+
+  // [NEW] Financials
+  currencyId String
+  currency   Currency @relation(fields: [currencyId], references: [id])
+
+  totalValue  Decimal  @default(0.0) @db.Decimal(10, 2)
+  creditLimit Decimal? @db.Decimal(10, 2) // Límite de crédito opcional
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -489,13 +701,22 @@ model DeliveredConsignmentAgreement {
   productId              String
   branchId               String
 
-  deliveredStock     Int // Stock entregado al inicio
-  remainingStock     Int? // Stock restante (actualizado al vender o devolver)
-  costPrice          Float // Precio de costo por unidad
-  suggestedSalePrice Float // Precio sugerido de venta por unidad
-  deliveryDate       DateTime @default(now()) // Fecha en la que se entregó el producto
-  status             String   @default("active") // Estado: active, returned, sold_out, etc.
-  notes              String? // Comentarios o detalles adicionales
+  deliveredStock Int // Stock entregado al inicio
+  remainingStock Int? // Stock restante (actualizado al vender o devolver)
+
+  // [CHANGE] Use Decimal for money!
+  costPrice          Decimal @db.Decimal(10, 2)
+  suggestedSalePrice Decimal @db.Decimal(10, 2)
+
+  // [NEW] Computed values for easy reporting
+  totalCost  Decimal @default(0.0) @db.Decimal(10, 2) // Inventory Value
+  totalValue Decimal @default(0.0) @db.Decimal(10, 2) // Retail Value
+
+  // [NEW] Tax
+  taxAmount    Decimal  @default(0.0) @db.Decimal(10, 2)
+  deliveryDate DateTime @default(now()) // Fecha en la que se entregó el producto
+  status       String   @default("active") // Estado: active, returned, sold_out, etc.
+  notes        String? // Comentarios o detalles adicionales
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -512,14 +733,18 @@ model ExternalConsignmentSale {
   id                     String @id @default(uuid())
   deliveredConsignmentId String
 
-  soldQuantity      Int // Cantidad vendida por el consignatario
-  reportedSalePrice Float // Precio total reportado por la venta
-  reportedSaleDate  DateTime // Fecha de la venta reportada
+  soldQuantity     Int // Cantidad vendida por el consignatario
+  reportedSaleDate DateTime // Fecha de la venta reportada
 
-  unitSalePrice         Float // Precio por unidad vendida
-  totalCommissionAmount Float? // Monto total de comisión (calculado si aplica)
-  remarks               String? // Comentarios del consignatario o notas adicionales
-  documentReference     String? // Referencia a factura u otro comprobante externo
+  // [CHANGE] Use Decimal for money
+  reportedSalePrice     Decimal  @db.Decimal(10, 2) // Total reported
+  unitSalePrice         Decimal  @db.Decimal(10, 2)
+  totalCommissionAmount Decimal? @default(0.0) @db.Decimal(10, 2)
+
+  // [NEW] Computed
+  netTotal          Decimal @default(0.0) @db.Decimal(10, 2) // reportedSalePrice - commission
+  remarks           String? // Comentarios del consignatario o notas adicionales
+  documentReference String? // Referencia a factura u otro comprobante externo
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -533,15 +758,21 @@ model ReceivedConsignmentSettlement {
   outgoingAgreementId String
   orderPaymentId      String?
 
-  settlementDate            DateTime // Fecha de la liquidación
-  totalReportedSalesAmount  Float // Monto total de ventas reportadas por el consignatario
-  consigneeCommissionAmount Float // Monto total de comisión del consignatario
-  totalReceivedAmount       Float // Monto total recibido después de comisión
-  status                    SettlementStatus @default(PENDING) // Estado: PENDING, PAID
+  settlementDate DateTime // Fecha de la liquidación
+
+  // [CHANGE] Use Decimal for money
+  totalReportedSalesAmount  Decimal @db.Decimal(10, 2)
+  consigneeCommissionAmount Decimal @db.Decimal(10, 2)
+  totalReceivedAmount       Decimal @db.Decimal(10, 2)
+
+  status SettlementStatus @default(PENDING) // Estado: PENDING, PAID
 
   receiptReference String? // Número de referencia del recibo
   settlementNotes  String? // Notas adicionales o comentarios del proceso
-  currency         String  @default("PEN") // Moneda utilizada
+
+  // [CHANGE] Link to Currency model
+  currencyId String
+  currency   Currency @relation(fields: [currencyId], references: [id])
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -557,14 +788,131 @@ enum SettlementStatus {
 }
 
 model UbigeoPeru {
-  id            String   @id @map("ubigeo_id") @db.Char(6)
-  department    String   @db.VarChar(100)
-  province      String   @db.VarChar(100)
-  district      String   @db.VarChar(100)
-  naturalRegion String?  @db.VarChar(50)
-  region        String?  @db.VarChar(50)
-  latitude      Decimal? @db.Decimal(9, 6)
-  longitude     Decimal? @db.Decimal(9, 6)
+  id                String             @id @map("ubigeo_id") @db.Char(6)
+  department        String             @db.VarChar(100)
+  province          String             @db.VarChar(100)
+  district          String             @db.VarChar(100)
+  naturalRegion     String?            @db.VarChar(50)
+  region            String?            @db.VarChar(50)
+  latitude          Decimal?           @db.Decimal(9, 6)
+  longitude         Decimal?           @db.Decimal(9, 6)
+  branchOffices     BranchOffice[]
+  bussinessPartners BussinessPartner[]
 
   @@map("UbigeoPeru")
+}
+
+// ------------------------------------
+// Cash Shift / Sesiones de Caja
+// ------------------------------------
+
+enum ShiftStatus {
+  OPEN
+  CLOSED
+}
+
+enum MovementType {
+  INCOME
+  EXPENSE
+}
+
+model CashShift {
+  id String @id @default(uuid())
+
+  societyId String
+  branchId  String
+  userId    String // ID del cajero (No relation due to external user management)
+
+  status   ShiftStatus @default(OPEN)
+  openedAt DateTime    @default(now())
+  closedAt DateTime?
+
+  initialAmount Decimal @db.Decimal(10, 2) // Sencillo inicial
+
+  // Cierre
+  finalReportedAmount Decimal? @db.Decimal(10, 2)
+  finalSystemAmount   Decimal? @db.Decimal(10, 2)
+  difference          Decimal? @db.Decimal(10, 2)
+
+  // Acumulados Snapshots (calculados al cierre)
+  incomeCash     Decimal @default(0) @db.Decimal(10, 2)
+  incomeCard     Decimal @default(0) @db.Decimal(10, 2)
+  incomeTransfer Decimal @default(0) @db.Decimal(10, 2)
+  expenseCash    Decimal @default(0) @db.Decimal(10, 2)
+
+  movements CashMovement[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  society Society      @relation(fields: [societyId], references: [id])
+  branch  BranchOffice @relation(fields: [branchId], references: [id])
+}
+
+model CashMovement {
+  id      String @id @default(uuid())
+  shiftId String
+
+  type         MovementType // INCOME, EXPENSE
+  amount       Decimal      @db.Decimal(10, 2)
+  currencyId   String
+  exchangeRate Decimal      @default(1.0) @db.Decimal(10, 4)
+
+  paymentMethod PaymentMethodOrder
+
+  description String?
+
+  orderPaymentId String? @unique
+
+  createdAt DateTime @default(now())
+  createdBy String?
+
+  shift        CashShift     @relation(fields: [shiftId], references: [id])
+  currency     Currency      @relation(fields: [currencyId], references: [id])
+  orderPayment OrderPayment? @relation(fields: [orderPaymentId], references: [id])
+}
+
+// ------------------------------------
+// KARDEX (Centralized Inventory)
+// ------------------------------------
+
+model InventoryTransaction {
+  id   String   @id @default(uuid())
+  date DateTime @default(now())
+
+  productId      String
+  branchOfficeId String
+
+  type          TransactionType
+  quantity      Int // + for IN, - for OUT
+  previousStock Int
+  newStock      Int // The snapshot of stock AFTER this movement
+
+  // Costos Snapshot (Kardex Valorado)
+  unitCost  Decimal @db.Decimal(10, 2)
+  totalCost Decimal @db.Decimal(10, 2)
+
+  // Trazabilidad
+  referenceId    String? // ID of Purchase, Order, etc.
+  referenceType  String? // 'PURCHASE', 'ORDER', 'TRANSFER_IN', 'TRANSFER_OUT', 'ADJUSTMENT'
+  documentNumber String? // Optional external doc ref
+
+  // Relations
+  product      Product      @relation(fields: [productId], references: [id])
+  branchOffice BranchOffice @relation(fields: [branchOfficeId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+}
+
+enum TransactionType {
+  PURCHASE_ENTRY
+  SALE_EXIT
+  TRANSFER_OUT
+  TRANSFER_IN
+  CONSIGNMENT_OUT
+  CONSIGNMENT_RETURN
+  ADJUSTMENT_ADD
+  ADJUSTMENT_SUB
 }

@@ -1,0 +1,5 @@
+NombreCategoria,CodigoCategoria,Descripcion
+Laptops,CAT-LAPTOPS,Categoría para computadoras portátiles
+Periféricos,CAT-PERIFERICOS,Mouses, teclados, auriculares, etc.
+Monitores,CAT-MONITORES,Pantallas LED, LCD, Gaming
+Componentes,CAT-COMPONENTES,RAM, Procesadores, Discos Duros

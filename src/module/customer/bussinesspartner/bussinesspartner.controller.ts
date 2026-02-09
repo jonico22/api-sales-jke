@@ -17,7 +17,18 @@ export const BussinessPartnerController = {
         if (!parse.success) return res.status(400).json(parse.error.format());
 
         const societyId = req.query.societyId as string | undefined;
-        const result = await BussinessPartnerService.getAll(parse.data.query, societyId);
+
+        // Extract filters
+        const filters = {
+            search: req.query.search as string | undefined,
+            isActive: req.query.isActive as string | undefined,
+            typeBP: req.query.typeBP as string | undefined,
+            type: req.query.type as any, // Cast to any to pass to service, validation happens if needed or strict typing in service
+            createdAtFrom: req.query.createdAtFrom as string | undefined,
+            createdAtTo: req.query.createdAtTo as string | undefined,
+        };
+
+        const result = await BussinessPartnerService.getAll(parse.data.query, societyId, filters);
         res.json(result);
     },
 
@@ -98,6 +109,22 @@ export const BussinessPartnerController = {
             bodyParse.data.body
         );
         res.json(result);
+    },
+
+    /**
+     * GET /api/bussinesspartners/select
+     * Lista ligera para dropdowns
+     */
+    getForSelect: async (req: Request, res: Response) => {
+        try {
+            const societyCode = (req.query.societyCode || req.query.societyId) as string | undefined;
+            const type = req.query.type as any;
+
+            const result = await BussinessPartnerService.getForSelect(societyCode, type);
+            res.json(result);
+        } catch (error: any) {
+            res.status(500).json({ message: 'Error obteniendo lista de selección', error: error.message });
+        }
     },
 
     /**

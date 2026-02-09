@@ -1,12 +1,13 @@
+
 import { Router } from 'express'
-import { orderPaymentController } from './orderPayment.controller'
+import { OrderPaymentController } from './orderPayment.controller'
 
 const router = Router()
 
-router.post('/', orderPaymentController.create)
-router.get('/', orderPaymentController.findAll)
-router.get('/:id', orderPaymentController.findById)
-router.put('/:id', orderPaymentController.update)
-router.delete('/:id', orderPaymentController.delete)
+router.post('/', OrderPaymentController.create)
+router.get('/', OrderPaymentController.getAll)
+router.get('/:id', OrderPaymentController.findById)
+router.patch('/:id', OrderPaymentController.update)
+router.delete('/:id', OrderPaymentController.delete)
 
 export default router

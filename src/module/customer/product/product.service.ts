@@ -126,7 +126,10 @@ export const ProductService = {
     if (filters?.search) {
       whereClause.OR = [
         { name: { contains: filters.search, mode: 'insensitive' } },
-        { code: { contains: filters.search, mode: 'insensitive' } }
+        { name: { contains: filters.search, mode: 'insensitive' } },
+        { code: { contains: filters.search, mode: 'insensitive' } },
+        { barcode: { contains: filters.search, mode: 'insensitive' } },
+        { brand: { contains: filters.search, mode: 'insensitive' } }
       ];
     }
 
@@ -234,6 +237,9 @@ export const ProductService = {
           createdBy: true,
           updatedAt: true,
           updatedBy: true,
+          barcode: true,
+          brand: true,
+          unitOfMeasure: true,
           category: { select: { name: true } },
           image: true,
         },
@@ -398,6 +404,9 @@ export const ProductService = {
         isActive: data.isActive,
         createdBy: data.createdBy,
         code: data.code,
+        barcode: data.barcode,
+        brand: data.brand,
+        unitOfMeasure: data.unitOfMeasure || 'NIU',
       },
       include: {
         society: { select: { id: true, name: true, code: true } },
@@ -405,6 +414,29 @@ export const ProductService = {
         image: true,
       },
     });
+
+    // Auto-assign to Main Branch
+    const mainBranch = await prisma.branchOffice.findFirst({
+      where: {
+        societyId: society.id,
+        // Try to find by code convention or assume first one is main if we don't have isMain flag yet.
+        // Using the convention from SocietyService
+        code: 'ALM-PRINCIPAL'
+      }
+    });
+
+    if (mainBranch) {
+      await prisma.branchOfficeProduct.create({
+        data: {
+          branchOfficeId: mainBranch.id,
+          productId: created.id,
+          physicalStock: data.stock ?? 0, // Initial stock goes to main branch
+          availableStock: data.stock ?? 0, // Available matches physical initially
+          location: 'ALMACEN-GENERAL',
+          isActive: true
+        }
+      });
+    }
 
     // Invalidar cache de listas
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
@@ -520,6 +552,7 @@ export const ProductService = {
         name: true,
         price: true,
         stock: true,
+        code: true,
         category: {
           select: {
             id: true,

@@ -1,5 +1,6 @@
 import { Router } from 'express';
 import { CategoryController } from './category.controller';
+import { CategoryBulkController } from './category.bulk.controller';
 
 const router = Router();
 
@@ -48,6 +49,34 @@ router.get('/:id', CategoryController.getById);
  *               $ref: '#/components/schemas/Category'
  */
 router.post('/', CategoryController.create);
+
+/**
+ * @openapi
+ * /categories/bulk-upload:
+ *   post:
+ *     summary: Carga masiva de categorías vía CSV
+ *     consumes:
+ *       - multipart/form-data
+ *     parameters:
+ *       - in: query
+ *         name: societyId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       200:
+ *         description: Categorías cargadas
+ */
+router.post('/bulk-upload', CategoryBulkController.uploadMiddleware, CategoryBulkController.bulkUpload);
 router.put('/:id', CategoryController.update);
 router.delete('/:id', CategoryController.delete);
 

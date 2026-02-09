@@ -3,12 +3,21 @@ import { ProductBranchMovementService } from './productBranchMovement.service';
 import {
   createProductBranchMovementSchema,
   updateProductBranchMovementSchema,
+  productBranchMovementFiltersSchema,
   paramsSchema,
 } from './productBranchMovement.validation';
 
 export class ProductBranchMovementController {
   static async getAll(req: Request, res: Response) {
-    const movements = await ProductBranchMovementService.getAll();
+    const pagination = {
+      page: Number(req.query.page) || 1,
+      limit: Number(req.query.limit) || 10,
+      sortBy: req.query.sortBy as string,
+      sortOrder: req.query.sortOrder as 'asc' | 'desc'
+    };
+    const filters = productBranchMovementFiltersSchema.parse(req.query);
+
+    const movements = await ProductBranchMovementService.getAll(pagination, filters);
     res.json(movements);
   }
 
@@ -20,15 +29,19 @@ export class ProductBranchMovementController {
   }
 
   static async create(req: Request, res: Response) {
-    const data = createProductBranchMovementSchema.parse(req.body);
-    const movement = await ProductBranchMovementService.create(data);
+    // Service handles validation + logic
+    const movement = await ProductBranchMovementService.create(req.body);
     res.status(201).json(movement);
   }
 
   static async update(req: Request, res: Response) {
     const { id } = paramsSchema.parse(req.params);
+    // Use partial schema or custom input? Service expects Partial<Input>
     const data = updateProductBranchMovementSchema.parse(req.body);
-    const movement = await ProductBranchMovementService.update(id, data);
+
+    // Pass extra fields like cancellationReason if they are in body but not in standard update schema?
+    // We should update the validation schema for update to include cancellationReason.
+    const movement = await ProductBranchMovementService.update(id, req.body);
     res.json(movement);
   }
 
