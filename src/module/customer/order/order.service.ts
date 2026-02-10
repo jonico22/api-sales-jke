@@ -76,16 +76,15 @@ export const OrderService = {
 
     // 3. Calcular Totales
     const TAX_RATE = 0.18; // IGV 18%
-    let calculatedSubtotal = 0;
 
     // Preparar items para creación
     const itemsToCreate = data.orderItems.map(item => {
       const product = productMap.get(item.productId);
       if (!product) throw new Error(`Producto ${item.productId} no encontrado`);
 
-      // Logic: Automatic Discount Calculation
+      // Logic: Price Calculation (Tax Inclusive)
       // List Price = product.price (Database)
-      // Sold Price = item.unitPrice (Frontend Input)
+      // Sold Price = item.unitPrice (Frontend Input) - This INCLUDES TAX (IGV)
 
       const listPrice = Number(product.price);
       const soldPrice = item.unitPrice;
@@ -94,22 +93,26 @@ export const OrderService = {
       let finalDiscount = 0;
 
       // If Sold Price is LESS than List Price, record difference as discount
+      // Note: Comparing prices inclusive of tax
       if (soldPrice < listPrice) {
         finalUnitPrice = listPrice; // Record List Price
         finalDiscount = (listPrice - soldPrice) * item.quantity;
       } else {
-        // If sold at or above list price, record sold price (could be surcharge or normal)
         finalUnitPrice = soldPrice;
         finalDiscount = 0;
       }
 
-      // Subtotal for this line item should reflect what customer pays: (Sold Price * Quantity)
-      // Math check: (List Price * Qty) - Discount = (List Price * Qty) - ((List - Sold) * Qty) 
-      //           = Qty * (List - List + Sold) = Qty * Sold. Correct.
-      const subtotalItem = (item.quantity * soldPrice);
-      const taxItem = subtotalItem * TAX_RATE;
+      // 1. Calculate Item Total (Gross)
+      // This is what customer pays for this item line (before global discount)
+      const itemTotalGross = item.quantity * soldPrice;
 
-      calculatedSubtotal += subtotalItem;
+      // 2. Calculate Subtotal (Base Imponible)
+      // Subtotal = Total / 1.18
+      const subtotalItem = Number((itemTotalGross / (1 + TAX_RATE)).toFixed(2));
+
+      // 3. Calculate Tax (IGV)
+      // Tax = Total - Subtotal
+      const taxItem = Number((itemTotalGross - subtotalItem).toFixed(2));
 
       return {
         productId: item.productId,
@@ -119,17 +122,59 @@ export const OrderService = {
 
         subtotal: subtotalItem,
         taxAmount: taxItem,
-        total: subtotalItem + taxItem, // Subtotal + Tax
+        total: itemTotalGross, // Store GROSS total for item
         comment: item.comment,
         costPrice: product.priceCost || 0 // Snapshot del costo actual
       };
     });
 
-    const taxBase = calculatedSubtotal - data.discount;
-    const totalTax = taxBase > 0 ? taxBase * TAX_RATE : 0;
-    const totalAmount = taxBase + totalTax;
+    // Order Level Totals
+    // calculatedSubtotal is sum of item subtotals (Base Imponible)
 
-    // 4. Generar Código
+    // Total Tax is sum of item taxes (derived from difference logic above or re-calculated)
+    // To minimize rounding errors, we can sum totals and subtotals.
+    const orderTotalGross = itemsToCreate.reduce((acc, item) => acc + item.total, 0);
+    const orderSubtotal = itemsToCreate.reduce((acc, item) => acc + item.subtotal, 0);
+    const totalTax = Number((orderTotalGross - orderSubtotal).toFixed(2));
+
+    // Final Total Amount = Gross Total - Global Discount
+    const totalAmount = orderTotalGross - data.discount;
+
+    // 4. VALIDATE STOCK AVAILABILITY (Before creating order)
+    // Only validate if order will reserve stock (PENDING_PAYMENT or COMPLETED)
+    if (data.status === OrderStatus.PENDING_PAYMENT || data.status === OrderStatus.COMPLETED) {
+      const stockErrors: string[] = [];
+
+      for (const item of itemsToCreate) {
+        const product = productMap.get(item.productId);
+        if (!product) continue;
+
+        // Check stock in the specific branch
+        const branchStock = await prisma.branchOfficeProduct.findUnique({
+          where: {
+            productId_branchOfficeId: {
+              productId: item.productId,
+              branchOfficeId: data.branchId
+            }
+          }
+        });
+
+        const availableStock = branchStock?.availableStock ?? 0;
+
+        if (availableStock < item.quantity) {
+          stockErrors.push(
+            `Producto "${product.name}" (${product.code}): Stock insuficiente. ` +
+            `Disponible: ${availableStock}, Solicitado: ${item.quantity}`
+          );
+        }
+      }
+
+      if (stockErrors.length > 0) {
+        throw new Error(`No se puede crear la orden:\n${stockErrors.join('\n')}`);
+      }
+    }
+
+    // 5. Generar Código
     const orderCode = data.orderCode || `ORD-${Date.now()}`;
 
     // 5. Transacción de creación
@@ -152,7 +197,7 @@ export const OrderService = {
           paymentDate: data.paymentDate ? toLimaTimezone(data.paymentDate) : null,
 
           // Financials Calculated
-          subtotal: calculatedSubtotal,
+          subtotal: orderSubtotal,
           discount: data.discount,
           taxAmount: totalTax,
           totalAmount: totalAmount > 0 ? totalAmount : 0,
@@ -218,7 +263,7 @@ export const OrderService = {
   getAll: async (
     paginationQuery?: PaginationQuery,
     filters?: OrderFilters
-  ): Promise<PaginatedResult<Order>> => {
+  ): Promise<PaginatedResult<Order & { totalProducts: number }>> => {
     const page = paginationQuery?.page ?? 1;
     const limit = paginationQuery?.limit ?? 10;
     const sortBy = paginationQuery?.sortBy ?? 'createdAt';
@@ -247,7 +292,7 @@ export const OrderService = {
     const cacheKey = cacheKeyParts.join(':');
 
     // 1. Cache Check
-    const cached = await redis.get<PaginatedResult<Order>>(cacheKey);
+    const cached = await redis.get<PaginatedResult<Order & { totalProducts: number }>>(cacheKey);
     if (cached) return cached;
 
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
@@ -318,16 +363,23 @@ export const OrderService = {
           society: { select: { id: true, name: true } },
           branch: { select: { id: true, name: true } },
           OrderPayment: { select: { paymentMethod: true, amount: true } }, // Include methods and amounts
-          _count: { select: { orderItems: true } }
+          _count: { select: { orderItems: true } },
+          orderItems: { select: { quantity: true } } // Include quantities for total calculation
         }
       }),
       prisma.order.count({ where: whereClause })
     ]);
 
-    const result = buildPaginatedResult(data, page, limit, total);
+    // Calculate total quantity of products
+    const formattedData = data.map(order => ({
+      ...order,
+      totalProducts: order.orderItems.reduce((sum, item) => sum + item.quantity, 0)
+    }));
+
+    const result = buildPaginatedResult(formattedData, page, limit, total);
     await redis.set(cacheKey, result, CACHE_TTL_LIST);
 
-    return result;
+    return result as PaginatedResult<Order & { totalProducts: number }>;
   },
 
   /**

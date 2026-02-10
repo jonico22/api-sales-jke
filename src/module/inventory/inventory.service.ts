@@ -227,9 +227,11 @@ export const InventoryService = {
     },
 
     reserveStock: async (productId: string, branchId: string, quantity: number, tx: any) => {
-        // Reserve Stock: affects Available and Reserved, NOT Physical.
-        // So Global Product Stock (Physical) is UNCHANGED.
-        return tx.branchOfficeProduct.upsert({
+        // Reserve Stock: affects Available and Reserved.
+        // Also decrements Global Product Stock (Available) to reflect immediate reduction.
+
+        // 1. Update Branch Stock
+        const result = await tx.branchOfficeProduct.upsert({
             where: {
                 productId_branchOfficeId: { productId, branchOfficeId: branchId }
             },
@@ -245,6 +247,14 @@ export const InventoryService = {
                 reservedStock: quantity
             }
         });
+
+        // 2. Update Global Product Stock (Available)
+        await tx.product.update({
+            where: { id: productId },
+            data: { stock: { decrement: quantity } }
+        });
+
+        return result;
     },
 
     confirmStockOutput: async (input: LogTransactionInput, tx: any) => {
@@ -262,26 +272,31 @@ export const InventoryService = {
             }
         });
 
-        // 1.1 [NEW] Sync Global Product Stock (Physical)
-        await tx.product.update({
-            where: { id: input.productId },
-            data: { stock: { decrement: input.quantity } }
-        });
+        // Global Stock (Available) was already decremented during reservation.
+        // Physical exit confirms it, but doesn't change availability again.
 
         // 2. Log Transaction (SALE_EXIT)
-        return InventoryService.logTransaction({
+        const log = await InventoryService.logTransaction({
             ...input,
             quantity: -Math.abs(input.quantity), // Ensure negative for EXIT
             type: TransactionType.SALE_EXIT
         }, tx);
+
+        // 3. Invalidate Caches
+        await redis.deleteKeysByPrefix('products:');
+        await redis.deleteKeysByPrefix('products:select:');
+
+        return log;
     },
 
     /**
      * Cancel Reservation (Order Cancelled)
-     * Increases Available, Decreases Reserved. Physical remains same.
+     * Increases Available, Decreases Reserved.
+     * Also increments Global Product Stock (Available) to return stock.
      */
     cancelReservation: async (productId: string, branchId: string, quantity: number, tx: any) => {
-        return tx.branchOfficeProduct.update({
+        // 1. Update Branch Stock
+        await tx.branchOfficeProduct.update({
             where: {
                 productId_branchOfficeId: { productId, branchOfficeId: branchId }
             },
@@ -290,5 +305,15 @@ export const InventoryService = {
                 reservedStock: { decrement: quantity }
             }
         });
+
+        // 2. Update Global Product Stock (Return to Available)
+        await tx.product.update({
+            where: { id: productId },
+            data: { stock: { increment: quantity } }
+        });
+
+        // 3. Invalidate Caches
+        await redis.deleteKeysByPrefix('products:');
+        await redis.deleteKeysByPrefix('products:select:');
     }
 };
