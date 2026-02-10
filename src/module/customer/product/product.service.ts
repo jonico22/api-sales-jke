@@ -477,6 +477,64 @@ export const ProductService = {
       },
     });
 
+    // SYNC STOCK WITH MAIN BRANCH
+    // If stock is updated directly on Product, we must reflect this in the Main Branch
+    // to ensure OrderService validation passes.
+    if (data.stock !== undefined) {
+      const societyId = updated.societyId;
+
+      // Find Main Branch
+      const mainBranch = await prisma.branchOffice.findFirst({
+        where: {
+          societyId: societyId,
+          code: 'ALM-PRINCIPAL' // Convention
+        }
+      });
+
+      if (mainBranch) {
+        // Upsert BranchOfficeProduct
+        // We need to preserve reservedStock if it exists
+        const existingBOP = await prisma.branchOfficeProduct.findUnique({
+          where: {
+            productId_branchOfficeId: {
+              productId: id,
+              branchOfficeId: mainBranch.id
+            }
+          }
+        });
+
+        const currentReserved = existingBOP?.reservedStock ?? 0;
+        const newPhysical = data.stock;
+        const newAvailable = newPhysical - currentReserved;
+
+        await prisma.branchOfficeProduct.upsert({
+          where: {
+            productId_branchOfficeId: {
+              productId: id,
+              branchOfficeId: mainBranch.id
+            }
+          },
+          update: {
+            physicalStock: newPhysical,
+            availableStock: newAvailable
+            // reservedStock remains unchanged
+          },
+          create: {
+            productId: id,
+            branchOfficeId: mainBranch.id,
+            physicalStock: newPhysical,
+            availableStock: newPhysical,
+            reservedStock: 0,
+            location: 'ALMACEN-GENERAL',
+            isActive: true
+          }
+        });
+
+        // Also invalidate branch office products cache
+        await redis.deleteKeysByPrefix('branch_office_products:');
+      }
+    }
+
     // Invalidar cache del registro individual y listas
     await redis.del(`${CACHE_PREFIX}${id}`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
