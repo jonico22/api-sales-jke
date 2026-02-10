@@ -263,7 +263,7 @@ export const OrderService = {
   getAll: async (
     paginationQuery?: PaginationQuery,
     filters?: OrderFilters
-  ): Promise<PaginatedResult<Order>> => {
+  ): Promise<PaginatedResult<Order & { totalProducts: number }>> => {
     const page = paginationQuery?.page ?? 1;
     const limit = paginationQuery?.limit ?? 10;
     const sortBy = paginationQuery?.sortBy ?? 'createdAt';
@@ -292,7 +292,7 @@ export const OrderService = {
     const cacheKey = cacheKeyParts.join(':');
 
     // 1. Cache Check
-    const cached = await redis.get<PaginatedResult<Order>>(cacheKey);
+    const cached = await redis.get<PaginatedResult<Order & { totalProducts: number }>>(cacheKey);
     if (cached) return cached;
 
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
@@ -363,16 +363,23 @@ export const OrderService = {
           society: { select: { id: true, name: true } },
           branch: { select: { id: true, name: true } },
           OrderPayment: { select: { paymentMethod: true, amount: true } }, // Include methods and amounts
-          _count: { select: { orderItems: true } }
+          _count: { select: { orderItems: true } },
+          orderItems: { select: { quantity: true } } // Include quantities for total calculation
         }
       }),
       prisma.order.count({ where: whereClause })
     ]);
 
-    const result = buildPaginatedResult(data, page, limit, total);
+    // Calculate total quantity of products
+    const formattedData = data.map(order => ({
+      ...order,
+      totalProducts: order.orderItems.reduce((sum, item) => sum + item.quantity, 0)
+    }));
+
+    const result = buildPaginatedResult(formattedData, page, limit, total);
     await redis.set(cacheKey, result, CACHE_TTL_LIST);
 
-    return result;
+    return result as PaginatedResult<Order & { totalProducts: number }>;
   },
 
   /**
