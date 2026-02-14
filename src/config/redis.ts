@@ -16,28 +16,30 @@ const getRedisHost = (url: string): string => {
 const redisHost = getRedisHost(redisUrl);
 const useTls = redisUrl.startsWith('rediss');
 
+const KEY_PREFIX = 'ventas:';
+
 // Configuración de reintentos y timeouts para Docker
 const socketConfig = useTls
   ? {
-      connectTimeout: 10000,
-      keepAlive: 5000, 
-    
-      // 3. Estrategia de reconexión robusta
-      reconnectStrategy: (retries:any) => {
-        const delay = Math.min(retries * 100, 3000);
-        console.warn(`⚠️ Redis: Intentando reconectar en ${delay}ms... (Intento ${retries})`);
-        return delay;
-      },
-      tls: true as const,
-      host: redisHost,
-      rejectUnauthorized: false
-    }
+    connectTimeout: 10000,
+    keepAlive: 5000,
+
+    // 3. Estrategia de reconexión robusta
+    reconnectStrategy: (retries: any) => {
+      const delay = Math.min(retries * 100, 3000);
+      console.warn(`⚠️ Redis: Intentando reconectar en ${delay}ms... (Intento ${retries})`);
+      return delay;
+    },
+    tls: true as const,
+    host: redisHost,
+    rejectUnauthorized: false
+  }
   : {
-      connectTimeout: 10000,
-      reconnectStrategy: (retries: number) => Math.min(retries * 50, 2000),
-      tls: false as const,
-      host: redisHost
-};
+    connectTimeout: 10000,
+    reconnectStrategy: (retries: number) => Math.min(retries * 50, 2000),
+    tls: false as const,
+    host: redisHost
+  };
 
 const client: RedisClientType = createClient({
   url: redisUrl,
@@ -85,7 +87,8 @@ export const connectRedis = async () => {
  */
 export const redis = {
   enabled: REDIS_ENABLED,
-  
+  prefix: KEY_PREFIX,
+
   /**
    * Verifica si Redis está operativo en este momento
    */
@@ -108,9 +111,9 @@ export const redis = {
     if (!this.status) return null;
 
     try {
-      const rawValue = await client.get(key);
+      const rawValue = await client.get(KEY_PREFIX + key);
       if (typeof rawValue !== 'string') return null;
-      
+
       try {
         return JSON.parse(rawValue) as T;
       } catch {
@@ -127,7 +130,7 @@ export const redis = {
 
     try {
       const serialized = typeof value === 'string' ? value : JSON.stringify(value);
-      await client.set(key, serialized, { EX: ttl });
+      await client.set(KEY_PREFIX + key, serialized, { EX: ttl });
     } catch (error) {
       console.error(`[Redis] Error guardando clave ${key}:`, error);
     }
@@ -135,7 +138,7 @@ export const redis = {
 
   async del(key: string): Promise<void> {
     if (!this.status) return;
-    await client.del(key);
+    await client.del(KEY_PREFIX + key);
   },
 
   async deleteKeysByPrefix(prefix: string): Promise<void> {
@@ -146,9 +149,9 @@ export const redis = {
       let keysToDelete: string[] = [];
 
       do {
-        const scanResult = await client.scan(cursor.toString(), { 
-            MATCH: `${prefix}*`,
-            COUNT: 100 
+        const scanResult = await client.scan(cursor.toString(), {
+          MATCH: `${KEY_PREFIX}${prefix}*`,
+          COUNT: 100
         });
 
         keysToDelete = keysToDelete.concat(scanResult.keys);
@@ -158,7 +161,7 @@ export const redis = {
 
       if (keysToDelete.length > 0) {
         await client.del(keysToDelete);
-        console.log(`[Redis] Eliminadas ${keysToDelete.length} claves con prefijo '${prefix}' usando SCAN.`);
+        console.log(`[Redis] Eliminadas ${keysToDelete.length} claves con prefijo '${prefix}' (redis-prefix: ${KEY_PREFIX}) usando SCAN.`);
       }
     } catch (error) {
       console.error(`[Redis] Error limpiando prefijo ${prefix}:`, error);

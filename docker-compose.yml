@@ -18,7 +18,8 @@ services:
       # Variables generales (desarrollo y producción)
       - NODE_ENV=${NODE_ENV:-production}
       - DATABASE_URL
-      - REDIS_URL
+      - REDIS_URL=${REDIS_URL}
+      - REDIS_ENABLED=${REDIS_ENABLED:true}
       - LOG_LEVEL=${LOG_LEVEL:-info}
 
       # New Relic (opcional en desarrollo)

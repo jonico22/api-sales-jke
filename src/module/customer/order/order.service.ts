@@ -1,6 +1,7 @@
 
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
+import { publishRealtimeUpdate, publishNotification, NotificationType, NotificationPriority } from '@/config/event-publisher';
 import { CreateOrderInput, UpdateOrderInput, OrderFilters } from './order.schema';
 import {
   PaginatedResult,
@@ -246,6 +247,46 @@ export const OrderService = {
 
       return newOrder;
     });
+
+    // 7. [Notification] Send Notification if Created as COMPLETED
+    if (order.status === OrderStatus.COMPLETED && society.subscriptionId) {
+      try {
+        const partnerName = partner.companyName ||
+          `${partner.firstName || ''} ${partner.lastName || ''}`.trim();
+
+        console.log('[OrderService] 🟢 Intentando publicar notificación (CREATE) para orden:', order.orderCode);
+
+        // A. Realtime Update
+        await publishRealtimeUpdate(
+          society.subscriptionId,
+          'VENTA', // Entity Type
+          {
+            id: order.id,
+            status: 'COMPLETADO',
+            orderCode: order.orderCode,
+            totalAmount: order.totalAmount,
+            partnerName: partnerName,
+            paidAt: new Date()
+          }
+        );
+
+        // B. Visual Notification (Toast)
+        await publishNotification({
+          type: NotificationType.SALES,
+          title: 'Venta Realizada',
+          message: `La orden #${order.orderCode} ha sido procesada exitosamente.`,
+          subscriptionId: society.subscriptionId,
+          priority: NotificationPriority.HIGH,
+          link: `/orders/history?id=${order.id}`,
+          metadata: {
+            orderId: order.id,
+            amount: order.totalAmount
+          }
+        });
+      } catch (error) {
+        console.error('[OrderService] ❌ Error enviando notificación en create:', error);
+      }
+    }
 
     // Invalidate Cache
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
@@ -510,6 +551,58 @@ export const OrderService = {
 
       return updated;
     });
+
+    // 3. Post-Transaction Actions (Notifications, Cache Invalidation)
+
+    // A. Realtime Update for Completed Orders
+    if (isCompleting) {
+      try {
+        const fullOrder = await prisma.order.findUnique({
+          where: { id: result.id },
+          include: {
+            society: { select: { subscriptionId: true } },
+            partner: { select: { companyName: true, firstName: true, lastName: true } }
+          }
+        });
+
+        if (fullOrder?.society?.subscriptionId) {
+          const partnerName = fullOrder.partner.companyName ||
+            `${fullOrder.partner.firstName || ''} ${fullOrder.partner.lastName || ''}`.trim();
+
+          await publishRealtimeUpdate(
+            fullOrder.society.subscriptionId,
+            'VENTA', // Entity Type
+            {
+              id: fullOrder.id,
+              status: 'COMPLETADO',
+              orderCode: fullOrder.orderCode,
+              totalAmount: fullOrder.totalAmount,
+              partnerName: partnerName,
+              paidAt: new Date() // Current time as payment/completion time
+            }
+          );
+
+          console.log('[OrderService] 🟢 Intentando publicar notificación para orden:', fullOrder.orderCode);
+
+          // 2. Notificación Visual (Toast)
+          await publishNotification({
+            type: NotificationType.SALES,
+            title: 'Venta Realizada',
+            message: `La orden #${fullOrder.orderCode} ha sido procesada exitosamente.`,
+            subscriptionId: fullOrder.society.subscriptionId,
+            priority: NotificationPriority.HIGH,
+            // Opcional: link para ir al detalle
+            link: `/orders/history?id=${fullOrder.id}`,
+            metadata: {
+              orderId: fullOrder.id,
+              amount: fullOrder.totalAmount
+            }
+          });
+        }
+      } catch (error) {
+        console.error('Error publishing realtime update for order:', id, error);
+      }
+    }
 
     await redis.del(`${CACHE_PREFIX}${id}`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
