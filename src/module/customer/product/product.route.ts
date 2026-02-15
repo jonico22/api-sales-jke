@@ -115,6 +115,13 @@ router.post('/', ProductController.create);
  *         required: true
  *         schema:
  *           type: string
+ *         description: Código de la sociedad
+ *       - in: query
+ *         name: createdBy
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: UUID del usuario que realiza la carga masiva
  *     requestBody:
  *       content:
  *         multipart/form-data:

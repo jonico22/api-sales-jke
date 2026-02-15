@@ -21,6 +21,8 @@ export const ProductSchema = registry.register(
     barcode: z.string().optional().openapi({ example: '775000000001', description: 'Código de barras (EAN/UPC)' }),
     brand: z.string().optional().openapi({ example: 'HP', description: 'Marca del producto' }),
     unitOfMeasure: z.string().default('NIU').openapi({ example: 'NIU', description: 'Unidad de medida (SUNAT)' }),
+    color: z.string().optional().openapi({ example: 'Rojo', description: 'Color del producto' }),
+    colorCode: z.string().optional().openapi({ example: '#FF0000', description: 'Código de color' }),
   })
 );
 
@@ -42,6 +44,8 @@ export const createProductSchema = z.object({
     barcode: z.string().optional().openapi({ example: '775000000001', description: 'Código de barras (EAN/UPC)' }),
     brand: z.string().optional().openapi({ example: 'HP', description: 'Marca del producto' }),
     unitOfMeasure: z.string().default('NIU').optional().openapi({ example: 'NIU', description: 'Unidad de medida (SUNAT)' }),
+    color: z.string().optional().openapi({ example: 'Rojo', description: 'Color del producto' }),
+    colorCode: z.string().optional().openapi({ example: '#FF0000', description: 'Código de color' }),
   }))
 });
 
@@ -62,6 +66,8 @@ export const updateProductSchema = z.object({
     barcode: z.string().optional().openapi({ example: '775000000001', description: 'Código de barras (EAN/UPC)' }),
     brand: z.string().optional().openapi({ example: 'HP', description: 'Marca del producto' }),
     unitOfMeasure: z.string().optional().openapi({ example: 'NIU', description: 'Unidad de medida (SUNAT)' }),
+    color: z.string().optional().openapi({ example: 'Rojo', description: 'Color del producto' }),
+    colorCode: z.string().optional().openapi({ example: '#FF0000', description: 'Código de color' }),
   }))
 });
 
@@ -101,6 +107,10 @@ export const productFiltersSchema = z.object({
     search: z.string().optional().openapi({
       example: 'laptop',
       description: 'Búsqueda por nombre o código del producto (case-insensitive)'
+    }),
+    color: z.string().optional().openapi({
+      example: 'Rojo',
+      description: 'Filtrar por color'
     }),
 
     // Filtros de estado

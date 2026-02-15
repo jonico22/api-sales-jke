@@ -14,10 +14,13 @@ interface ProductCsvRow {
     CodigoBarras?: string;
     Marca?: string;
     Descripcion?: string;
+    Color?: string;
+    ColorCode?: string;
+    [key: string]: string | undefined;
 }
 
 export class ProductBulkService {
-    static async processBulkUpload(filePath: string, societyId: string) {
+    static async processBulkUpload(filePath: string, societyId: string, createdBy: string) {
         const results: ProductCsvRow[] = [];
 
         // 1. Read CSV
@@ -86,10 +89,13 @@ export class ProductBulkService {
                             priceCost: precioCosto,
                             stock: stockInicial, // Global stock
                             minStock: stockMinimo,
-                            barcode: row.CodigoBarras,
-                            brand: row.Marca,
-                            description: row.Descripcion,
+                            barcode: row.CodigoBarras || row['CodigoBarras(Opcional)'],
+                            brand: row.Marca || row['Marca(Opcional)'],
+                            description: row.Descripcion || row['Descripcion(Opcional)'],
                             isActive: true,
+                            color: row.Color || row['Color(Opcional)'],
+                            colorCode: row.ColorCode || row['ColorCode(Opcional)'],
+                            createdBy,
                         },
                     });
 
@@ -102,12 +108,25 @@ export class ProductBulkService {
                             availableStock: stockInicial,
                             minStock: stockMinimo,
                             isActive: true,
+                            createdBy,
                         },
                     });
 
                     processedCount++;
                 } catch (error: any) {
-                    errors.push(`Fila ${rowNum}: ${error.message}`);
+                    if (error.code === 'P2002') {
+                        const target = error.meta?.target;
+                        let field = 'campo único';
+                        if (Array.isArray(target)) {
+                            if (target.includes('code')) field = 'Código Interno (SKU)';
+                            if (target.includes('barcode')) field = 'Código de Barras';
+                            if (target.includes('name')) field = 'Nombre del Producto';
+                            if (target.includes('societyId') && target.includes('code')) field = 'Codigo Interno (SKU) en esta Sociedad';
+                        }
+                        errors.push(`Fila ${rowNum}: El ${field} '${row.CodigoInterno}' (o similar) ya existe.`);
+                    } else {
+                        errors.push(`Fila ${rowNum}: ${error.message}`);
+                    }
                 }
             }
         });

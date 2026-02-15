@@ -42,6 +42,7 @@ export interface ProductFilters {
   createdAtTo?: string;
   updatedAtFrom?: string;
   updatedAtTo?: string;
+  color?: string;
 }
 
 export const ProductService = {
@@ -81,6 +82,7 @@ export const ProductService = {
       filters?.createdAtTo || 'all',
       filters?.updatedAtFrom || 'all',
       filters?.updatedAtTo || 'all',
+      filters?.color || 'all',
       page,
       limit,
       sortBy,
@@ -129,13 +131,19 @@ export const ProductService = {
         { name: { contains: filters.search, mode: 'insensitive' } },
         { code: { contains: filters.search, mode: 'insensitive' } },
         { barcode: { contains: filters.search, mode: 'insensitive' } },
-        { brand: { contains: filters.search, mode: 'insensitive' } }
+        { brand: { contains: filters.search, mode: 'insensitive' } },
+        { color: { contains: filters.search, mode: 'insensitive' } }
       ];
     }
 
     // Filtro por isActive
     if (filters?.isActive !== undefined) {
       whereClause.isActive = filters.isActive;
+    }
+
+    // Filtro por color
+    if (filters?.color) {
+      whereClause.color = { contains: filters.color, mode: 'insensitive' };
     }
 
     // Filtro de rango de precio
@@ -242,6 +250,8 @@ export const ProductService = {
           unitOfMeasure: true,
           category: { select: { name: true } },
           image: true,
+          color: true,
+          colorCode: true,
         },
       }),
       prisma.product.count({ where: whereClause }),
@@ -407,6 +417,8 @@ export const ProductService = {
         barcode: data.barcode,
         brand: data.brand,
         unitOfMeasure: data.unitOfMeasure || 'NIU',
+        color: data.color,
+        colorCode: data.colorCode,
       },
       include: {
         society: { select: { id: true, name: true, code: true } },
