@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { CategoryController } from './category.controller';
 import { CategoryBulkController } from './category.bulk.controller';
+import { disableNewRelicForRoute } from '@/middlewares/disableNewRelic.middleware';
 
 const router = Router();
 
@@ -59,10 +60,17 @@ router.post('/', CategoryController.create);
  *       - multipart/form-data
  *     parameters:
  *       - in: query
- *         name: societyId
+ *         name: societyCode
  *         required: true
  *         schema:
  *           type: string
+ *         description: Código de la sociedad
+ *       - in: query
+ *         name: createdBy
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: Usuario que realiza la carga masiva
  *     requestBody:
  *       content:
  *         multipart/form-data:
@@ -76,7 +84,11 @@ router.post('/', CategoryController.create);
  *       200:
  *         description: Categorías cargadas
  */
-router.post('/bulk-upload', CategoryBulkController.uploadMiddleware, CategoryBulkController.bulkUpload);
+router.post('/bulk-upload',
+    disableNewRelicForRoute,
+    CategoryBulkController.uploadMiddleware,
+    CategoryBulkController.bulkUpload
+);
 router.put('/:id', CategoryController.update);
 router.delete('/:id', CategoryController.delete);
 
