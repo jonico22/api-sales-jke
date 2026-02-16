@@ -19,7 +19,7 @@ services:
       - NODE_ENV=${NODE_ENV:-production}
       - DATABASE_URL
       - REDIS_URL=${REDIS_URL}
-      - REDIS_ENABLED=${true}
+      - REDIS_ENABLED=true
       - LOG_LEVEL=${LOG_LEVEL:-info}
 
       # Cloudflare R2

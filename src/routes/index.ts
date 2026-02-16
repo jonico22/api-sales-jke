@@ -4,7 +4,7 @@ import branchOfficeRoutes from '@/module/customer/branchOffice/branchoffice.rout
 import branchOfficeProductRoutes from '@/module/customer/branchOfficeProduct/branchofficeproduct.route';
 import purchaseDetailRoutes from '@/module/customer/purchaseDetail/purchaseDetail.routes';
 import purchaseRoutes from '@/module/customer/purchase/purchase.route';
-import orderRoutes from '@/module/customer/order/order.route';
+import orderRoutes from '../module/customer/order/order.route';
 import orderItemRoutes from '@/module/customer/orderItem/orderItem.route';
 import orderPaymentRoutes from '@/module/customer/orderPayment/orderPayment.route';
 import societyReceiptRoutes from '@/module/customer/societyReceipt/societyReceipt.routes';

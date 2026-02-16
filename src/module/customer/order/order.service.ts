@@ -595,8 +595,6 @@ export const OrderService = {
             }
           );
 
-          console.log('[OrderService] 🟢 Intentando publicar notificación para orden:', fullOrder.orderCode);
-
           // 2. Notificación Visual (Toast)
           await publishNotification({
             type: NotificationType.SALES,

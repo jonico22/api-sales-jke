@@ -1,4 +1,4 @@
-import client from '@/config/redis';
+import client, { redis } from '@/config/redis';
 import { v4 as uuidv4 } from 'uuid';
 
 // Global Event Channel
@@ -40,18 +40,22 @@ export interface NotificationPayload {
 export const publishNotification = async (notification: NotificationPayload) => {
 
 
-    if (!client.isReady) {
-        console.warn('[EventPublisher] ⚠️ Redis client is not ready. Skipping notification.');
+    // Check using the consistent wrapper status or client.isOpen
+    // If client is Open but not Ready, node-redis queues commands by default.
+    // We should only skip if it's completely closed/disabled.
+
+    // Using the exported 'redis' wrapper to check if enabled
+    if (!redis.enabled) return;
+
+    // Use client.isOpen to allow queuing during reconnection
+    if (!client.isOpen) {
+        console.warn('[EventPublisher] ⚠️ Redis client is closed. Skipping notification.');
         return;
     }
 
     const payload = JSON.stringify({
         action: 'NOTIFY',
-        businessId: notification.subscriptionId, // Mapped to subscriptionId as per user request context
-        // Actually, user schema has `subscriptionId`.
-        // The previous code had `businessId` and `subscriptionId`.
-        // The new schema has `subscriptionId` as a relation.
-        // I will pass the raw notification object in `data`.
+        businessId: notification.subscriptionId,
         data: {
             id: notification.id || uuidv4(),
             type: notification.type,
@@ -69,7 +73,6 @@ export const publishNotification = async (notification: NotificationPayload) => 
 
     try {
         await client.publish(EVENT_CHANNEL, payload);
-        console.log('[EventPublisher] 📨 Evento NOTIFY enviado');
     } catch (error) {
         console.error('[EventPublisher] Error publishing NOTIFY:', error);
     }
@@ -83,11 +86,12 @@ export const publishRealtimeUpdate = async (
     entityType: string,
     data: any
 ) => {
-    if (!client.isReady) return;
+    // Same check here
+    if (!redis.enabled || !client.isOpen) return;
 
     const payload = JSON.stringify({
         action: 'UPDATE_TABLE',
-        subscriptionId, // Used for routing to specific client/tenant
+        subscriptionId,
         data: { entity: entityType, ...data }
     });
 
