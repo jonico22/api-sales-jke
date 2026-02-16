@@ -104,17 +104,19 @@ model Currency {
 }
 
 model File {
-  id          String      @id @default(uuid())
+  id          String       @id @default(uuid())
   name        String
   path        String
   mimeType    String?
   size        Int?
-  key         String?     @unique
-  storageType StorageType @default(LOCAL)
+  key         String?      @unique
+  storageType StorageType  @default(LOCAL)
+  category    FileCategory @default(GENERAL)
 
-  uploadedAt DateTime @default(now())
+  uploadedAt DateTime  @default(now())
+  expiresAt  DateTime? // Fecha de expiración para archivos temporales (REPORT)
   societyId  String
-  society    Society  @relation(fields: [societyId], references: [id])
+  society    Society   @relation(fields: [societyId], references: [id])
 
   // Relaciones
   uploadedById String?
@@ -132,6 +134,12 @@ enum StorageType {
   LOCAL
   S3
   EXTERNAL
+}
+
+enum FileCategory {
+  GENERAL
+  REPORT // Archivos temporales (ej: Excel, PDF) con política de retención
+  // Se pueden agregar más categorías si es necesario
 }
 
 model Tax {
@@ -234,6 +242,9 @@ model Society {
 
   // Catalogs
   unitOfMeasures UnitOfMeasure[]
+
+  // Storage
+  storageLimit BigInt @default(157286400) // 150MB in bytes (150 * 1024 * 1024)
 }
 
 enum Frequency {

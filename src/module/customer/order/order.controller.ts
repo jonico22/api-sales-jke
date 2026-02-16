@@ -10,6 +10,43 @@ import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
 export const OrderController = {
   /**
+   * GET /api/orders/report
+   */
+  getReport: async (req: Request, res: Response) => {
+    // Reutilizamos el schema de filtros (sin paginación obligatoria)
+    const filtersParse = orderFiltersSchema.safeParse({ query: req.query });
+
+    if (!filtersParse.success) {
+      return res.status(400).json(filtersParse.error.format());
+    }
+
+    try {
+      // En lugar de generar sincrónicamente, encolamos el trabajo
+      // await OrderService.getReport(filtersParse.data.query);
+
+      const { reportQueue } = await import('@/config/queue');
+      const userId = (req as any).user?.id || 'system'; // Ajustar según tu auth middleware
+      const societyId = filtersParse.data.query.societyCode
+        ? undefined // Si es code, el worker lo resuelve, pero idealmente pasamos ID si lo tenemos
+        : filtersParse.data.query.societyId;
+
+      await reportQueue.add('generate-excel', {
+        filters: filtersParse.data.query,
+        userId,
+        societyId: societyId || filtersParse.data.query.societyId // Fallback
+      });
+
+      res.status(202).json({
+        message: 'La generación del reporte ha comenzado. Se le notificará cuando esté listo.'
+      });
+
+    } catch (error: any) {
+      console.error(error);
+      res.status(500).json({ message: 'Error iniciando reporte', error: error.message });
+    }
+  },
+
+  /**
    * GET /api/orders
    */
   getAll: async (req: Request, res: Response) => {

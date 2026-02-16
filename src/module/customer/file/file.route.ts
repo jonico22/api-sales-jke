@@ -118,4 +118,32 @@ router.put('/:id', FileController.update);
  */
 router.delete('/:id', FileController.delete);
 
+/**
+ * @openapi
+ * /files/upload:
+ *   post:
+ *     summary: Subir archivo a almacenamiento (R2/S3)
+ *     consumes:
+ *       - multipart/form-data
+ *     parameters:
+ *       - in: query
+ *         name: societyId
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *     responses:
+ *       201:
+ *         description: Archivo subido y registrado
+ */
+router.post('/upload', FileController.uploadMiddleware, FileController.upload);
+
 export default router;

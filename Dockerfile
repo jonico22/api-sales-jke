@@ -13,11 +13,15 @@ FROM base AS development
 ENV NODE_ENV=development 
 # --------------------------
 COPY package*.json ./
+# 1. Install dependencies first (cached if package.json doesn't change)
+RUN npm ci
+
+# 2. Copy Prisma schema and generate (cached if schema doesn't change)
 COPY prisma ./prisma/
-RUN npm install
-COPY . .
-# Generamos Prisma
 RUN DATABASE_URL="postgresql://placeholder:5432/db" npx prisma generate
+
+# 3. Copy source code last (cached if src doesn't change)
+COPY . .
 EXPOSE 3000
 CMD ["npm", "run", "dev"]
 

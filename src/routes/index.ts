@@ -1,6 +1,5 @@
 import { Router } from 'express';
 import societyRoutes from '@/module/customer/society/society.route';
-import productRoutes from '@/module/customer/product/product.route';
 import branchOfficeRoutes from '@/module/customer/branchOffice/branchoffice.route';
 import branchOfficeProductRoutes from '@/module/customer/branchOfficeProduct/branchofficeproduct.route';
 import purchaseDetailRoutes from '@/module/customer/purchaseDetail/purchaseDetail.routes';

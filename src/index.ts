@@ -5,9 +5,16 @@ import 'newrelic';
 import express from 'express';
 import cors from 'cors';
 
+// SOLUCIÓN AL ERROR: TypeError: Do not know how to serialize a BigInt
+// @ts-ignore
+BigInt.prototype.toJSON = function () {
+  return this.toString();
+};
+
 //import { getSafeSwaggerDoc } from '@/config/swagger';
 import { envs } from '@/config/envs';
 import { connectRedis } from '@/config/redis';
+import '@/worker/report.worker'; // Importar para iniciar el worker
 import { globalErrorHandler } from '@/utils/errorHandler';
 import { AppError } from '@/utils/AppError';
 import logger from '@/config/logger';

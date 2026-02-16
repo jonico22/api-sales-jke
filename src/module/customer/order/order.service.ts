@@ -17,6 +17,72 @@ const CACHE_PREFIX = 'orders:';
 const CACHE_TTL_LIST = 300;
 const CACHE_TTL_SINGLE = 600;
 
+// Helper function to build WHERE clause (Refactored)
+const buildOrderWhereClause = async (filters?: OrderFilters) => {
+  const whereClause: any = {};
+  const societyCode = filters?.societyCode || filters?.societyId;
+
+  let subscriptionId: string | undefined;
+
+  // Resolve Society Code/ID (Pattern from CategoryService)
+  if (societyCode) {
+    const society = await prisma.society.findUnique({ where: { code: societyCode } });
+    if (society) {
+      whereClause.societyId = society.id;
+      subscriptionId = society.subscriptionId;
+    } else {
+      // If code looks like UUID, try as ID as fallback (legacy behavior support)
+      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
+      if (isUuid) {
+        whereClause.societyId = societyCode;
+        const soc = await prisma.society.findUnique({ where: { id: societyCode } });
+        if (soc) subscriptionId = soc.subscriptionId;
+      } else {
+        // Return guaranteed empty result if code invalid
+        return { whereClause: { id: '00000000-0000-0000-0000-000000000000' }, subscriptionId: undefined };
+      }
+    }
+  }
+
+  if (filters?.partnerId) whereClause.partnerId = filters.partnerId;
+  if (filters?.branchId) whereClause.branchId = filters.branchId;
+  if (filters?.status) whereClause.status = filters.status;
+  if (filters?.createdBy) whereClause.createdBy = filters.createdBy;
+
+  // Numeric Filters
+  if (filters?.totalAmountFrom || filters?.totalAmountTo) {
+    whereClause.totalAmount = {};
+    if (filters.totalAmountFrom) whereClause.totalAmount.gte = filters.totalAmountFrom;
+    if (filters.totalAmountTo) whereClause.totalAmount.lte = filters.totalAmountTo;
+  }
+
+  if (filters?.dateFrom || filters?.dateTo) {
+    const dateRange = convertLimaDateRangeToUTC(filters.dateFrom, filters.dateTo);
+    whereClause.orderDate = {};
+    if (dateRange.from) whereClause.orderDate.gte = dateRange.from;
+    if (dateRange.to) whereClause.orderDate.lte = dateRange.to;
+  }
+
+  if (filters?.search) {
+    whereClause.OR = [
+      { orderCode: { contains: filters.search, mode: 'insensitive' } },
+      { notes: { contains: filters.search, mode: 'insensitive' } },
+      {
+        partner: {
+          OR: [
+            { companyName: { contains: filters.search, mode: 'insensitive' } },
+            { firstName: { contains: filters.search, mode: 'insensitive' } },
+            { lastName: { contains: filters.search, mode: 'insensitive' } },
+            { documentNumber: { contains: filters.search, mode: 'insensitive' } }
+          ]
+        }
+      }
+    ];
+  }
+
+  return { whereClause, subscriptionId };
+};
+
 export const OrderService = {
   /**
    * Crear una nueva orden con cálculo de financieros backend-side
@@ -337,60 +403,7 @@ export const OrderService = {
     if (cached) return cached;
 
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
-    const whereClause: any = {};
-
-    // 2. Resolve Society Code/ID
-    if (societyCode) {
-      if (filters?.societyCode) {
-        // Resolve Code -> ID
-        const society = await prisma.society.findUnique({ where: { code: filters.societyCode } });
-        if (society) {
-          whereClause.societyId = society.id;
-        } else {
-          // Si no encuentra por código, devolver vacío (filtro estricto)
-          return buildPaginatedResult([], page, limit, 0);
-        }
-      } else {
-        // Direct ID
-        whereClause.societyId = filters.societyId;
-      }
-    }
-
-    if (filters?.partnerId) whereClause.partnerId = filters.partnerId;
-    if (filters?.branchId) whereClause.branchId = filters.branchId;
-    if (filters?.status) whereClause.status = filters.status;
-    if (filters?.createdBy) whereClause.createdBy = filters.createdBy;
-
-    // Numeric Filters
-    if (filters?.totalAmountFrom || filters?.totalAmountTo) {
-      whereClause.totalAmount = {};
-      if (filters.totalAmountFrom) whereClause.totalAmount.gte = filters.totalAmountFrom;
-      if (filters.totalAmountTo) whereClause.totalAmount.lte = filters.totalAmountTo;
-    }
-
-    if (filters?.dateFrom || filters?.dateTo) {
-      const dateRange = convertLimaDateRangeToUTC(filters.dateFrom, filters.dateTo);
-      whereClause.orderDate = {};
-      if (dateRange.from) whereClause.orderDate.gte = dateRange.from;
-      if (dateRange.to) whereClause.orderDate.lte = dateRange.to;
-    }
-
-    if (filters?.search) {
-      whereClause.OR = [
-        { orderCode: { contains: filters.search, mode: 'insensitive' } },
-        { notes: { contains: filters.search, mode: 'insensitive' } },
-        {
-          partner: {
-            OR: [
-              { companyName: { contains: filters.search, mode: 'insensitive' } },
-              { firstName: { contains: filters.search, mode: 'insensitive' } },
-              { lastName: { contains: filters.search, mode: 'insensitive' } },
-              { documentNumber: { contains: filters.search, mode: 'insensitive' } }
-            ]
-          }
-        }
-      ];
-    }
+    const { whereClause } = await buildOrderWhereClause(filters);
 
     const [data, total] = await prisma.$transaction([
       prisma.order.findMany({
@@ -619,7 +632,6 @@ export const OrderService = {
    */
   delete: async (id: string) => {
     // Soft delete or Cancel logic
-    // Soft delete or Cancel logic
     const order = await prisma.order.findUnique({
       where: { id },
       include: { orderItems: true }
@@ -661,5 +673,93 @@ export const OrderService = {
     await redis.deleteKeysByPrefix('branch_office_products:');
 
     return result;
+  },
+
+  /**
+   * Generar reporte Excel (Buffer) con detalle de items y métodos de pago
+   */
+  getReport: async (filters?: OrderFilters): Promise<{ buffer: Buffer; subscriptionId?: string }> => {
+    // 1. Construir WHERE (reutilizando lógica)
+    const { whereClause, subscriptionId } = await buildOrderWhereClause(filters);
+
+    // 2. Consultar sin paginación y con las relaciones necesarias para el reporte
+    const orders = await prisma.order.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        partner: { select: { companyName: true, firstName: true, lastName: true, documentNumber: true, email: true } },
+        currency: { select: { code: true } },
+        society: { select: { name: true } },
+        branch: { select: { name: true } },
+        OrderPayment: { select: { paymentMethod: true, amount: true } },
+        orderItems: {
+          include: {
+            product: { select: { name: true, code: true } }
+          }
+        }
+      }
+    });
+
+    // 3. Mapear datos a estructura plana (Denormalización: 1 fila por ítem)
+    const data: any[] = [];
+
+    orders.forEach(order => {
+      const partnerName = order.partner.companyName || `${order.partner.firstName || ''} ${order.partner.lastName || ''}`.trim();
+      const paymentMethods = order.OrderPayment.map(p => p.paymentMethod).join(', ') || 'Sin Pago';
+
+      // Si la orden no tiene items (caso raro pero posible), agregamos una fila solo con cabecera
+      if (order.orderItems.length === 0) {
+        data.push({
+          'Código Orden': order.orderCode,
+          'Fecha': order.orderDate.toISOString().split('T')[0],
+          'Estado': order.status,
+          'Cliente': partnerName,
+          'Doc. Cliente': order.partner.documentNumber,
+          'Sucursal': order.branch.name,
+          'Moneda': order.currency.code,
+          'Método Pago': paymentMethods,
+          'Total Orden': Number(order.totalAmount),
+          'Producto': 'N/A',
+          'Código Producto': 'N/A',
+          'Cantidad': 0,
+          'Precio Unit.': 0,
+          'Descuento': 0,
+          'Subtotal Item': 0,
+          'Total Item': 0,
+          'Usuario': order.createdBy || 'Sistema'
+        });
+      } else {
+        // Generar una fila por cada ítem
+        order.orderItems.forEach(item => {
+          data.push({
+            'Código Orden': order.orderCode,
+            'Fecha': order.orderDate.toISOString().split('T')[0],
+            'Estado': order.status,
+            'Cliente': partnerName,
+            'Doc. Cliente': order.partner.documentNumber,
+            'Sucursal': order.branch.name,
+            'Moneda': order.currency.code,
+            'Método Pago': paymentMethods,
+            'Total Orden': Number(order.totalAmount), // Repetido por contexto
+            // Detalle del Item
+            'Producto': item.product.name,
+            'Código Producto': item.product.code,
+            'Cantidad': item.quantity,
+            'Precio Unit.': Number(item.unitPrice),
+            'Descuento': Number(item.discount),
+            'Subtotal Item': Number(item.subtotal),
+            'Total Item': Number(item.total),
+            'Usuario': order.createdBy || 'Sistema'
+          });
+        });
+      }
+    });
+
+    // 4. Generar Buffer usando ExcelService
+    // Dynamic import to avoid circular dependency issues if any, or just importing at top
+    const { ExcelService } = await import('@/services/excel.service');
+    const buffer = await ExcelService.generateExcelBuffer(data, 'Reporte Detallado');
+
+    return { buffer, subscriptionId };
   }
 };

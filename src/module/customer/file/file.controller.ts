@@ -2,8 +2,104 @@ import { Request, Response } from 'express';
 import { FileService } from './file.service';
 import { createFileSchema, updateFileSchema, fileIdSchema, fileFiltersSchema } from './file.schema';
 import { paginationQuerySchema } from '@/schemas/pagination.schema';
+import { StorageService } from './storage.service';
+import multer from 'multer';
+import prisma from '@/config/prisma';
+
+// Multer Memory Storage for R2 Upload
+const storage = multer.memoryStorage();
+const upload = multer({
+    storage,
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB Limit
+}).single('file'); // 'file' is the field name
 
 export const FileController = {
+    // Middleware de subida
+    uploadMiddleware: upload,
+
+    /**
+     * Subir nuevo archivo (Físico + Metadata)
+     */
+    upload: async (req: Request, res: Response) => {
+        if (!req.file) {
+            return res.status(400).json({ message: 'No se ha proporcionado ningún archivo' });
+        }
+
+        const societyId = req.query.societyId as string;
+        if (!societyId) {
+            return res.status(400).json({ message: 'societyId es requerido' });
+        }
+
+        const category = (req.query.category as string) || 'GENERAL';
+        // Folder logic: 
+        // GENERAL -> societies/{id}/files/
+        // REPORT  -> societies/{id}/reports/ (so R2 lifecycle can delete it later)
+        const folder = category === 'REPORT'
+            ? `societies/${societyId}/reports`
+            : `societies/${societyId}/files`;
+
+        try {
+            // 0. Validar Límite de Almacenamiento (Solo para GENERAL)
+            if (category !== 'REPORT') {
+                const society = await prisma.society.findUnique({
+                    where: { id: societyId },
+                    select: { storageLimit: true }
+                });
+
+                if (!society) {
+                    return res.status(404).json({ message: 'Sociedad no encontrada' });
+                }
+
+                const currentUsage = await prisma.file.aggregate({
+                    where: {
+                        societyId,
+                        category: 'GENERAL' // Solo contamos archivos que NO son reportes
+                    },
+                    _sum: { size: true }
+                });
+
+                const totalSize = (currentUsage._sum.size || 0) + req.file.size;
+                const limit = Number(society.storageLimit);
+
+                if (totalSize > limit) {
+                    const limitMB = (limit / (1024 * 1024)).toFixed(2);
+                    return res.status(400).json({
+                        message: `Espacio insuficiente. Has excedido tu límite de ${limitMB} MB.`
+                    });
+                }
+            }
+
+            // 1. Subir a R2
+            const uploadResult = await StorageService.uploadFile(
+                req.file.buffer,
+                req.file.originalname,
+                folder,
+                req.file.mimetype
+            );
+
+            // 2. Guardar Metadata en BD
+            const expiresAt = category === 'REPORT'
+                ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // +7 días
+                : null;
+
+            const fileData = await FileService.create({
+                name: uploadResult.originalName,
+                path: uploadResult.url,
+                key: uploadResult.key,
+                mimeType: req.file.mimetype,
+                size: req.file.size,
+                storageType: 'EXTERNAL',
+                societyId: societyId,
+                category: category as any,
+                expiresAt: expiresAt
+            });
+
+            res.status(201).json(fileData);
+        } catch (error: any) {
+            console.error(error);
+            res.status(500).json({ message: error.message || 'Error al procesar la subida' });
+        }
+    },
     /**
      * Obtener todos los archivos con paginación
      */
