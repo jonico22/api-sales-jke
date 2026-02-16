@@ -152,6 +152,8 @@ export const FileService = {
 
         // Invalidate List Cache
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        // Invalidate Category Cache (as per requirement)
+        await redis.deleteKeysByPrefix('categories:');
 
         return created;
     },
@@ -168,6 +170,8 @@ export const FileService = {
         // Invalidate Cache
         await redis.del(`${CACHE_PREFIX}${id}`);
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        // Invalidate Category Cache
+        await redis.deleteKeysByPrefix('categories:');
 
         return updated;
     },
@@ -183,6 +187,8 @@ export const FileService = {
         // Invalidate Cache
         await redis.del(`${CACHE_PREFIX}${id}`);
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        // Invalidate Category Cache
+        await redis.deleteKeysByPrefix('categories:');
 
         return deleted;
     }

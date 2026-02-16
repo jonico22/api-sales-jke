@@ -72,7 +72,8 @@ export const publishNotification = async (notification: NotificationPayload) => 
     });
 
     try {
-        await client.publish(EVENT_CHANNEL, payload);
+        const received = await client.publish(EVENT_CHANNEL, payload);
+        console.log(`[EventPublisher] 📢 Notificación publicada en '${EVENT_CHANNEL}'. Receptores: ${received}. Payload start: ${payload.substring(0, 50)}...`);
     } catch (error) {
         console.error('[EventPublisher] Error publishing NOTIFY:', error);
     }

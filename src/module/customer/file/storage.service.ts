@@ -1,5 +1,5 @@
 import { PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
-// import { getSignedUrl } from '@aws-sdk/s3-request-presigner'; // Optional: for private buckets
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Upload } from '@aws-sdk/lib-storage';
 import { r2Client } from '@/config/r2';
 import { envs } from '@/config/envs';
@@ -33,10 +33,18 @@ export const StorageService = {
 
             await parallelUploads3.done();
 
-            // Construct Public URL (if configured)
-            const publicUrl = envs.R2_PUBLIC_URL
-                ? `${envs.R2_PUBLIC_URL}/${key}`
-                : `${envs.R2_ENDPOINT}/${envs.R2_BUCKET_NAME}/${key}`;
+            let publicUrl = '';
+
+            if (envs.R2_PUBLIC_URL) {
+                publicUrl = `${envs.R2_PUBLIC_URL}/${key}`;
+            } else {
+                // Generate Presigned URL (valid for 7 days to match report lifecycle)
+                const command = new GetObjectCommand({
+                    Bucket: envs.R2_BUCKET_NAME,
+                    Key: key,
+                });
+                publicUrl = await getSignedUrl(r2Client, command, { expiresIn: 604800 });
+            }
 
             return {
                 key,
@@ -45,7 +53,7 @@ export const StorageService = {
                 originalName,
             };
         } catch (error) {
-            console.error('Error uplifting file to R2:', error);
+            console.error('Error uploading file to R2:', error);
             throw new Error('Error al subir archivo al almacenamiento');
         }
     },

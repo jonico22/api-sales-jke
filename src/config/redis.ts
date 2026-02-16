@@ -161,7 +161,9 @@ export const redis = {
 
       if (keysToDelete.length > 0) {
         await client.del(keysToDelete);
-        console.log(`[Redis] Eliminadas ${keysToDelete.length} claves con prefijo '${prefix}' (redis-prefix: ${KEY_PREFIX}) usando SCAN.`);
+        console.log(`[Redis] 🗑️ Eliminadas ${keysToDelete.length} claves con prefijo '${prefix}' (redis-prefix: ${KEY_PREFIX})`);
+      } else {
+        console.log(`[Redis] ⚠️ No se encontraron claves para eliminar con prefijo '${prefix}'`);
       }
     } catch (error) {
       console.error(`[Redis] Error limpiando prefijo ${prefix}:`, error);

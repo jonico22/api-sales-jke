@@ -247,6 +247,7 @@ export const ProductService = {
           updatedBy: true,
           barcode: true,
           brand: true,
+          unitOfMeasureId: true,
           unitOfMeasure: true,
           category: { select: { name: true } },
           image: true,
@@ -450,9 +451,8 @@ export const ProductService = {
       });
     }
 
-    // Invalidar cache de listas
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    // Invalidar cache de productos (agresivo para asegurar consistencia)
+    await redis.deleteKeysByPrefix('products:');
 
     return created;
   },
@@ -547,10 +547,8 @@ export const ProductService = {
       }
     }
 
-    // Invalidar cache del registro individual y listas
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    // Invalidar todo el cache de productos
+    await redis.deleteKeysByPrefix('products:');
 
     return updated;
   },
@@ -568,10 +566,10 @@ export const ProductService = {
       },
     });
 
-    // Invalidar cache
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    // Invalidar todo el cache de productos
+    await redis.deleteKeysByPrefix('products:');
+    // Also invalidate branch office products in case the user is viewing stock list
+    await redis.deleteKeysByPrefix('branch_office_products:');
 
     return deleted;
   },

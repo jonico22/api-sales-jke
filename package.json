@@ -57,6 +57,7 @@
     "@asteasolutions/zod-to-openapi": "^8.2.0",
     "@aws-sdk/client-s3": "^3.990.0",
     "@aws-sdk/lib-storage": "^3.990.0",
+    "@aws-sdk/s3-request-presigner": "^3.990.0",
     "@prisma/client": "^6.19.1",
     "@scalar/express-api-reference": "^0.8.30",
     "@types/socket.io": "^3.0.1",
