@@ -80,14 +80,17 @@ export const CategoryService = {
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
     const whereClause: any = { isDeleted: false };
 
-    // Filtro por sociedad
-    if (societyCode) {
-      const society = await prisma.society.findUnique({ where: { code: societyCode } });
+    // Filtro por sociedad (prioridad a societyCode si existe)
+    if (filters?.societyCode) {
+      const society = await prisma.society.findUnique({ where: { code: filters.societyCode } });
       if (society) {
         whereClause.societyId = society.id;
       } else {
+        // Si el código no existe, retornar lista vacía (como en OrderService)
         return buildPaginatedResult([], page, limit, 0);
       }
+    } else if (filters?.societyId) {
+      whereClause.societyId = filters.societyId;
     }
 
     // Búsqueda por nombre o código (case-insensitive)

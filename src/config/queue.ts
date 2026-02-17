@@ -16,13 +16,6 @@ if (redisUrl) {
     try {
         const url = new URL(redisUrl);
 
-        console.log('[BullMQ Config] Parsing REDIS_URL...');
-        console.log('[BullMQ Config] Host:', url.hostname);
-        console.log('[BullMQ Config] Port:', url.port || '6379');
-        console.log('[BullMQ Config] Username:', url.username || '(none)');
-        console.log('[BullMQ Config] Password Length:', url.password?.length || 0);
-        console.log('[BullMQ Config] Using TLS:', useTls);
-
         connectionOptions = {
             host: url.hostname,
             port: parseInt(url.port || '6379'),
@@ -35,8 +28,6 @@ if (redisUrl) {
                 }
             })
         };
-
-        console.log('[BullMQ Config] Connection config created');
     } catch (e) {
         console.error('[BullMQ Config] Error parsing REDIS_URL:', e);
     }

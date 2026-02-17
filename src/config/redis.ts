@@ -27,17 +27,7 @@ try {
   // Extract database number from pathname (e.g., /0, /1)
   const database = url.pathname ? parseInt(url.pathname.slice(1)) : 0;
 
-  // Debug logging (mask password but show length)
-  console.log('[Redis Config] Parsing URL...');
-  console.log('[Redis Config] Host:', url.hostname);
-  console.log('[Redis Config] Port:', url.port || '6379');
-  console.log('[Redis Config] Username:', url.username || '(none)');
-  console.log('[Redis Config] Password Length:', url.password?.length || 0);
-  console.log('[Redis Config] Database:', database);
-  console.log('[Redis Config] Using TLS:', useTls);
-
   // IMPORTANT: Use manual config instead of url to avoid parsing issues
-  console.log('[Redis Config] Using manual config with explicit credentials');
   redisConfig = {
     socket: {
       host: url.hostname,
@@ -58,8 +48,6 @@ try {
     password: url.password || undefined,
     database: database
   };
-
-  console.log('[Redis Config] Config created successfully');
 } catch (e) {
   console.error('[Redis Config] Error parsing REDIS_URL:', e);
   redisConfig = {

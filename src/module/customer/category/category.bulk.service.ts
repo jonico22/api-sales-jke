@@ -1,6 +1,7 @@
 import fs from 'fs';
 import csv from 'csv-parser';
 import prisma from '@/config/prisma';
+import { redis } from '@/config/redis';
 
 interface CategoryCsvRow {
     NombreCategoria: string;
@@ -66,10 +67,13 @@ export class CategoryBulkService {
             }
         });
 
+        // 3. Invalidate Cache
+        await redis.deleteKeysByPrefix('categories:');
+        console.log('[CategoryBulkService] Cache invalidado tras carga masiva');
+
         return {
             success: true,
             processed: processedCount,
-            errors,
         };
     }
 }
