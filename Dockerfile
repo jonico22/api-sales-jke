@@ -35,14 +35,9 @@ ENV NODE_ENV=production
 # Aumentamos RAM
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
-# Build directly with verbose output
-RUN echo "=== Starting TypeScript compilation ===" && \
-    node --max-old-space-size=2048 ./node_modules/.bin/tsc 2>&1 && \
-    echo "=== TypeScript compilation successful ===" && \
-    echo "=== Running tsc-alias ===" && \
-    npx tsc-alias 2>&1 && \
-    echo "=== Build complete ===" || \
-    (echo "=== BUILD FAILED ===" && exit 1)
+# Use build script for better error visibility
+COPY build.sh ./
+RUN chmod +x build.sh && ./build.sh
 
 RUN npm prune --production
 
