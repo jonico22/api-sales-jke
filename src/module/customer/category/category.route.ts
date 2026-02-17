@@ -14,7 +14,7 @@ router.get('/', CategoryController.getAll);
  *     summary: Obtener categorías para select/dropdown (sin paginación)
  *     parameters:
  *       - in: query
- *         name: societyId
+ *         name: societyCode
  *         schema:
  *           type: string
  *         description: Código de la sociedad (opcional)

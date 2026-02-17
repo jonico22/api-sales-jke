@@ -77,8 +77,8 @@ export const CategoryController = {
    * Obtener categorías para select/dropdown (sin paginación)
    */
   getForSelect: async (req: Request, res: Response) => {
-    const societyId = req.query.societyId as string | undefined;
-    const result = await CategoryService.getForSelect(societyId);
+    const societyCode = req.query.societyCode as string | undefined;
+    const result = await CategoryService.getForSelect(societyCode);
     res.json(result);
   },
 };
