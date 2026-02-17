@@ -19,9 +19,7 @@ const useTls = redisUrl.startsWith('rediss');
 const KEY_PREFIX = 'ventas:';
 
 // Parse credentials from URL (same as queue.ts)
-let redisConfig: any = {
-  url: redisUrl
-};
+let redisConfig: any = {};
 
 try {
   const url = new URL(redisUrl);
@@ -34,45 +32,29 @@ try {
   console.log('[Redis Config] Has Password:', !!url.password);
   console.log('[Redis Config] Using TLS:', useTls);
 
-  // If URL has username or password, use explicit config instead of url
-  if (url.username || url.password) {
-    console.log('[Redis Config] Using explicit credentials from URL');
-    redisConfig = {
-      socket: {
-        host: url.hostname,
-        port: parseInt(url.port || '6379'),
-        connectTimeout: 10000,
-        keepAlive: 5000,
-        reconnectStrategy: (retries: number) => {
-          const delay = Math.min(retries * 100, 3000);
-          console.warn(`⚠️ Redis: Intentando reconectar en ${delay}ms... (Intento ${retries})`);
-          return delay;
-        },
-        tls: useTls,
-        ...(useTls && { rejectUnauthorized: false })
+  // Use URL directly - the redis package handles credentials properly
+  console.log('[Redis Config] Using URL with socket options');
+  redisConfig = {
+    url: redisUrl, // This includes credentials
+    socket: {
+      connectTimeout: 10000,
+      keepAlive: 5000,
+      reconnectStrategy: (retries: number) => {
+        const delay = Math.min(retries * 100, 3000);
+        console.warn(`⚠️ Redis: Intentando reconectar en ${delay}ms... (Intento ${retries})`);
+        return delay;
       },
-      username: url.username || undefined,
-      password: url.password || undefined
-    };
-  } else {
-    console.log('[Redis Config] No credentials in URL, using URL-based connection');
-    // No credentials, use URL-based connection with socket options
-    redisConfig = {
-      url: redisUrl,
-      socket: {
-        connectTimeout: 10000,
-        reconnectStrategy: (retries: number) => {
-          const delay = Math.min(retries * 100, 3000);
-          console.warn(`⚠️ Redis: Intentando reconectar en ${delay}ms... (Intento ${retries})`);
-          return delay;
-        },
-        tls: useTls,
-        ...(useTls && { rejectUnauthorized: false })
-      }
-    };
-  }
+      ...(useTls && {
+        tls: true,
+        rejectUnauthorized: false
+      })
+    }
+  };
 } catch (e) {
   console.warn('[Redis Config] Error parsing REDIS_URL, using default config:', e);
+  redisConfig = {
+    url: redisUrl
+  };
 }
 
 const client: RedisClientType = createClient(redisConfig);
