@@ -24,18 +24,23 @@ let redisConfig: any = {};
 try {
   const url = new URL(redisUrl);
 
+  // Extract database number from pathname (e.g., /0, /1)
+  const database = url.pathname ? parseInt(url.pathname.slice(1)) : 0;
+
   // Debug logging (mask password)
   console.log('[Redis Config] Parsing URL...');
   console.log('[Redis Config] Host:', url.hostname);
   console.log('[Redis Config] Port:', url.port || '6379');
   console.log('[Redis Config] Username:', url.username || '(none)');
   console.log('[Redis Config] Has Password:', !!url.password);
+  console.log('[Redis Config] Database:', database);
   console.log('[Redis Config] Using TLS:', useTls);
 
   // Use URL directly - the redis package handles credentials properly
   console.log('[Redis Config] Using URL with socket options');
   redisConfig = {
     url: redisUrl, // This includes credentials
+    database: database, // Explicitly set database
     socket: {
       connectTimeout: 10000,
       keepAlive: 5000,
