@@ -3,6 +3,7 @@ import { OrderService } from '@/module/customer/order/order.service';
 import { StorageService } from '@/module/customer/file/storage.service';
 import { FileService } from '@/module/customer/file/file.service';
 import { NotificationType, NotificationPriority, publishNotification } from '@/config/event-publisher';
+import { FileCategory } from '@prisma/client';
 
 import { connection } from '@/config/queue';
 import prisma from '@/config/prisma';
@@ -11,7 +12,7 @@ export const reportWorker = new Worker('reports', async job => {
     console.log(`[ReportWorker] Procesando trabajo ${job.id}: ${job.name} `);
 
     try {
-        const { filters, userId, societyId } = job.data;
+        const { filters, userId, societyId } = job.data as { filters: any, userId: string, societyId: string };
 
         // Resolve Society Context FIRST to ensure we have a valid ID for File creation
         let targetSocietyId = societyId;
@@ -92,7 +93,7 @@ export const reportWorker = new Worker('reports', async job => {
                 size: buffer.length,
                 storageType: 'EXTERNAL', // R2 is external/S3
                 societyId: targetSocietyId, // Asociar a la sociedad correcta (UUID)
-                category: 'REPORT' as any, // Cast to any if enum strictness issue, or import FileCategory
+                category: FileCategory.REPORT, // Usar enum de Prisma directamente
                 uploadedById: userId,
                 expiresAt: expiresAt
             });
