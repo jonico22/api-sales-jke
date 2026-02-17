@@ -9,7 +9,7 @@ interface CategoryCsvRow {
 }
 
 export class CategoryBulkService {
-    static async processBulkUpload(filePath: string, societyId: string) {
+    static async processBulkUpload(filePath: string, societyId: string, createdBy: string) {
         const results: CategoryCsvRow[] = [];
 
         // 1. Read CSV
@@ -42,14 +42,6 @@ export class CategoryBulkService {
                         throw new Error(`Faltan datos obligatorios (Nombre, Código) en fila ${rowNum}`);
                     }
 
-                    // Check for existence code (optional, or let Prisma throw unique constraint error and catch it)
-                    // For bulk, let's catch standard errors to allow partial success if needed, OR fail all.
-                    // Requirement usually implies "Upload All or Nothing" OR "Report Errors".
-                    // We are doing ONE transaction, so it's All or Nothing by default here unless we catch inside loop 
-                    // BUT catching unique error inside transaction loop doesn't abort transaction but allows continuing? 
-                    // NO, in Prisma transaction, if one fails, all rollback unless handled carefully?
-                    // Actually, let's strictly fail if duplicate code to keep integrity clean.
-
                     await tx.category.create({
                         data: {
                             societyId,
@@ -57,25 +49,19 @@ export class CategoryBulkService {
                             code: row.CodigoCategoria,
                             description: row.Descripcion,
                             isActive: true,
+                            createdBy,
                         },
                     });
 
                     processedCount++;
                 } catch (error: any) {
+                    // Handle duplicate code error
                     if (error.code === 'P2002') {
-                        errors.push(`Fila ${rowNum}: El código '${row.CodigoCategoria}' ya existe.`);
+                        const duplicateField = error.meta?.target?.includes('code') ? 'código' : 'campo';
+                        throw new Error(`Fila ${rowNum}: El ${duplicateField} '${row.CodigoCategoria}' ya existe en la base de datos.`);
                     } else {
-                        errors.push(`Fila ${rowNum}: ${error.message}`);
+                        throw new Error(`Fila ${rowNum}: ${error.message}`);
                     }
-                    // If we want partial success, we shouldn't use one big transaction for everything if we want to commit good ones.
-                    // BUT for bulk data usually All-Or-Nothing is safer. 
-                    // However, user often prefers "Import what you can".
-                    // The current code throws inside transaction loop -> will rollback everything.
-                    // To allow "Partial Success", we should NOT use a single transaction wrapper around the loop, 
-                    // OR verify first. 
-                    // Let's stick to ALL OR NOTHING for data integrity in this simple version, 
-                    // but if error, we throw to rollback.
-                    throw error;
                 }
             }
         });

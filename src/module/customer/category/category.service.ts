@@ -282,9 +282,8 @@ export const CategoryService = {
     data.societyId = society.id;
     const created = await prisma.category.create({ data });
 
-    // Invalidar cache de listas
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    // Invalidar cache de listas y selects (agresivo)
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
 
     return created;
   },
@@ -304,10 +303,8 @@ export const CategoryService = {
       data,
     });
 
-    // Invalidar cache del registro individual y listas
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    // Invalidar todo el cache de categorías
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
 
     return updated;
   },
@@ -325,10 +322,8 @@ export const CategoryService = {
       },
     });
 
-    // Invalidar cache
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    // Invalidar todo el cache de categorías
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
 
     return deleted;
   },

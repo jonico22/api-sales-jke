@@ -2,6 +2,7 @@ import fs from 'fs';
 import csv from 'csv-parser';
 import prisma from '@/config/prisma';
 import { Product } from '@prisma/client';
+import { redis } from '@/config/redis';
 
 interface ProductCsvRow {
     NombreProducto: string;
@@ -14,10 +15,13 @@ interface ProductCsvRow {
     CodigoBarras?: string;
     Marca?: string;
     Descripcion?: string;
+    Color?: string;
+    ColorCode?: string;
+    [key: string]: string | undefined;
 }
 
 export class ProductBulkService {
-    static async processBulkUpload(filePath: string, societyId: string) {
+    static async processBulkUpload(filePath: string, societyId: string, createdBy: string) {
         const results: ProductCsvRow[] = [];
 
         // 1. Read CSV
@@ -51,6 +55,14 @@ export class ProductBulkService {
 
         const categoryMap = new Map(categories.map(c => [c.code, c.id])); // Map Code -> ID
 
+        // 2.1 Pre-fetch existing product codes for this society to avoid duplicates
+        const existingProducts = await prisma.product.findMany({
+            where: { societyId, isDeleted: false },
+            select: { code: true }
+        });
+        const existingCodes = new Set(existingProducts.map(p => p.code));
+        const seenInFile = new Set<string>();
+
         let processedCount = 0;
         let errors: string[] = [];
 
@@ -64,6 +76,21 @@ export class ProductBulkService {
                     if (!row.NombreProducto || !row.CodigoInterno || !row.CodigoCategoria) {
                         throw new Error(`Faltan datos obligatorios (Nombre, SKU, Categoría)`);
                     }
+
+                    const sku = row.CodigoInterno.trim();
+
+                    // Check duplicate in DB
+                    if (existingCodes.has(sku)) {
+                        errors.push(`Fila ${rowNum}: El Código/SKU '${sku}' ya existe en el sistema.`);
+                        continue;
+                    }
+
+                    // Check duplicate in current file
+                    if (seenInFile.has(sku)) {
+                        errors.push(`Fila ${rowNum}: El Código/SKU '${sku}' está duplicado en este archivo.`);
+                        continue;
+                    }
+                    seenInFile.add(sku);
 
                     const categoryId = categoryMap.get(row.CodigoCategoria);
                     if (!categoryId) {
@@ -86,10 +113,13 @@ export class ProductBulkService {
                             priceCost: precioCosto,
                             stock: stockInicial, // Global stock
                             minStock: stockMinimo,
-                            barcode: row.CodigoBarras,
-                            brand: row.Marca,
-                            description: row.Descripcion,
+                            barcode: row.CodigoBarras || row['CodigoBarras(Opcional)'],
+                            brand: row.Marca || row['Marca(Opcional)'],
+                            description: row.Descripcion || row['Descripcion(Opcional)'],
                             isActive: true,
+                            color: row.Color || row['Color(Opcional)'],
+                            colorCode: row.ColorCode || row['ColorCode(Opcional)'],
+                            createdBy,
                         },
                     });
 
@@ -102,15 +132,39 @@ export class ProductBulkService {
                             availableStock: stockInicial,
                             minStock: stockMinimo,
                             isActive: true,
+                            createdBy,
                         },
                     });
 
                     processedCount++;
                 } catch (error: any) {
-                    errors.push(`Fila ${rowNum}: ${error.message}`);
+                    if (error.code === 'P2002') {
+                        const target = error.meta?.target;
+                        let field = 'campo único';
+                        if (Array.isArray(target)) {
+                            if (target.includes('code')) field = 'Código Interno (SKU)';
+                            if (target.includes('barcode')) field = 'Código de Barras';
+                            if (target.includes('name')) field = 'Nombre del Producto';
+                            if (target.includes('societyId') && target.includes('code')) field = 'Codigo Interno (SKU) en esta Sociedad';
+                        }
+                        errors.push(`Fila ${rowNum}: El ${field} '${row.CodigoInterno}' (o similar) ya existe.`);
+                    } else {
+                        errors.push(`Fila ${rowNum}: ${error.message}`);
+                    }
                 }
             }
+        }, {
+            maxWait: 5000,
+            timeout: 20000
         });
+
+        // 4. Cache Invalidation (Aggressive)
+        if (processedCount > 0) {
+            await redis.deleteKeysByPrefix('products:');
+            // Also invalidate branch office products if stock changed
+            await redis.deleteKeysByPrefix('branch_office_products:');
+            console.log('[ProductBulkService] All product cache invalidated after bulk upload');
+        }
 
         return {
             success: true,

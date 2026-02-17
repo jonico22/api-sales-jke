@@ -5,9 +5,16 @@ import 'newrelic';
 import express from 'express';
 import cors from 'cors';
 
+// SOLUCIÓN AL ERROR: TypeError: Do not know how to serialize a BigInt
+// @ts-ignore
+BigInt.prototype.toJSON = function () {
+  return this.toString();
+};
+
 //import { getSafeSwaggerDoc } from '@/config/swagger';
 import { envs } from '@/config/envs';
 import { connectRedis } from '@/config/redis';
+import '@/worker/report.worker'; // Importar para iniciar el worker
 import { globalErrorHandler } from '@/utils/errorHandler';
 import { AppError } from '@/utils/AppError';
 import logger from '@/config/logger';
@@ -20,7 +27,8 @@ import prisma from './config/prisma';
 const app = express();
 
 app.use(cors(corsOptions));
-app.use(express.json());
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 /*app.use(
   '/docs',
@@ -57,6 +65,7 @@ const startServer = async () => {
     await connectRedis();
     await prisma.$connect();
     console.log('✅ Conectado a PostgreSQL con Prisma');
+
     app.listen(envs.PORT, () => {
       logger.info(`🚀 Servidor iniciado en puerto ${envs.PORT}`);
       logger.info(`🌍 Entorno actual: ${envs.NODE_ENV}`);

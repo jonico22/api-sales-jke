@@ -104,17 +104,19 @@ model Currency {
 }
 
 model File {
-  id          String      @id @default(uuid())
+  id          String       @id @default(uuid())
   name        String
   path        String
   mimeType    String?
   size        Int?
-  key         String?     @unique
-  storageType StorageType @default(LOCAL)
+  key         String?      @unique
+  storageType StorageType  @default(LOCAL)
+  category    FileCategory @default(GENERAL)
 
-  uploadedAt DateTime @default(now())
+  uploadedAt DateTime  @default(now())
+  expiresAt  DateTime? // Fecha de expiración para archivos temporales (REPORT)
   societyId  String
-  society    Society  @relation(fields: [societyId], references: [id])
+  society    Society   @relation(fields: [societyId], references: [id])
 
   // Relaciones
   uploadedById String?
@@ -132,6 +134,12 @@ enum StorageType {
   LOCAL
   S3
   EXTERNAL
+}
+
+enum FileCategory {
+  GENERAL
+  REPORT // Archivos temporales (ej: Excel, PDF) con política de retención
+  // Se pueden agregar más categorías si es necesario
 }
 
 model Tax {
@@ -231,6 +239,12 @@ model Society {
   uiConfig        Json? // { theme: "dark", colors: {...}, fonts: "Inter" }
   societyReceipts SocietyReceipt[]
   cashShifts      CashShift[]
+
+  // Catalogs
+  unitOfMeasures UnitOfMeasure[]
+
+  // Storage
+  storageLimit BigInt @default(157286400) // 150MB in bytes (150 * 1024 * 1024)
 }
 
 enum Frequency {
@@ -253,9 +267,13 @@ model Product {
   society     Society @relation(fields: [societyId], references: [id])
 
   // Identification & Characteristics
-  barcode       String? // EAN-13, UPC
-  brand         String?
-  unitOfMeasure String  @default("NIU") // NIU = Unidad
+  barcode         String? // EAN-13, UPC
+  brand           String?
+  unitOfMeasure   String         @default("NIU") // NIU = Unidad (Deprecating in favor of relation)
+  unitOfMeasureId String?
+  UnitOfMeasure   UnitOfMeasure? @relation(fields: [unitOfMeasureId], references: [id])
+  color           String? // Característica de productos
+  colorCode       String? // Referencia del color escrito
 
   imageId String?
   image   File?   @relation(fields: [imageId], references: [id])
@@ -296,6 +314,31 @@ model Category {
   updatedAt   DateTime  @updatedAt
   createdBy   String?
   updatedBy   String?
+}
+
+model UnitOfMeasure {
+  id           String  @id @default(uuid())
+  name         String // Nombre de la unidad (e.g. Kilogramos)
+  abbreviation String // Abreviatura (e.g. kg)
+  sunatCode    String // Código SUNAT (e.g. KGM)
+  isActive     Boolean @default(true)
+  isDeleted    Boolean @default(false)
+
+  // Tenants
+  societyId String
+  society   Society @relation(fields: [societyId], references: [id])
+
+  code String // Código interno único por sociedad (ej: KGM, NIU)
+
+  // Relations
+  products Product[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+  updatedBy String?
+
+  @@unique([societyId, code])
 }
 
 model BranchOffice {

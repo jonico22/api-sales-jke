@@ -57,9 +57,26 @@ export const FileService = {
         // 2. Database Query
         const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
 
-        const whereClause: any = {
-            ...(filters?.societyId && { societyId: filters.societyId }),
-        };
+        const whereClause: any = {};
+
+        // Resolve Society Code/ID (Pattern from CategoryService/OrderService)
+        const societyCode = filters?.societyId; // En FileFilters solo tenemos societyId, que puede ser code o UUID
+
+        if (societyCode) {
+            const society = await prisma.society.findUnique({ where: { code: societyCode } });
+            if (society) {
+                whereClause.societyId = society.id;
+            } else {
+                // If code looks like UUID, try as ID as fallback
+                const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
+                if (isUuid) {
+                    whereClause.societyId = societyCode;
+                } else {
+                    // Return guaranteed empty result if code invalid
+                    return buildPaginatedResult([], page, limit, 0);
+                }
+            }
+        }
 
         if (filters?.search) {
             whereClause.name = { contains: filters.search, mode: 'insensitive' };
@@ -135,6 +152,8 @@ export const FileService = {
 
         // Invalidate List Cache
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        // Invalidate Category Cache (as per requirement)
+        await redis.deleteKeysByPrefix('categories:');
 
         return created;
     },
@@ -151,6 +170,8 @@ export const FileService = {
         // Invalidate Cache
         await redis.del(`${CACHE_PREFIX}${id}`);
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        // Invalidate Category Cache
+        await redis.deleteKeysByPrefix('categories:');
 
         return updated;
     },
@@ -166,6 +187,8 @@ export const FileService = {
         // Invalidate Cache
         await redis.del(`${CACHE_PREFIX}${id}`);
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        // Invalidate Category Cache
+        await redis.deleteKeysByPrefix('categories:');
 
         return deleted;
     }

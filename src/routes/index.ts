@@ -1,11 +1,10 @@
 import { Router } from 'express';
 import societyRoutes from '@/module/customer/society/society.route';
-import productRoutes from '@/module/customer/product/product.route';
 import branchOfficeRoutes from '@/module/customer/branchOffice/branchoffice.route';
 import branchOfficeProductRoutes from '@/module/customer/branchOfficeProduct/branchofficeproduct.route';
 import purchaseDetailRoutes from '@/module/customer/purchaseDetail/purchaseDetail.routes';
 import purchaseRoutes from '@/module/customer/purchase/purchase.route';
-import orderRoutes from '@/module/customer/order/order.route';
+import orderRoutes from '../module/customer/order/order.route';
 import orderItemRoutes from '@/module/customer/orderItem/orderItem.route';
 import orderPaymentRoutes from '@/module/customer/orderPayment/orderPayment.route';
 import societyReceiptRoutes from '@/module/customer/societyReceipt/societyReceipt.routes';
@@ -20,6 +19,7 @@ import ProductRoutes from '../module/customer/product/product.route';
 import FileRoutes from '../module/customer/file/file.route';
 import cashShiftRoutes from '@/module/customer/cashShift/cashShift.route';
 import inventoryRoutes from '@/module/inventory/inventory.route';
+import unitOfMeasureRoutes from '@/module/customer/unit-of-measure/unit-of-measure.route';
 
 const router = Router();
 
@@ -42,6 +42,7 @@ router.use('/bussinesspartners', bussinessPartnerRoutes);
 router.use('/categories', categoryRoutes);
 router.use('/cash-shifts', cashShiftRoutes);
 router.use('/inventory', inventoryRoutes);
+router.use('/unit-of-measures', unitOfMeasureRoutes);
 
 // Configuración Regional (New)
 router.use('/taxes', taxRoutes);
