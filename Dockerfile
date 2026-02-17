@@ -36,11 +36,7 @@ ENV NODE_ENV=production
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
 # Ejecutamos el diagnóstico. Ahora SÍ encontrará el binario de TSC.
-RUN ./node_modules/.bin/tsc --project tsconfig.json --noEmit > error_log.txt 2>&1 || \
-    (echo "🔥 INICIO DEL REPORTE DE ERRORES 🔥" && \
-    cat error_log.txt && \
-    echo "🔥 FIN DEL REPORTE DE ERRORES 🔥" && \
-    exit 1)
+RUN ./node_modules/.bin/tsc --project tsconfig.json --noEmit
 
 # Si pasa el diagnóstico, compilamos de verdad
 RUN npm run build
