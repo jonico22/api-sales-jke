@@ -35,12 +35,7 @@ ENV NODE_ENV=production
 # Aumentamos RAM
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
-RUN ls -R /app
-
-# Ejecutamos el diagnóstico. Ahora SÍ encontrará el binario de TSC.
-RUN ./node_modules/.bin/tsc --project tsconfig.json --noEmit
-
-# Si pasa el diagnóstico, compilamos de verdad
+# Build directly (npm run build includes tsc compilation)
 RUN npm run build
 RUN npm prune --production
 
