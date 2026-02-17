@@ -13,16 +13,16 @@ FROM base AS development
 ENV NODE_ENV=development 
 # --------------------------
 COPY package*.json ./
-# 1. Install dependencies first (cached if package.json doesn't change)
-# Force fresh resolution for Alpine
-RUN rm -rf package-lock.json && npm install --verbose --legacy-peer-deps && npm cache clean --force
+# Install with exact versions from lockfile
+RUN npm ci
 
 # 2. Copy Prisma schema and generate (cached if schema doesn't change)
 COPY prisma ./prisma/
 RUN DATABASE_URL="postgresql://placeholder:5432/db" npx prisma generate
 
-# 3. Copy source code last (cached if src doesn't change)
+# 3. Copy ALL source code before build
 COPY . .
+
 EXPOSE 3000
 CMD ["npm", "run", "dev"]
 
@@ -35,9 +35,8 @@ ENV NODE_ENV=production
 # Aumentamos RAM
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 
-# Use build script for better error visibility
-COPY build.sh ./
-RUN chmod +x build.sh && ./build.sh
+# Build using npm script
+RUN npm run build
 
 RUN npm prune --production
 
