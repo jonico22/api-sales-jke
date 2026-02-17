@@ -14,7 +14,8 @@ ENV NODE_ENV=development
 # --------------------------
 COPY package*.json ./
 # 1. Install dependencies first (cached if package.json doesn't change)
-RUN npm install --verbose --legacy-peer-deps
+# Force fresh resolution for Alpine
+RUN rm -rf package-lock.json && npm install --verbose --legacy-peer-deps && npm cache clean --force
 
 # 2. Copy Prisma schema and generate (cached if schema doesn't change)
 COPY prisma ./prisma/
