@@ -18,33 +18,53 @@ const useTls = redisUrl.startsWith('rediss');
 
 const KEY_PREFIX = 'ventas:';
 
-// Configuración de reintentos y timeouts para Docker
-const socketConfig = useTls
-  ? {
-    connectTimeout: 10000,
-    keepAlive: 5000,
+// Parse credentials from URL (same as queue.ts)
+let redisConfig: any = {
+  url: redisUrl
+};
 
-    // 3. Estrategia de reconexión robusta
-    reconnectStrategy: (retries: any) => {
-      const delay = Math.min(retries * 100, 3000);
-      console.warn(`⚠️ Redis: Intentando reconectar en ${delay}ms... (Intento ${retries})`);
-      return delay;
-    },
-    tls: true as const,
-    host: redisHost,
-    rejectUnauthorized: false
+try {
+  const url = new URL(redisUrl);
+  // If URL has username or password, use explicit config instead of url
+  if (url.username || url.password) {
+    redisConfig = {
+      socket: {
+        host: url.hostname,
+        port: parseInt(url.port || '6379'),
+        connectTimeout: 10000,
+        keepAlive: 5000,
+        reconnectStrategy: (retries: number) => {
+          const delay = Math.min(retries * 100, 3000);
+          console.warn(`⚠️ Redis: Intentando reconectar en ${delay}ms... (Intento ${retries})`);
+          return delay;
+        },
+        tls: useTls,
+        ...(useTls && { rejectUnauthorized: false })
+      },
+      username: url.username || undefined,
+      password: url.password || undefined
+    };
+  } else {
+    // No credentials, use URL-based connection with socket options
+    redisConfig = {
+      url: redisUrl,
+      socket: {
+        connectTimeout: 10000,
+        reconnectStrategy: (retries: number) => {
+          const delay = Math.min(retries * 100, 3000);
+          console.warn(`⚠️ Redis: Intentando reconectar en ${delay}ms... (Intento ${retries})`);
+          return delay;
+        },
+        tls: useTls,
+        ...(useTls && { rejectUnauthorized: false })
+      }
+    };
   }
-  : {
-    connectTimeout: 10000,
-    reconnectStrategy: (retries: number) => Math.min(retries * 50, 2000),
-    tls: false as const,
-    host: redisHost
-  };
+} catch (e) {
+  console.warn('Error parsing REDIS_URL, using default config:', e);
+}
 
-const client: RedisClientType = createClient({
-  url: redisUrl,
-  socket: socketConfig
-});
+const client: RedisClientType = createClient(redisConfig);
 
 // Estado interno
 let isReady = false;
