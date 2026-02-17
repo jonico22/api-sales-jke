@@ -25,8 +25,18 @@ let redisConfig: any = {
 
 try {
   const url = new URL(redisUrl);
+
+  // Debug logging (mask password)
+  console.log('[Redis Config] Parsing URL...');
+  console.log('[Redis Config] Host:', url.hostname);
+  console.log('[Redis Config] Port:', url.port || '6379');
+  console.log('[Redis Config] Username:', url.username || '(none)');
+  console.log('[Redis Config] Has Password:', !!url.password);
+  console.log('[Redis Config] Using TLS:', useTls);
+
   // If URL has username or password, use explicit config instead of url
   if (url.username || url.password) {
+    console.log('[Redis Config] Using explicit credentials from URL');
     redisConfig = {
       socket: {
         host: url.hostname,
@@ -45,6 +55,7 @@ try {
       password: url.password || undefined
     };
   } else {
+    console.log('[Redis Config] No credentials in URL, using URL-based connection');
     // No credentials, use URL-based connection with socket options
     redisConfig = {
       url: redisUrl,
@@ -61,7 +72,7 @@ try {
     };
   }
 } catch (e) {
-  console.warn('Error parsing REDIS_URL, using default config:', e);
+  console.warn('[Redis Config] Error parsing REDIS_URL, using default config:', e);
 }
 
 const client: RedisClientType = createClient(redisConfig);
