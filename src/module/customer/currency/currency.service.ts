@@ -126,8 +126,8 @@ export const CurrencyService = {
 
     getForSelect: async (societyCode?: string) => {
         const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}`;
-        const cached = await redis.get<any[]>(cacheKey);
-        if (cached) return cached;
+        // const cached = await redis.get<any[]>(cacheKey);
+        // if (cached) return cached;
 
         const whereClause: any = { isActive: true };
 

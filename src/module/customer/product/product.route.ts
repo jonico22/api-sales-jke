@@ -36,6 +36,8 @@ const router = Router();
  */
 router.get('/', ProductController.getAll);
 
+router.get('/best-sellers', ProductController.getBestSellers);
+
 /**
  * @openapi
  * /products/select:
@@ -61,6 +63,10 @@ router.get('/created-by-users', ProductController.getCreatedByUsers);
 // Endpoint para obtener usuarios únicos que han actualizado productos
 router.get('/updated-by-users', ProductController.getUpdatedByUsers);
 
+router.get('/brands', ProductController.getUniqueBrands);
+router.get('/colors', ProductController.getUniqueColors);
+
+// Force reload
 router.get('/select', ProductController.getForSelect);
 
 /**

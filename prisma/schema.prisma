@@ -215,6 +215,8 @@ model Society {
 
   bussinessPartners BussinessPartner[]
 
+  favorites Favorite[]
+
   // Configuración Regional
   mainCurrencyId String?
   mainCurrency   Currency? @relation("SocietyMainCurrency", fields: [mainCurrencyId], references: [id])
@@ -288,6 +290,9 @@ model Product {
   categoryId String
   category   Category @relation(fields: [categoryId], references: [id])
 
+  // [NEW] Metrics
+  salesCount Int @default(0) // Contador de ventas totales
+
   BranchOfficeProduct BranchOfficeProduct[]
 
   PurchaseDetail PurchaseDetail[]
@@ -298,12 +303,16 @@ model Product {
 
   DeliveredConsignmentAgreement DeliveredConsignmentAgreement[]
   inventoryTransactions         InventoryTransaction[]
+
+  favorites Favorite[]
+
+  @@unique([societyId, code])
 }
 
 model Category {
   id          String    @id @default(uuid())
   name        String
-  code        String    @unique
+  code        String
   description String?
   products    Product[] // Relación uno a muchos con productos
   societyId   String
@@ -314,6 +323,22 @@ model Category {
   updatedAt   DateTime  @updatedAt
   createdBy   String?
   updatedBy   String?
+
+  @@unique([societyId, code])
+}
+
+model Favorite {
+  id        String @id @default(uuid())
+  productId String
+  userId    String // ID del usuario (puede ser BusinessPartner o Usuario del sistema)
+  societyId String
+
+  createdAt DateTime @default(now())
+
+  product Product @relation(fields: [productId], references: [id])
+  society Society @relation(fields: [societyId], references: [id])
+
+  @@unique([productId, userId, societyId]) // Evitar duplicados por usuario/producto/sociedad
 }
 
 model UnitOfMeasure {

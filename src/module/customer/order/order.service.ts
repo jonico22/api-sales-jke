@@ -308,6 +308,14 @@ export const OrderService = {
             referenceType: 'ORDER',
             documentNumber: newOrder.orderCode
           }, tx);
+
+          // [NEW] Increment Sales Count
+          await tx.product.update({
+            where: { id: item.productId },
+            data: {
+              salesCount: { increment: item.quantity }
+            }
+          });
         }
       }
 
@@ -559,6 +567,18 @@ export const OrderService = {
             item.quantity,
             tx
           );
+        }
+      }
+
+      // [NEW] D. ANY -> COMPLETED: Increment Sales Count
+      if (isCompleting) {
+        for (const item of updated.orderItems) {
+          await tx.product.update({
+            where: { id: item.productId },
+            data: {
+              salesCount: { increment: item.quantity }
+            }
+          });
         }
       }
 

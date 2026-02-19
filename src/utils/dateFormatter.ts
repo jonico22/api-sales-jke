@@ -97,3 +97,23 @@ export const convertLimaDateRangeToUTC = (from?: string, to?: string) => {
     return result;
 };
 
+/**
+ * Obtiene el primer día del mes actual en hora de Lima
+ */
+export const getFirstDayOfCurrentMonthLima = (): Date => {
+    const now = new Date();
+    // Crear fecha en UTC que corresponde a la hora actual en Lima
+    const limaDate = toZonedTime(now, LIMA_TIMEZONE);
+    return new Date(limaDate.getFullYear(), limaDate.getMonth(), 1, 0, 0, 0, 0);
+};
+
+/**
+ * Obtiene el último día del mes actual en hora de Lima
+ */
+export const getLastDayOfCurrentMonthLima = (): Date => {
+    const now = new Date();
+    const limaDate = toZonedTime(now, LIMA_TIMEZONE);
+    // Día 0 del siguiente mes = último día del actual
+    return new Date(limaDate.getFullYear(), limaDate.getMonth() + 1, 0, 23, 59, 59, 999);
+};
+

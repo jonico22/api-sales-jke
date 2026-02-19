@@ -19,6 +19,7 @@ import ProductRoutes from '../module/customer/product/product.route';
 import FileRoutes from '../module/customer/file/file.route';
 import cashShiftRoutes from '@/module/customer/cashShift/cashShift.route';
 import inventoryRoutes from '@/module/inventory/inventory.route';
+import favoriteRoutes from '@/module/customer/product/favorite.route';
 import unitOfMeasureRoutes from '@/module/customer/unit-of-measure/unit-of-measure.route';
 
 const router = Router();
@@ -40,6 +41,7 @@ router.use('/delivered-consignment-agreements', deliveredConsignmentAgreementRou
 router.use('/received-consignment-settlements', receivedConsignmentSettlementRoutes);
 router.use('/bussinesspartners', bussinessPartnerRoutes);
 router.use('/categories', categoryRoutes);
+router.use('/favorites', favoriteRoutes);
 router.use('/cash-shifts', cashShiftRoutes);
 router.use('/inventory', inventoryRoutes);
 router.use('/unit-of-measures', unitOfMeasureRoutes);
@@ -47,5 +49,6 @@ router.use('/unit-of-measures', unitOfMeasureRoutes);
 // Configuración Regional (New)
 router.use('/taxes', taxRoutes);
 router.use('/currencies', currencyRoutes);
+router.use('/dashboard', require('../module/customer/dashboard/dashboard.route').default);
 
 export default router;

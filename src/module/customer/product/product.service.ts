@@ -10,6 +10,7 @@ import {
 import { Product } from '@prisma/client';
 import { formatToLimaTime, convertLimaTimeToUTC, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
 import { redis } from '@/config/redis';
+import { publishRealtimeUpdate } from '@/config/event-publisher';
 
 // Tipos inferidos de los schemas
 type CreateProductInput = z.infer<typeof createProductSchema>['body'];
@@ -43,6 +44,7 @@ export interface ProductFilters {
   updatedAtFrom?: string;
   updatedAtTo?: string;
   color?: string;
+  brand?: string;
 }
 
 export const ProductService = {
@@ -83,6 +85,7 @@ export const ProductService = {
       filters?.updatedAtFrom || 'all',
       filters?.updatedAtTo || 'all',
       filters?.color || 'all',
+      filters?.brand || 'all',
       page,
       limit,
       sortBy,
@@ -139,6 +142,11 @@ export const ProductService = {
     // Filtro por isActive
     if (filters?.isActive !== undefined) {
       whereClause.isActive = filters.isActive;
+    }
+
+    // Filtro por brand
+    if (filters?.brand) {
+      whereClause.brand = { contains: filters.brand, mode: 'insensitive' };
     }
 
     // Filtro por color
@@ -253,6 +261,7 @@ export const ProductService = {
           image: true,
           color: true,
           colorCode: true,
+          salesCount: true,
         },
       }),
       prisma.product.count({ where: whereClause }),
@@ -279,6 +288,40 @@ export const ProductService = {
     await redis.set(cacheKey, result, CACHE_TTL_LIST);
 
     return result;
+  },
+
+  getBestSellers: async (limit: number = 10, societyId?: string) => {
+    const whereClause: any = { isDeleted: false, isActive: true };
+
+    if (societyId) {
+      // Check if it's a code or ID
+      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
+      if (!isUuid) {
+        const society = await prisma.society.findUnique({ where: { code: societyId } });
+        if (society) whereClause.societyId = society.id;
+        else return []; // Early return if society code invalid
+      } else {
+        whereClause.societyId = societyId;
+      }
+    }
+
+    // Cache key
+    const cacheKey = `products:best_sellers:${limit}:${societyId || 'all'}`;
+    const cached = await redis.get<Product[]>(cacheKey);
+    if (cached) return cached;
+
+    const products = await prisma.product.findMany({
+      where: whereClause,
+      orderBy: { salesCount: 'desc' },
+      take: limit,
+      include: {
+        category: { select: { id: true, name: true } },
+        image: { select: { path: true } } // Assuming structure or just path
+      }
+    });
+
+    await redis.set(cacheKey, products, 300); // 5 min cache
+    return products;
   },
 
   /**
@@ -387,6 +430,73 @@ export const ProductService = {
   },
 
   /**
+   * Obtener lista única de marcas
+   */
+  getUniqueBrands: async (societyId?: string): Promise<{ id: string; brand: string }[]> => {
+    const whereClause: any = { isDeleted: false, brand: { not: null } };
+
+    if (societyId) {
+      const society = await prisma.society.findUnique({ where: { code: societyId } });
+      if (society) {
+        whereClause.societyId = society.id;
+      } else {
+        const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
+        if (isUuid) whereClause.societyId = societyId;
+        else return [];
+      }
+    }
+
+    const result = await prisma.product.findMany({
+      where: whereClause,
+      distinct: ['brand'],
+      select: { brand: true },
+      orderBy: { brand: 'asc' }
+    });
+
+    return result
+      .filter((item): item is { brand: string } => typeof item.brand === 'string' && item.brand.length > 0)
+      .map(item => ({
+        id: item.brand,
+        brand: item.brand
+      }));
+  },
+
+  /**
+   * Obtener lista única de colores
+   */
+  getUniqueColors: async (societyId?: string): Promise<{ id: string; color: string; colorCode: string | null }[]> => {
+    const whereClause: any = { isDeleted: false, color: { not: null } };
+
+    if (societyId) {
+      // Logic for Society resolution (duplicated for safety)
+      // Ideally this should be a private helper, but keeping it inline for now
+      const society = await prisma.society.findUnique({ where: { code: societyId } });
+      if (society) {
+        whereClause.societyId = society.id;
+      } else {
+        const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
+        if (isUuid) whereClause.societyId = societyId;
+        else return [];
+      }
+    }
+
+    const result = await prisma.product.findMany({
+      where: whereClause,
+      distinct: ['color'],
+      select: { color: true, colorCode: true },
+      orderBy: { color: 'asc' }
+    });
+
+    return result
+      .filter((item): item is { color: string; colorCode: string | null } => typeof item.color === 'string' && item.color.length > 0)
+      .map(item => ({
+        id: item.color,
+        color: item.color,
+        colorCode: item.colorCode
+      }));
+  },
+
+  /**
    * Crear un nuevo producto e invalidar cache de listas
    */
   create: async (data: CreateProductInput) => {
@@ -454,6 +564,15 @@ export const ProductService = {
     // Invalidar cache de productos (agresivo para asegurar consistencia)
     await redis.deleteKeysByPrefix('products:');
 
+    // [NEW] Realtime Notification
+    if (society.subscriptionId) {
+      await publishRealtimeUpdate(society.subscriptionId, 'PRODUCTO', {
+        action: 'CREATE',
+        id: created.id,
+        name: created.name
+      });
+    }
+
     return created;
   },
 
@@ -483,7 +602,7 @@ export const ProductService = {
       where: { id },
       data: updateData,
       include: {
-        society: { select: { id: true, name: true, code: true } },
+        society: { select: { id: true, name: true, code: true, subscriptionId: true } },
         category: { select: { id: true, name: true, code: true } },
         image: true,
       },
@@ -550,6 +669,15 @@ export const ProductService = {
     // Invalidar todo el cache de productos
     await redis.deleteKeysByPrefix('products:');
 
+    // [NEW] Realtime Notification
+    if (updated.society.subscriptionId) {
+      await publishRealtimeUpdate(updated.society.subscriptionId, 'PRODUCTO', {
+        action: 'UPDATE',
+        id: updated.id,
+        name: updated.name
+      });
+    }
+
     return updated;
   },
 
@@ -564,12 +692,24 @@ export const ProductService = {
         isActive: false,
         updatedBy,
       },
+      include: {
+        society: { select: { subscriptionId: true } }
+      }
     });
 
     // Invalidar todo el cache de productos
     await redis.deleteKeysByPrefix('products:');
     // Also invalidate branch office products in case the user is viewing stock list
     await redis.deleteKeysByPrefix('branch_office_products:');
+
+    // [NEW] Realtime Notification
+    if (deleted.society.subscriptionId) {
+      await publishRealtimeUpdate(deleted.society.subscriptionId, 'PRODUCTO', {
+        action: 'DELETE',
+        id: deleted.id,
+        name: deleted.name
+      });
+    }
 
     return deleted;
   },

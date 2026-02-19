@@ -112,6 +112,10 @@ export const productFiltersSchema = z.object({
       example: 'Rojo',
       description: 'Filtrar por color'
     }),
+    brand: z.string().optional().openapi({
+      example: 'Samsung',
+      description: 'Filtrar por marca'
+    }),
 
     // Filtros de estado
     isActive: z.string().transform(val => val === 'true').optional().openapi({

@@ -53,6 +53,18 @@ export const ProductController = {
     res.json(result);
   },
 
+  getUniqueBrands: async (req: Request, res: Response) => {
+    const societyId = req.query.societyCode as string || req.query.societyId as string;
+    const result = await ProductService.getUniqueBrands(societyId);
+    res.json(result);
+  },
+
+  getUniqueColors: async (req: Request, res: Response) => {
+    const societyId = req.query.societyCode as string || req.query.societyId as string;
+    const result = await ProductService.getUniqueColors(societyId);
+    res.json(result);
+  },
+
   /**
    * Crear un nuevo producto
    */
@@ -100,15 +112,17 @@ export const ProductController = {
    * Eliminar un producto (soft delete)
    */
   delete: async (req: Request, res: Response) => {
-    const parse = productIdSchema.safeParse({ params: req.params });
-    if (!parse.success) {
-      return res.status(400).json(parse.error.format());
-    }
-
-    const result = await ProductService.delete(parse.data.params.id, req.body?.updatedBy);
-    res.json({ message: 'Producto eliminado', data: result });
+    const { params } = productIdSchema.parse({ params: req.params });
+    const result = await ProductService.delete(params.id, req.body?.updatedBy);
+    res.json({ message: 'Product deleted', data: result });
   },
 
+  getBestSellers: async (req: Request, res: Response) => {
+    const limit = req.query.limit ? parseInt(req.query.limit as string) : 10;
+    const societyId = req.query.societyCode as string || req.query.societyId as string;
+    const result = await ProductService.getBestSellers(limit, societyId);
+    res.json(result);
+  },
   /**
    * Obtener productos para select/dropdown (sin paginación)
    */
