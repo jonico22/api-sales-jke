@@ -46,9 +46,6 @@ export const FavoriteService = {
         }
     },
 
-    /**
-     * List favorites for a user
-     */
     getByUser: async (userId: string, societyId?: string) => {
         let whereClause: any = { userId };
 
@@ -63,22 +60,49 @@ export const FavoriteService = {
 
         const favorites = await prisma.favorite.findMany({
             where: whereClause,
-            include: {
+            select: {
+                createdAt: true,
                 product: {
-                    include: {
-                        category: { select: { id: true, name: true } },
-                        image: { select: { path: true } }
+                    select: {
+                        id: true,
+                        name: true,
+                        code: true,
+                        description: true,
+                        price: true,
+                        priceCost: true,
+                        stock: true,
+                        minStock: true,
+                        societyId: true,
+                        categoryId: true,
+                        imageId: true,
+                        isActive: true,
+                        isDeleted: true,
+                        createdAt: true,
+                        createdBy: true,
+                        updatedAt: true,
+                        updatedBy: true,
+                        barcode: true,
+                        brand: true,
+                        unitOfMeasureId: true,
+                        unitOfMeasure: true,
+                        category: { select: { name: true } },
+                        image: true,
+                        color: true,
+                        colorCode: true,
+                        salesCount: true,
                     }
                 }
             },
             orderBy: { createdAt: 'desc' }
         });
 
-        // Return list of products directly or favorite wrapper?
-        // Usually frontend wants the products.
+        const { formatToLimaTime } = await import('@/utils/dateFormatter');
+
         return favorites.map(f => ({
             ...f.product,
-            favoriteAt: f.createdAt
+            createdAt: formatToLimaTime(f.product.createdAt) as any,
+            updatedAt: f.product.updatedAt ? formatToLimaTime(f.product.updatedAt) as any : f.product.updatedAt,
+            favoriteAt: formatToLimaTime(f.createdAt) as any
         }));
     }
 };

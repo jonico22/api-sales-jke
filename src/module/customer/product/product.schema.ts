@@ -148,6 +148,10 @@ export const productFiltersSchema = z.object({
       example: 'true',
       description: 'Productos con stock bajo (stock <= minStock)'
     }),
+    stockStatus: z.enum(['all', 'available', 'low', 'out']).optional().openapi({
+      example: 'available',
+      description: 'Estado de stock: all (todos) | available (disponible, stock > 0) | low (bajo stock) | out (agotado, stock = 0)'
+    }),
     stockFrom: z.string().transform(val => parseInt(val)).optional().openapi({
       example: '10',
       description: 'Stock mínimo'

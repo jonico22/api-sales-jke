@@ -5,12 +5,12 @@ import { z } from 'zod';
 
 const toggleFavoriteSchema = z.object({
     productId: z.string().uuid(),
-    societyId: z.string().min(1) // Can be code or UUID
+    societyId: z.string().min(1).optional()
 });
 
 export const FavoriteController = {
     toggle: async (req: Request, res: Response) => {
-        const parse = toggleFavoriteSchema.safeParse(req.body);
+        const parse = toggleFavoriteSchema.safeParse(req.body || {});
         if (!parse.success) return res.status(400).json(parse.error.format());
 
         const userId = req.body?.user?.id || req.headers['x-user-id'] as string; // Adapt to your auth system
