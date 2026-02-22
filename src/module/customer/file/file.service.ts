@@ -9,7 +9,8 @@ import {
     PaginationQuery,
 } from '@/utils/pagination';
 import { File } from '@prisma/client';
-import { convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
+import { formatToLimaTime, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
+import { StorageService } from './storage.service';
 
 type CreateFileInput = z.infer<typeof createFileSchema>['body'];
 type UpdateFileInput = z.infer<typeof updateFileSchema>['body'];
@@ -26,7 +27,7 @@ export const FileService = {
     async getAll(
         paginationQuery?: PaginationQuery,
         filters?: FileFilters
-    ): Promise<PaginatedResult<File>> {
+    ): Promise<PaginatedResult<any>> {
         const page = paginationQuery?.page ?? 1;
         const limit = paginationQuery?.limit ?? 10;
         const sortBy = paginationQuery?.sortBy ?? 'uploadedAt';
@@ -41,6 +42,8 @@ export const FileService = {
             filters?.folder || 'all',
             filters?.mimeType || 'all',
             filters?.storageType || 'all',
+            filters?.category || 'all',
+            filters?.excludeCategory || 'all',
             filters?.uploadedAtFrom || 'all',
             filters?.uploadedAtTo || 'all',
             page,
@@ -94,6 +97,14 @@ export const FileService = {
             whereClause.storageType = filters.storageType;
         }
 
+        if (filters?.category) {
+            whereClause.category = filters.category;
+        }
+
+        if (filters?.excludeCategory) {
+            whereClause.category = { not: filters.excludeCategory };
+        }
+
         if (filters?.uploadedAtFrom || filters?.uploadedAtTo) {
             whereClause.uploadedAt = {};
             const dateRange = convertLimaDateRangeToUTC(filters.uploadedAtFrom, filters.uploadedAtTo);
@@ -111,7 +122,13 @@ export const FileService = {
             prisma.file.count({ where: whereClause }),
         ]);
 
-        const result = buildPaginatedResult(data, page, limit, total);
+        const formattedData = data.map(item => ({
+            ...item,
+            uploadedAt: formatToLimaTime(item.uploadedAt),
+            expiresAt: item.expiresAt ? formatToLimaTime(item.expiresAt) : null,
+        }));
+
+        const result = buildPaginatedResult(formattedData, page, limit, total);
 
         // 3. Set Cache
         await redis.set(cacheKey, result, CACHE_TTL_LIST);
@@ -122,7 +139,7 @@ export const FileService = {
     /**
      * Obtener archivo por ID
      */
-    async getById(id: string) {
+    async getById(id: string): Promise<any> {
         const cacheKey = `${CACHE_PREFIX}${id}`;
 
         // 1. Try Cache
@@ -134,9 +151,17 @@ export const FileService = {
             where: { id },
         });
 
-        if (file) await redis.set(cacheKey, file, CACHE_TTL_SINGLE);
+        if (file) {
+            const formatted = {
+                ...file,
+                uploadedAt: formatToLimaTime(file.uploadedAt),
+                expiresAt: file.expiresAt ? formatToLimaTime(file.expiresAt) : null,
+            };
+            await redis.set(cacheKey, formatted, CACHE_TTL_SINGLE);
+            return formatted;
+        }
 
-        return file;
+        return null;
     },
 
     /**
@@ -183,6 +208,17 @@ export const FileService = {
         const deleted = await prisma.file.delete({
             where: { id },
         });
+
+        // Physical Delete from R2
+        if (deleted.key) {
+            try {
+                await StorageService.deleteFile(deleted.key);
+                console.log(`[FileService] Archivo físico eliminado de storage: ${deleted.key}`);
+            } catch (error) {
+                console.error(`[FileService] Error eliminando archivo físico de storage (${deleted.key}):`, error);
+                // No lanzamos error para no romper el flujo si el archivo ya no existía en R2
+            }
+        }
 
         // Invalidate Cache
         await redis.del(`${CACHE_PREFIX}${id}`);

@@ -69,12 +69,13 @@ export type UpdateFileInput = z.infer<typeof updateFileSchema>['body'];
 // Schema para FILTROS
 export const fileFiltersSchema = z.object({
     query: z.object({
-        societyId: z.string().uuid().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000' }),
+        societyId: z.string().optional().openapi({ example: 'SOC-12345 o 550e8400-e29b-41d4-a716-446655440000' }),
         search: z.string().optional().openapi({ example: 'invoice', description: 'Buscar por nombre' }),
         folder: z.string().optional().openapi({ example: 'ventas-2024', description: 'Filtrar por carpeta (prefijo de key)' }),
         mimeType: z.string().optional().openapi({ example: 'application/pdf' }),
         storageType: StorageTypeEnum.optional().openapi({ example: 'LOCAL' }),
         category: FileCategoryEnum.optional(), // Filtro por categoría
+        excludeCategory: FileCategoryEnum.optional(), // Excluir categoría
         uploadedAtFrom: z.string().optional().openapi({ example: '2024-01-01' }),
         uploadedAtTo: z.string().optional().openapi({ example: '2024-12-31' }),
     })
