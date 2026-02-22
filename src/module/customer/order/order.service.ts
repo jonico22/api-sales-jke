@@ -364,6 +364,7 @@ export const OrderService = {
 
     // Invalidate Cache
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await redis.del(`dashboard:stats:${society.id}`); // Invalidate Dashboard Stats
     // Invalidate Product Cache (Stock Changed)
     await redis.deleteKeysByPrefix('products:');
     await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
@@ -387,7 +388,6 @@ export const OrderService = {
     // Construir clave de cache única
     const societyCode = filters?.societyCode || filters?.societyId;
     const cacheKeyParts = [
-      CACHE_PREFIX,
       'list',
       societyCode || 'all',
       filters?.branchId || 'all',
@@ -404,7 +404,7 @@ export const OrderService = {
       sortBy,
       sortOrder
     ];
-    const cacheKey = cacheKeyParts.join(':');
+    const cacheKey = `${CACHE_PREFIX}${cacheKeyParts.join(':')}`;
 
     // 1. Cache Check
     const cached = await redis.get<PaginatedResult<Order & { totalProducts: number }>>(cacheKey);
@@ -602,6 +602,8 @@ export const OrderService = {
           const partnerName = fullOrder.partner.companyName ||
             `${fullOrder.partner.firstName || ''} ${fullOrder.partner.lastName || ''}`.trim();
 
+          console.log('[OrderService] 🟢 Intentando publicar notificación (CREATE) para orden:', fullOrder.orderCode);
+
           await publishRealtimeUpdate(
             fullOrder.society.subscriptionId,
             'VENTA', // Entity Type
@@ -637,6 +639,7 @@ export const OrderService = {
 
     await redis.del(`${CACHE_PREFIX}${id}`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await redis.del(`dashboard:stats:${result.societyId}`); // Invalidate Dashboard Stats
     // Invalidate Product Cache (Stock Changed)
     await redis.deleteKeysByPrefix('products:');
     await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
@@ -685,6 +688,7 @@ export const OrderService = {
 
     await redis.del(`${CACHE_PREFIX}${id}`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await redis.del(`dashboard:stats:${result.societyId}`); // Invalidate Dashboard Stats
     // Invalidate Product Cache (Stock Changed)
     await redis.deleteKeysByPrefix('products:');
     await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache

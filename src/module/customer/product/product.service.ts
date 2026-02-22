@@ -67,7 +67,6 @@ export const ProductService = {
     const categoryCode = filters?.categoryCode; // keep code only
     const categoryId = filters?.categoryId;
     const cacheKeyParts = [
-      CACHE_PREFIX,
       'list',
       societyCode || 'all',
       categoryCode || 'all',
@@ -95,7 +94,7 @@ export const ProductService = {
       sortBy,
       sortOrder
     ];
-    const cacheKey = cacheKeyParts.join(':');
+    const cacheKey = `${CACHE_PREFIX}${cacheKeyParts.join(':')}`;
 
     // 1. Intentar obtener del cache
     const cached = await redis.get<PaginatedResult<Product>>(cacheKey);
@@ -578,6 +577,7 @@ export const ProductService = {
 
     // Invalidar cache de productos (agresivo para asegurar consistencia)
     await redis.deleteKeysByPrefix('products:');
+    await redis.del(`dashboard:stats:${society.id}`); // Invalida el dashboard de la sociedad
 
     // [NEW] Realtime Notification
     if (society.subscriptionId) {
@@ -683,6 +683,7 @@ export const ProductService = {
 
     // Invalidar todo el cache de productos
     await redis.deleteKeysByPrefix('products:');
+    await redis.del(`dashboard:stats:${updated.societyId}`); // Invalida el dashboard de la sociedad
 
     // [NEW] Realtime Notification
     if (updated.society.subscriptionId) {
@@ -716,6 +717,7 @@ export const ProductService = {
     await redis.deleteKeysByPrefix('products:');
     // Also invalidate branch office products in case the user is viewing stock list
     await redis.deleteKeysByPrefix('branch_office_products:');
+    await redis.del(`dashboard:stats:${deleted.societyId}`); // Invalida el dashboard de la sociedad
 
     // [NEW] Realtime Notification
     if (deleted.society.subscriptionId) {
