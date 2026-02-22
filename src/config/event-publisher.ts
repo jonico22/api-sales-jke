@@ -92,7 +92,7 @@ export const publishRealtimeUpdate = async (
 
     const payload = JSON.stringify({
         action: 'UPDATE_TABLE',
-        subscriptionId,
+        businessId: subscriptionId,
         data: { entity: entityType, ...data }
     });
 

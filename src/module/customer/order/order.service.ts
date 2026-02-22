@@ -602,7 +602,7 @@ export const OrderService = {
           const partnerName = fullOrder.partner.companyName ||
             `${fullOrder.partner.firstName || ''} ${fullOrder.partner.lastName || ''}`.trim();
 
-          console.log('[OrderService] 🟢 Intentando publicar notificación (CREATE) para orden:', fullOrder.orderCode);
+          console.log('[OrderService] 🟢 Intentando publicar notificación (UPDATE) para orden:', fullOrder.society.subscriptionId);
 
           await publishRealtimeUpdate(
             fullOrder.society.subscriptionId,
