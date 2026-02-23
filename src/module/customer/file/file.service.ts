@@ -27,7 +27,7 @@ export const FileService = {
     async getAll(
         paginationQuery?: PaginationQuery,
         filters?: FileFilters
-    ): Promise<PaginatedResult<any>> {
+    ): Promise<PaginatedResult<any> & { storageInfo?: { limitBytes: number; usedBytes: number } | null }> {
         const page = paginationQuery?.page ?? 1;
         const limit = paginationQuery?.limit ?? 10;
         const sortBy = paginationQuery?.sortBy ?? 'uploadedAt';
@@ -35,7 +35,6 @@ export const FileService = {
 
         // Cache Key
         const cacheKeyParts = [
-            CACHE_PREFIX,
             'list',
             filters?.societyId || 'all',
             filters?.search || 'all',
@@ -51,16 +50,17 @@ export const FileService = {
             sortBy,
             sortOrder
         ];
-        const cacheKey = cacheKeyParts.join(':');
+        const cacheKey = `${CACHE_PREFIX}${cacheKeyParts.join(':')}`;
 
         // 1. Try Cache
-        const cached = await redis.get<PaginatedResult<File>>(cacheKey);
+        const cached = await redis.get<PaginatedResult<any> & { storageInfo?: any }>(cacheKey);
         if (cached) return cached;
 
         // 2. Database Query
         const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
 
         const whereClause: any = {};
+        let targetSocietyId: string | null = null;
 
         // Resolve Society Code/ID (Pattern from CategoryService/OrderService)
         const societyCode = filters?.societyId; // En FileFilters solo tenemos societyId, que puede ser code o UUID
@@ -68,17 +68,18 @@ export const FileService = {
         if (societyCode) {
             const society = await prisma.society.findUnique({ where: { code: societyCode } });
             if (society) {
-                whereClause.societyId = society.id;
+                targetSocietyId = society.id;
             } else {
                 // If code looks like UUID, try as ID as fallback
                 const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
                 if (isUuid) {
-                    whereClause.societyId = societyCode;
+                    targetSocietyId = societyCode;
                 } else {
                     // Return guaranteed empty result if code invalid
-                    return buildPaginatedResult([], page, limit, 0);
+                    return Object.assign(buildPaginatedResult([], page, limit, 0), { storageInfo: null });
                 }
             }
+            whereClause.societyId = targetSocietyId;
         }
 
         if (filters?.search) {
@@ -130,10 +131,34 @@ export const FileService = {
 
         const result = buildPaginatedResult(formattedData, page, limit, total);
 
-        // 3. Set Cache
-        await redis.set(cacheKey, result, CACHE_TTL_LIST);
+        // 3. Obtener info de Almacenamiento (Si tenemos Society Id)
+        let storageInfo = null;
+        if (targetSocietyId) {
+            const [society, currentUsage] = await Promise.all([
+                prisma.society.findUnique({
+                    where: { id: targetSocietyId },
+                    select: { storageLimit: true }
+                }),
+                prisma.file.aggregate({
+                    where: { societyId: targetSocietyId, category: 'GENERAL' },
+                    _sum: { size: true }
+                })
+            ]);
 
-        return result;
+            if (society) {
+                storageInfo = {
+                    limitBytes: Number(society.storageLimit),
+                    usedBytes: currentUsage._sum.size || 0
+                };
+            }
+        }
+
+        const finalResult = { ...result, storageInfo };
+
+        // 4. Set Cache
+        await redis.set(cacheKey, finalResult, CACHE_TTL_LIST);
+
+        return finalResult;
     },
 
     /**
@@ -205,6 +230,37 @@ export const FileService = {
      * Eliminar archivo (Hard Delete, NO soporta Soft Delete por schema)
      */
     async delete(id: string) {
+        // 0. Validar relaciones antes de eliminar
+        const fileWithRelations = await prisma.file.findUnique({
+            where: { id },
+            include: {
+                societyLogo: { select: { id: true } },
+                _count: {
+                    select: {
+                        Product: true,
+                        orderPayments: true,
+                        receiptPdf: true,
+                        receiptXml: true
+                    }
+                }
+            }
+        });
+
+        if (!fileWithRelations) {
+            throw new Error('Archivo no encontrado');
+        }
+
+        const counts = fileWithRelations._count;
+        const relations = [];
+        if (counts.Product > 0) relations.push('Productos');
+        if (counts.orderPayments > 0) relations.push('Pagos de Órdenes');
+        if (fileWithRelations.societyLogo) relations.push('Logo de Sociedad');
+        if (counts.receiptPdf > 0 || counts.receiptXml > 0) relations.push('Recibos Electrónicos');
+
+        if (relations.length > 0) {
+            throw new Error(`No se puede eliminar el archivo porque está vinculado a: ${relations.join(', ')}. Por favor, remueva las relaciones antes de eliminar.`);
+        }
+
         const deleted = await prisma.file.delete({
             where: { id },
         });

@@ -31,28 +31,34 @@ export const FileController = {
         }
 
         const category = (req.query.category as string) || 'GENERAL';
-        // Folder logic: 
-        // GENERAL -> societies/{id}/files/
-        // REPORT  -> societies/{id}/reports/ (so R2 lifecycle can delete it later)
-        const folder = category === 'REPORT'
-            ? `societies/${societyId}/reports`
-            : `societies/${societyId}/files`;
-
         try {
-            // 0. Validar Límite de Almacenamiento (Solo para GENERAL)
-            if (category !== 'REPORT') {
-                const society = await prisma.society.findUnique({
-                    where: { id: societyId },
-                    select: { storageLimit: true }
-                });
-
-                if (!society) {
-                    return res.status(404).json({ message: 'Sociedad no encontrada' });
+            // 0. Resolver Sociedad (por ID o Código)
+            let society = await prisma.society.findUnique({ where: { code: societyId } });
+            if (!society) {
+                const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
+                if (isUuid) {
+                    society = await prisma.society.findUnique({ where: { id: societyId } });
                 }
+            }
 
+            if (!society) {
+                return res.status(404).json({ message: 'Sociedad no encontrada' });
+            }
+
+            const targetSocietyId = society.id;
+
+            // Folder logic: 
+            // GENERAL -> societies/{id}/files/
+            // REPORT  -> societies/{id}/reports/ (so R2 lifecycle can delete it later)
+            const folder = category === 'REPORT'
+                ? `societies/${targetSocietyId}/reports`
+                : `societies/${targetSocietyId}/files`;
+
+            // 1. Validar Límite de Almacenamiento (Solo para GENERAL)
+            if (category !== 'REPORT') {
                 const currentUsage = await prisma.file.aggregate({
                     where: {
-                        societyId,
+                        societyId: targetSocietyId,
                         category: 'GENERAL' // Solo contamos archivos que NO son reportes
                     },
                     _sum: { size: true }
@@ -89,7 +95,7 @@ export const FileController = {
                 mimeType: req.file.mimetype,
                 size: req.file.size,
                 storageType: 'EXTERNAL',
-                societyId: societyId,
+                societyId: targetSocietyId,
                 category: category as any,
                 expiresAt: expiresAt
             });

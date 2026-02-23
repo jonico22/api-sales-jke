@@ -73,10 +73,10 @@ export const reportWorker = new Worker('reports', async job => {
         const uploadResult = await StorageService.uploadFile(
             buffer,
             fileName,
-            `temp/${userId}`, // Carpeta temp para regla de ciclo de vida
-            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+            `temp/${userId}/`, // Carpeta temp para regla de ciclo de vida
+            'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            true // Preservar fileName original en R2
         );
-        console.log(`[ReportWorker] Subida a R2 exitosa. URL: ${uploadResult.url}`);
         console.log(`[ReportWorker] Subida a R2 exitosa. URL: ${uploadResult.url}, Key: ${uploadResult.key}`);
 
         // 3. Crear Registro de Archivo (Metadata)

@@ -253,6 +253,7 @@ export const SocietyService = {
         backupFrequency: true,
         dataRetentionDays: true,
         uiConfig: true,
+        storageLimit: true,
         mainCurrency: {
           select: { id: true, name: true, code: true, symbol: true }
         },
@@ -275,12 +276,13 @@ export const SocietyService = {
   },
 
   update: async (code: string, data: any) => {
-    const { taxIds, mainCurrencyId, ...rest } = data;
+    const { taxIds, mainCurrencyId, logoId, ...rest } = data;
 
     const updated = await prisma.society.update({
       where: { code },
       data: {
         ...rest,
+        ...(logoId && { logo: { connect: { id: logoId } } }), // Usar sintaxis relacional imperativa
         ...(mainCurrencyId && { mainCurrency: { connect: { id: mainCurrencyId } } }),
         ...(taxIds && {
           taxes: { set: taxIds.map((id: string) => ({ id })) }
@@ -293,6 +295,7 @@ export const SocietyService = {
         name: true,
         code: true,
         isActive: true,
+        storageLimit: true,
         mainCurrency: {
           select: { id: true, name: true, code: true, symbol: true }
         },
@@ -306,7 +309,8 @@ export const SocietyService = {
     });
 
     // Invalidate Cache
-    await redis.del(`${CACHE_PREFIX}${code}`); // Invalidate single
+    await redis.del(`${CACHE_PREFIX}${code}`); // Invalidate single by code
+    await redis.del(`${CACHE_PREFIX}${updated.id}`); // Invalidate single by ID
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
 

@@ -14,9 +14,16 @@ export const StorageService = {
      * @param folder Carpeta destino (opcional)
      * @param mimeType Tipo MIME
      */
-    async uploadFile(file: Buffer, originalName: string, folder: string = 'uploads', mimeType: string) {
-        const extension = path.extname(originalName);
-        const fileName = `${uuidv4()}${extension}`;
+    async uploadFile(file: Buffer, originalName: string, folder: string = 'uploads', mimeType: string, useOriginalName: boolean = false) {
+        let fileName: string;
+
+        if (useOriginalName) {
+            fileName = originalName;
+        } else {
+            const extension = path.extname(originalName);
+            fileName = `${uuidv4()}${extension}`;
+        }
+
         const key = `${folder}/${fileName}`;
 
         try {
