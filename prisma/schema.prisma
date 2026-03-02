@@ -247,6 +247,15 @@ model Society {
 
   // Storage
   storageLimit BigInt @default(157286400) // 150MB in bytes (150 * 1024 * 1024)
+
+  // System Limits
+  maxUsers    Int @default(3)
+  maxProducts Int @default(100)
+
+  // Current Usage Metrics
+  usedStorage   BigInt @default(0) // Total en bytes ocupados
+  totalProducts Int    @default(0) // Cantidad actual de productos registrados
+  totalUsers    Int    @default(0) // Cantidad actual de usuarios (sincronizado desde servicio externo)
 }
 
 enum Frequency {

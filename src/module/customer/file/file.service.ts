@@ -200,6 +200,14 @@ export const FileService = {
             },
         });
 
+        // Actualizar storage usado (solo agregarlo si tiene size)
+        if (created.size) {
+            await prisma.society.update({
+                where: { id: created.societyId },
+                data: { usedStorage: { increment: created.size } }
+            });
+        }
+
         // Invalidate List Cache
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
         // Invalidate Category Cache (as per requirement)
@@ -264,6 +272,14 @@ export const FileService = {
         const deleted = await prisma.file.delete({
             where: { id },
         });
+
+        // Disminuir storage usado
+        if (deleted.size) {
+            await prisma.society.update({
+                where: { id: deleted.societyId },
+                data: { usedStorage: { decrement: deleted.size } }
+            });
+        }
 
         // Physical Delete from R2
         if (deleted.key) {

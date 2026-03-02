@@ -19,6 +19,14 @@ export const createSocietySchema = z.object({
   dataRetentionDays: z.number().int().min(1).optional(),
   uiConfig: z.record(z.string(), z.any()).optional(),
 
+  // Limits Configuration
+  maxUsers: z.number().int().min(1).optional(),
+  maxProducts: z.number().int().min(1).optional(),
+  storageLimit: z.number().int().min(0).optional(),
+
+  // Current Usage Metrics (Updatable by external services)
+  totalUsers: z.number().int().min(0).optional(),
+
   // Legal Entity Info (Optional)
   ruc: z.string().optional(),
   businessName: z.string().optional(),
@@ -44,7 +52,15 @@ export const updateSocietySchema = z.object({
   salesNotificationFrequency: z.nativeEnum(Frequency).optional(),
   backupFrequency: z.nativeEnum(Frequency).optional(),
   dataRetentionDays: z.number().int().min(1).optional(),
-  uiConfig: z.record(z.string(), z.any()).optional()
+  uiConfig: z.record(z.string(), z.any()).optional(),
+
+  // Limits Configuration
+  maxUsers: z.number().int().min(1).optional(),
+  maxProducts: z.number().int().min(1).optional(),
+  storageLimit: z.number().int().min(0).optional(),
+
+  // Current Usage Metrics (Updatable by external services)
+  totalUsers: z.number().int().min(0).optional(),
 });
 
 export const societyIdSchema = z.object({

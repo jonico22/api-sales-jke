@@ -575,6 +575,12 @@ export const ProductService = {
       });
     }
 
+    // Actualizar cantidad total de productos
+    await prisma.society.update({
+      where: { id: society.id },
+      data: { totalProducts: { increment: 1 } }
+    });
+
     // Invalidar cache de productos (agresivo para asegurar consistencia)
     await redis.deleteKeysByPrefix('products:');
     await redis.del(`dashboard:stats:${society.id}`); // Invalida el dashboard de la sociedad
@@ -711,6 +717,12 @@ export const ProductService = {
       include: {
         society: { select: { subscriptionId: true } }
       }
+    });
+
+    // Disminuir cantidad total de productos (soft delete)
+    await prisma.society.update({
+      where: { id: deleted.societyId },
+      data: { totalProducts: { decrement: 1 } }
     });
 
     // Invalidar todo el cache de productos

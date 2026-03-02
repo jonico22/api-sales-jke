@@ -254,6 +254,11 @@ export const SocietyService = {
         dataRetentionDays: true,
         uiConfig: true,
         storageLimit: true,
+        maxUsers: true,
+        maxProducts: true,
+        usedStorage: true,
+        totalProducts: true,
+        totalUsers: true,
         mainCurrency: {
           select: { id: true, name: true, code: true, symbol: true }
         },
@@ -296,6 +301,8 @@ export const SocietyService = {
         code: true,
         isActive: true,
         storageLimit: true,
+        maxUsers: true,
+        maxProducts: true,
         mainCurrency: {
           select: { id: true, name: true, code: true, symbol: true }
         },
