@@ -54,7 +54,7 @@ export const FileController = {
                 ? `societies/${targetSocietyId}/reports`
                 : `societies/${targetSocietyId}/files`;
 
-            // 1. Validar Límite de Almacenamiento (Solo para GENERAL)
+            // Validar Límite de Almacenamiento (Solo para GENERAL)
             if (category !== 'REPORT') {
                 const currentUsage = await prisma.file.aggregate({
                     where: {
@@ -63,9 +63,12 @@ export const FileController = {
                     },
                     _sum: { size: true }
                 });
-
                 const totalSize = (currentUsage._sum.size || 0) + req.file.size;
-                const limit = Number(society.storageLimit);
+                // Fallback to 150MB (157286400) if limit is 0 (due to older records without default)
+                let limit = Number(society.storageLimit);
+                if (!limit || limit === 0) {
+                    limit = 157286400;
+                }
 
                 if (totalSize > limit) {
                     const limitMB = (limit / (1024 * 1024)).toFixed(2);

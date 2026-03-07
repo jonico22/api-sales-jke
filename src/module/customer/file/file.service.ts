@@ -146,8 +146,12 @@ export const FileService = {
             ]);
 
             if (society) {
+                let limit = Number(society.storageLimit);
+                if (!limit || limit === 0) {
+                    limit = 157286400; // Fallback 150MB
+                }
                 storageInfo = {
-                    limitBytes: Number(society.storageLimit),
+                    limitBytes: limit,
                     usedBytes: currentUsage._sum.size || 0
                 };
             }
@@ -202,10 +206,16 @@ export const FileService = {
 
         // Actualizar storage usado (solo agregarlo si tiene size)
         if (created.size) {
-            await prisma.society.update({
+            const updatedSociety = await prisma.society.update({
                 where: { id: created.societyId },
                 data: { usedStorage: { increment: created.size } }
             });
+
+            // Invalidate Society Cache
+            await redis.del(`societies:${updatedSociety.id}`);
+            await redis.del(`societies:${updatedSociety.code}`);
+            await redis.deleteKeysByPrefix(`societies:list:`);
+            await redis.deleteKeysByPrefix(`societies:select:`);
         }
 
         // Invalidate List Cache
@@ -275,10 +285,16 @@ export const FileService = {
 
         // Disminuir storage usado
         if (deleted.size) {
-            await prisma.society.update({
+            const updatedSociety = await prisma.society.update({
                 where: { id: deleted.societyId },
                 data: { usedStorage: { decrement: deleted.size } }
             });
+
+            // Invalidate Society Cache
+            await redis.del(`societies:${updatedSociety.id}`);
+            await redis.del(`societies:${updatedSociety.code}`);
+            await redis.deleteKeysByPrefix(`societies:list:`);
+            await redis.deleteKeysByPrefix(`societies:select:`);
         }
 
         // Physical Delete from R2
