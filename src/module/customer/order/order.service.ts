@@ -343,6 +343,7 @@ export const OrderService = {
             paidAt: new Date()
           }
         );
+        await publishRealtimeUpdate(society.subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' });
 
         // B. Visual Notification (Toast)
         await publishNotification({
@@ -364,7 +365,7 @@ export const OrderService = {
 
     // Invalidate Cache
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.del(`dashboard:stats:${society.id}`); // Invalidate Dashboard Stats
+    await Promise.all(['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${society.id}`))); // Invalidate Dashboard Stats
     // Invalidate Product Cache (Stock Changed)
     await redis.deleteKeysByPrefix('products:');
     await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
@@ -616,6 +617,7 @@ export const OrderService = {
               paidAt: new Date() // Current time as payment/completion time
             }
           );
+          await publishRealtimeUpdate(fullOrder.society.subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' });
 
           // 2. Notificación Visual (Toast)
           await publishNotification({
@@ -639,7 +641,7 @@ export const OrderService = {
 
     await redis.del(`${CACHE_PREFIX}${id}`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.del(`dashboard:stats:${result.societyId}`); // Invalidate Dashboard Stats
+    await Promise.all(['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${result.societyId}`))); // Invalidate Dashboard Stats
     // Invalidate Product Cache (Stock Changed)
     await redis.deleteKeysByPrefix('products:');
     await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
@@ -688,7 +690,7 @@ export const OrderService = {
 
     await redis.del(`${CACHE_PREFIX}${id}`);
     await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.del(`dashboard:stats:${result.societyId}`); // Invalidate Dashboard Stats
+    await Promise.all(['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${result.societyId}`))); // Invalidate Dashboard Stats
     // Invalidate Product Cache (Stock Changed)
     await redis.deleteKeysByPrefix('products:');
     await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache

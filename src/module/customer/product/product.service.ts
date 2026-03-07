@@ -583,15 +583,17 @@ export const ProductService = {
 
     // Invalidar cache de productos (agresivo para asegurar consistencia)
     await redis.deleteKeysByPrefix('products:');
-    await redis.del(`dashboard:stats:${society.id}`); // Invalida el dashboard de la sociedad
+    await Promise.all(['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${society.id}`)));
 
     // [NEW] Realtime Notification
     if (society.subscriptionId) {
       await publishRealtimeUpdate(society.subscriptionId, 'PRODUCTO', {
-        action: 'CREATE',
         id: created.id,
-        name: created.name
+        action: 'CREATED',
+        name: created.name,
+        code: created.code
       });
+      await publishRealtimeUpdate(society.subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' });
     }
 
     return created;
@@ -689,15 +691,17 @@ export const ProductService = {
 
     // Invalidar todo el cache de productos
     await redis.deleteKeysByPrefix('products:');
-    await redis.del(`dashboard:stats:${updated.societyId}`); // Invalida el dashboard de la sociedad
+    await Promise.all(['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${updated.societyId}`)));
 
     // [NEW] Realtime Notification
     if (updated.society.subscriptionId) {
       await publishRealtimeUpdate(updated.society.subscriptionId, 'PRODUCTO', {
-        action: 'UPDATE',
         id: updated.id,
-        name: updated.name
+        action: 'UPDATED',
+        name: updated.name,
+        code: updated.code
       });
+      await publishRealtimeUpdate(updated.society.subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' });
     }
 
     return updated;
@@ -729,15 +733,17 @@ export const ProductService = {
     await redis.deleteKeysByPrefix('products:');
     // Also invalidate branch office products in case the user is viewing stock list
     await redis.deleteKeysByPrefix('branch_office_products:');
-    await redis.del(`dashboard:stats:${deleted.societyId}`); // Invalida el dashboard de la sociedad
+    await Promise.all(['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${deleted.societyId}`)));
 
     // [NEW] Realtime Notification
     if (deleted.society.subscriptionId) {
       await publishRealtimeUpdate(deleted.society.subscriptionId, 'PRODUCTO', {
-        action: 'DELETE',
         id: deleted.id,
-        name: deleted.name
+        action: 'DELETED',
+        name: deleted.name,
+        code: deleted.code
       });
+      await publishRealtimeUpdate(deleted.society.subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' });
     }
 
     return deleted;
