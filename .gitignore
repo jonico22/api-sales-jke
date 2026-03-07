@@ -33,4 +33,3 @@ uploads/
 Thumbs.db
 
 /src/generated/prisma
-prisma/migrations
