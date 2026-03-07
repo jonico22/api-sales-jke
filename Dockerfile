@@ -1,9 +1,9 @@
 # 1. BASE
-FROM node:20-alpine AS base
+FROM node:22-bookworm-slim AS base
 ENV TZ=America/Lima
-RUN apk add --no-cache openssl bash curl python3 make g++ build-base libc6-compat tzdata
-RUN curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.alpine.sh' | bash && \
-    apk add --no-cache infisical
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates tzdata openssl && rm -rf /var/lib/apt/lists/*
+RUN curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.deb.sh' | bash && \
+    apt-get update && apt-get install -y --no-install-recommends infisical && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 # 2. DEVELOPMENT (Aquí arreglamos el problema)
