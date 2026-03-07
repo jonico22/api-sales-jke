@@ -33,14 +33,21 @@ export class ProductBulkService {
                 .on('error', reject);
         });
 
-        // Clean up file
-        fs.unlinkSync(filePath);
+        // 2. Prepare Data (Get IDs & Validate Limits)
+        const society = await prisma.society.findUnique({
+            where: { id: societyId },
+            select: { id: true, code: true, maxProducts: true, totalProducts: true }
+        });
 
-        if (results.length === 0) {
-            throw new Error('El archivo CSV está vacío.');
+        if (!society) {
+            throw new Error('Sociedad no encontrada.');
         }
 
-        // 2. Prepare Data (Get IDs)
+        const newProductsCount = results.length;
+        if (society.totalProducts + newProductsCount > society.maxProducts) {
+            throw new Error(`Límite de productos excedido. Actualmente tienes ${society.totalProducts} productos y estás intentando subir ${newProductsCount}. El límite permitido es de ${society.maxProducts}.`);
+        }
+
         const mainBranch = await prisma.branchOffice.findFirst({
             where: { societyId, isMain: true },
         });
@@ -153,9 +160,17 @@ export class ProductBulkService {
                     }
                 }
             }
+
+            // 3.1 Update totalProducts in Society
+            if (processedCount > 0) {
+                await tx.society.update({
+                    where: { id: societyId },
+                    data: { totalProducts: { increment: processedCount } }
+                });
+            }
         }, {
             maxWait: 5000,
-            timeout: 20000
+            timeout: 60000 // Increased timeout for potentially large bulk updates
         });
 
         // 4. Cache Invalidation (Aggressive)
@@ -163,7 +178,13 @@ export class ProductBulkService {
             await redis.deleteKeysByPrefix('products:');
             // Also invalidate branch office products if stock changed
             await redis.deleteKeysByPrefix('branch_office_products:');
-            console.log('[ProductBulkService] All product cache invalidated after bulk upload');
+
+            // Invalidate Society Cache (for totalProducts update)
+            await redis.del(`societies:${society.id}`);
+            await redis.del(`societies:${society.code}`);
+            await redis.deleteKeysByPrefix(`societies:list:`);
+
+            console.log('[ProductBulkService] All related cache invalidated after bulk upload');
         }
 
         return {

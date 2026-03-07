@@ -29,6 +29,25 @@ export class CategoryBulkService {
             throw new Error('El archivo CSV está vacío.');
         }
 
+        // 2. Validate Limit based on maxProducts
+        const society = await prisma.society.findUnique({
+            where: { id: societyId },
+            select: { maxProducts: true }
+        });
+
+        if (!society) {
+            throw new Error('Sociedad no encontrada.');
+        }
+
+        const currentCategoriesCount = await prisma.category.count({
+            where: { societyId, isDeleted: false }
+        });
+
+        const newCategoriesCount = results.length;
+        if (currentCategoriesCount + newCategoriesCount > society.maxProducts) {
+            throw new Error(`Límite de categorías excedido. Actualmente tienes ${currentCategoriesCount} categorías y estás intentando subir ${newCategoriesCount}. El límite permitido (basado en el plan de productos) es de ${society.maxProducts}.`);
+        }
+
         let processedCount = 0;
         let errors: string[] = [];
 
