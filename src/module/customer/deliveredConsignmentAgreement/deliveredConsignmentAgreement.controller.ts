@@ -1,38 +1,53 @@
 import { Request, Response } from 'express';
-import { DeliveredConsignmentAgreementService } from './deliveredConsignmentAgreement.service';
-import { DeliveredConsignmentAgreementSchema, DeliveredConsignmentAgreementUpdateSchema } from './deliveredConsignmentAgreement.validation';
+import * as service from './deliveredConsignmentAgreement.service';
+import {
+  createDeliveredConsignmentAgreementSchema,
+  updateDeliveredConsignmentAgreementSchema,
+  deliveredConsignmentAgreementIdSchema,
+  filterDeliveredConsignmentAgreementSchema,
+} from './deliveredConsignmentAgreement.validation';
+import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
-export class DeliveredConsignmentAgreementController {
-  static async getAll(req: Request, res: Response) {
-    const data = await DeliveredConsignmentAgreementService.getAll();
-    res.json(data);
+export const getAll = async (req: Request, res: Response) => {
+  const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
+  const filtersParse = filterDeliveredConsignmentAgreementSchema.safeParse({ query: req.query });
+
+  if (!paginationParse.success || !filtersParse.success) {
+    return res.status(400).json({
+      ...(paginationParse.error?.format?.() ?? {}),
+      ...(filtersParse.error?.format?.() ?? {}),
+    });
   }
 
-  static async getById(req: Request, res: Response) {
-    const { id } = req.params;
-    const data = await DeliveredConsignmentAgreementService.getById(id);
-    if (!data) return res.status(404).json({ message: 'Not found' });
-    res.json(data);
-  }
+  const data = await service.getAll(
+    paginationParse.data.query,
+    filtersParse.data.query
+  );
+  res.json(data);
+};
 
-  static async create(req: Request, res: Response) {
-    const parsed = DeliveredConsignmentAgreementSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json(parsed.error);
-    const created = await DeliveredConsignmentAgreementService.create(parsed.data as any);
-    res.status(201).json(created);
-  }
+export const getById = async (req: Request, res: Response) => {
+  const { id } = deliveredConsignmentAgreementIdSchema.parse(req.params);
+  const data = await service.getById(id);
+  if (!data) return res.status(404).json({ message: 'Item not found' });
+  res.json(data);
+};
 
-  static async update(req: Request, res: Response) {
-    const { id } = req.params;
-    const parsed = DeliveredConsignmentAgreementUpdateSchema.safeParse(req.body);
-    if (!parsed.success) return res.status(400).json(parsed.error);
-    const updated = await DeliveredConsignmentAgreementService.update(id, parsed.data);
-    res.json(updated);
-  }
+export const create = async (req: Request, res: Response) => {
+  const data = createDeliveredConsignmentAgreementSchema.parse(req.body);
+  const created = await service.create(data);
+  res.status(201).json(created);
+};
 
-  static async delete(req: Request, res: Response) {
-    const { id } = req.params;
-    await DeliveredConsignmentAgreementService.delete(id);
-    res.status(204).send();
-  }
-}
+export const update = async (req: Request, res: Response) => {
+  const { id } = deliveredConsignmentAgreementIdSchema.parse(req.params);
+  const data = updateDeliveredConsignmentAgreementSchema.parse(req.body);
+  const updated = await service.update(id, data);
+  res.json(updated);
+};
+
+export const remove = async (req: Request, res: Response) => {
+  const { id } = deliveredConsignmentAgreementIdSchema.parse(req.params);
+  const deleted = await service.remove(id);
+  res.json(deleted);
+};

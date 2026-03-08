@@ -1,0 +1,35 @@
+# Dependencias
+node_modules
+
+# Compilación de TypeScript o empaquetado
+dist
+lib
+out
+
+# Archivos de entorno
+.env
+.env.test
+.env.production
+
+# Bases de datos locales y temporales
+*.db
+*.sqlite
+prisma/migrations
+prisma/backups
+.docker
+
+# Logs de error y ejecución
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Test y Cobertura
+coverage
+.nyc_output
+test-results
+
+# Archivos del sistema
+.DS_Store
+.vscode

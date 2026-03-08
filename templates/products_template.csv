@@ -1,0 +1,4 @@
+NombreProducto,CodigoInterno,CodigoCategoria,PrecioVenta,PrecioCosto,StockInicial,StockMinimo,CodigoBarras(Opcional),Marca(Opcional),Descripcion(Opcional),Color(Opcional),ColorCode(Opcional)
+Laptop Gamer HP,LPT-HP-001,CAT-LAPTOPS,3500.00,2800.00,10,2,1234567890123,HP,Laptop con RTX 3060,,
+Mouse Inalámbrico,PER-MOU-002,CAT-ACCESORIOS,45.50,25.00,50,10,9876543210987,Logitech,Mouse ergonómico,Azul,#0000FF
+Teclado Mecánico,PER-KEY-003,CAT-ACCESORIOS,120.00,80.00,20,5,,,,,,

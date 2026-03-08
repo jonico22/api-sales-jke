@@ -17,3 +17,13 @@ export const updateProductBranchMovementSchema = createProductBranchMovementSche
 export const paramsSchema = z.object({
   id: z.string().uuid(),
 });
+
+export const productBranchMovementFiltersSchema = z.object({
+  originBranchId: z.string().optional(),
+  destinationBranchId: z.string().optional(),
+  productId: z.string().optional(),
+  status: z.enum(['PENDING', 'COMPLETED', 'CANCELLED']).optional(),
+  batchId: z.string().optional(),
+  dateFrom: z.string().optional(),
+  dateTo: z.string().optional(),
+});

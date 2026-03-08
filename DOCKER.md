@@ -153,3 +153,16 @@ En producción:
 - Los servicios `db` y `redis` usan el profile `local-services`
 - Solo se inician si usas `--profile local-services`
 - En producción, probablemente uses bases de datos administradas (RDS, etc.)
+
+const legalInfo = await prisma.bussinessPartner.create({
+  data: {
+    typeBP: 'COMPANY',
+    companyName: 'My Awesome Company S.A.C.',
+    documentNumber: '20123456789',
+    // ...
+    // Link it to the society
+    societyRepresented: {
+       connect: { id: societyId }
+    }
+  }
+})

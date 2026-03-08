@@ -3,15 +3,28 @@ services:
     build:
       context: .
       target: ${BUILD_TARGET:-production}
+      args:
+        - NODE_ENV=${NODE_ENV:-production}
     container_name: node_api_app
     restart: always
-    ports:
-      - "${PORT:-3000}:3000"
+    expose:
+      - "${PORT:-3000}"
+    env_file: .env
     environment:
       # Variables generales (desarrollo y producción)
       - NODE_ENV=${NODE_ENV:-production}
       - DATABASE_URL
+      - DIRECT_URL
+      - REDIS_URL=${REDIS_URL}
+      - REDIS_ENABLED=true
       - LOG_LEVEL=${LOG_LEVEL:-info}
+
+      # Cloudflare R2
+      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID}
+      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY}
+      - R2_ENDPOINT=${R2_ENDPOINT}
+      - R2_BUCKET_NAME=${R2_BUCKET_NAME}
+      - R2_PUBLIC_URL=${R2_PUBLIC_URL}
 
       # New Relic (opcional en desarrollo)
       - NEW_RELIC_APP_NAME=${NEW_RELIC_APP_NAME}
@@ -25,24 +38,23 @@ services:
       - NEW_RELIC_APPLICATION_LOGGING_METRICS_ENABLED=true
       - NEW_RELIC_PRISMA_ENABLED=true
       - NEW_RELIC_TRANSACTION_TRACER_RECORD_SQL="obfuscated"
-      # Infisical (solo producción - en desarrollo se usa 'infisical run' desde el host)
-      - INFISICAL_MACHINE_IDENTITY_CLIENT_ID=${INFISICAL_CLIENT_ID}
-      - INFISICAL_MACHINE_IDENTITY_CLIENT_SECRET=${INFISICAL_CLIENT_SECRET}
-      - INFISICAL_ENV=${INFISICAL_ENV}
-      - INFISICAL_PROJECT_PATH=${INFISICAL_PROJECT_PATH:-/api}
     # Los volúmenes para desarrollo se definen en docker-compose.override.yml
     # En producción, el código viene empaquetado en la imagen Docker
+    networks:
+      - coolify
 
   db:
     image: postgres:15-alpine
     profiles: [ "local-services" ] # 👈 Solo inicia si se pide explícitamente
     container_name: postgres_db
     ports:
-      - "5432:5432"
+      - "5435:5432"
     environment:
       POSTGRES_USER: ${DB_USER}
       POSTGRES_PASSWORD: ${DB_PASSWORD}
       POSTGRES_DB: ${DB_NAME}
+      TZ: America/Lima
+      PGTZ: America/Lima
     healthcheck:
       test: [ "CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}" ]
       interval: 5s
@@ -50,16 +62,25 @@ services:
       retries: 5
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    networks:
+      - coolify
 
   redis:
     image: redis:alpine
     profiles: [ "local-services" ] # 👈 Solo inicia si se pide explícitamente
     container_name: redis_cache
     ports:
-      - "6379:6379"
+      - "6377:6380"
     volumes:
       - redis_data:/data
+    networks:
+      - coolify
 
 volumes:
   postgres_data:
   redis_data:
+
+    # 2. ESTO DEFINE LA RED (Fuera de services)
+networks:
+  coolify:
+    external: true

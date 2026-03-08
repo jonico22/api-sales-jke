@@ -5,6 +5,11 @@ services:
     environment:
       # En desarrollo, Infisical se maneja con 'infisical run' desde el host
       # Sobrescribimos las variables para que no se usen desde el contenedor
+      - DATABASE_URL
+      - DB_USER
+      - DB_PASSWORD
+      - DB_NAME
+      - REDIS_URL
       - INFISICAL_MACHINE_IDENTITY_CLIENT_ID=
       - INFISICAL_MACHINE_IDENTITY_CLIENT_SECRET=
       - INFISICAL_ENV=

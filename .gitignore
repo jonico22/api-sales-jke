@@ -26,10 +26,11 @@ logs/
 .idea/
 *.swp
 *.swo
+uploads/
 
 # OS files
 .DS_Store
 Thumbs.db
 
 /src/generated/prisma
-prisma/migrations
+uploads/
