@@ -40,7 +40,8 @@ RUN npm prune --production
 
 # 4. PRODUCTION
 FROM base AS production
-ENV NODE_ENV=production
+ARG NODE_ENV=production
+ENV NODE_ENV=${NODE_ENV}
 ENV TZ=America/Lima
 WORKDIR /app
 
