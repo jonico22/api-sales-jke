@@ -16,7 +16,7 @@ RUN npm ci
 
 # 2. Copy Prisma schema and generate (cached if schema doesn't change)
 COPY prisma ./prisma/
-RUN DATABASE_URL="postgresql://placeholder:5432/db" npx prisma generate
+RUN DATABASE_URL="postgresql://placeholder:5432/db" DIRECT_URL="postgresql://placeholder:5432/db" npx prisma generate
 
 # 3. Copy ALL source code before build
 COPY . .

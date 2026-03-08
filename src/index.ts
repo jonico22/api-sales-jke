@@ -66,7 +66,7 @@ const startServer = async () => {
     await prisma.$connect();
     console.log('✅ Conectado a PostgreSQL con Prisma');
 
-    app.listen(envs.PORT, () => {
+    app.listen(envs.PORT, '0.0.0.0', () => {
       logger.info(`🚀 Servidor iniciado en puerto ${envs.PORT}`);
       logger.info(`🌍 Entorno actual: ${envs.NODE_ENV}`);
     });
