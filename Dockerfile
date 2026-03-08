@@ -52,7 +52,6 @@ COPY --from=build /app/prisma ./prisma
 
 # 👇 AÑADE ESTA LÍNEA (Vital para que funcionen los alias @/)
 COPY --from=build /app/tsconfig.json ./tsconfig.json
-EXPOSE 3800
 
 # Create Uploads Directory
 RUN mkdir -p /app/uploads/temp && chmod -R 777 /app/uploads
