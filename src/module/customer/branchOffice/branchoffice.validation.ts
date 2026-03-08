@@ -38,5 +38,10 @@ export const branchOfficeFiltersSchema = z.object({
     isActive: z.string().transform(val => val === 'true').optional(),
     code: z.string().optional(),
     societyCode: z.string().optional(),
+    createdBy: z.string().optional(),
+    createdAtFrom: z.string().optional(),
+    createdAtTo: z.string().optional(),
+    updatedAtFrom: z.string().optional(),
+    updatedAtTo: z.string().optional(),
   }),
 });

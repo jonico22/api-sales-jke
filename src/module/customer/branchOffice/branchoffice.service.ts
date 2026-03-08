@@ -8,6 +8,7 @@ import {
   PaginationQuery,
 } from '@/utils/pagination';
 import { redis } from '@/config/redis';
+import { formatToLimaTime, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
 
 // Tipos inferidos
 export type BranchOfficeFilters = z.infer<typeof branchOfficeFiltersSchema>['query'];
@@ -52,6 +53,11 @@ export const BranchOfficeService = {
       filters?.isMain !== undefined ? filters.isMain : 'all',
       filters?.isActive !== undefined ? filters.isActive : 'all',
       filters?.code || 'all',
+      filters?.createdBy || 'all',
+      filters?.createdAtFrom || 'all',
+      filters?.createdAtTo || 'all',
+      filters?.updatedAtFrom || 'all',
+      filters?.updatedAtTo || 'all',
       page,
       limit,
       sortBy,
@@ -76,6 +82,21 @@ export const BranchOfficeService = {
     if (filters?.isActive !== undefined) whereClause.isActive = filters.isActive;
     if (filters?.isMain !== undefined) whereClause.isMain = filters.isMain;
     if (filters?.code) whereClause.code = { contains: filters.code, mode: 'insensitive' };
+    if (filters?.createdBy) whereClause.createdBy = filters.createdBy;
+
+    if (filters?.createdAtFrom || filters?.createdAtTo) {
+      whereClause.createdAt = {};
+      const dateRange = convertLimaDateRangeToUTC(filters.createdAtFrom, filters.createdAtTo);
+      if (dateRange.from) whereClause.createdAt.gte = dateRange.from;
+      if (dateRange.to) whereClause.createdAt.lte = dateRange.to;
+    }
+
+    if (filters?.updatedAtFrom || filters?.updatedAtTo) {
+      whereClause.updatedAt = {};
+      const dateRange = convertLimaDateRangeToUTC(filters.updatedAtFrom, filters.updatedAtTo);
+      if (dateRange.from) whereClause.updatedAt.gte = dateRange.from;
+      if (dateRange.to) whereClause.updatedAt.lte = dateRange.to;
+    }
 
     // Búsqueda general
     if (filters?.search) {
@@ -98,7 +119,13 @@ export const BranchOfficeService = {
       prisma.branchOffice.count({ where: whereClause }),
     ]);
 
-    const result = buildPaginatedResult(data, page, limit, total);
+    const formattedData = data.map((item: any) => ({
+      ...item,
+      createdAt: formatToLimaTime(item.createdAt),
+      updatedAt: item.updatedAt ? formatToLimaTime(item.updatedAt) : null,
+    }));
+
+    const result = buildPaginatedResult(formattedData, page, limit, total);
 
     // 3. Guardar en cache
     await redis.set(cacheKey, result, CACHE_TTL_LIST);
@@ -120,7 +147,13 @@ export const BranchOfficeService = {
     });
 
     if (result) {
-      await redis.set(cacheKey, result, CACHE_TTL_SINGLE);
+      const formatted = {
+        ...result,
+        createdAt: formatToLimaTime(result.createdAt),
+        updatedAt: result.updatedAt ? formatToLimaTime(result.updatedAt) : null,
+      };
+      await redis.set(cacheKey, formatted, CACHE_TTL_SINGLE);
+      return formatted;
     }
 
     return result;

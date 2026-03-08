@@ -4,115 +4,90 @@ import { redis } from '@/config/redis';
 import { getFirstDayOfCurrentMonthLima, getLastDayOfCurrentMonthLima } from '@/utils/dateFormatter';
 import { OrderStatus } from '@prisma/client';
 
+// ─── Helper: Resolve Society ID from Code or UUID ─────────────────────
+const resolveSocietyId = async (societyId: string | undefined): Promise<string> => {
+    if (!societyId) throw new Error('Society ID is required');
+
+    const isUuid = /^[0-9a-fA-F-]{36}$/.test(societyId);
+    if (isUuid) return societyId;
+
+    const society = await prisma.society.findUnique({ where: { code: societyId } });
+    if (society) return society.id;
+    throw new Error('Invalid Society Code');
+};
+
 export const DashboardService = {
     /**
      * Get dashboard statistics for a specific society
+     * OPTIMIZADO: 4 queries en paralelo con Promise.all
      */
     getStats: async (societyId: string | undefined) => {
-        // 1. Resolve ID if it's a code (although usually passed as ID from auth middleware if strictly enforced, 
-        // but our pattern allows code/uuid in some places. Controller should ensure we have a valid ID ideally, 
-        // but here we double check or finding by unique if needed. 
-        // Assuming societyId is passed correctly or we need to look it up if it looks like a code.
-
-        let targetSocietyId = societyId;
-
-        const isUuid = /^[0-9a-fA-F-]{36}$/.test(societyId || '');
-        if (societyId && !isUuid) {
-            const society = await prisma.society.findUnique({ where: { code: societyId } });
-            if (society) targetSocietyId = society.id;
-            else throw new Error('Invalid Society Code');
-        }
-
-        if (!targetSocietyId) throw new Error('Society ID is required');
+        const targetSocietyId = await resolveSocietyId(societyId);
 
         const cacheKey = `dashboard:stats:${targetSocietyId}`;
         const cachedStats = await redis.get(cacheKey);
-        if (cachedStats) {
-            return cachedStats;
-        }
+        if (cachedStats) return cachedStats;
 
         // Dates for "Current Month"
         const startOfMonth = getFirstDayOfCurrentMonthLima();
         const endOfMonth = getLastDayOfCurrentMonthLima();
 
-        // 1. Total Stock Value (Global) -> SUM(price * stock) for active products
-        // Using queryRaw for field multiplication
-        const stockValueResult: any[] = await prisma.$queryRaw`
-      SELECT SUM(price * stock) as total 
-      FROM "Product" 
-      WHERE "societyId" = ${targetSocietyId} 
-      AND "isActive" = true 
-      AND "isDeleted" = false
-    `;
-        const totalStockValue = Number(stockValueResult[0]?.total || 0);
-
-        // 2. Low Stock Items (Alert) -> Count where stock <= minStock
-        const lowStockResult: any[] = await prisma.$queryRaw`
-      SELECT COUNT(*) as count
-      FROM "Product"
-      WHERE "societyId" = ${targetSocietyId}
-      AND "isActive" = true
-      AND "isDeleted" = false
-      AND stock <= "minStock"
-    `;
-        const lowStockItems = Number(lowStockResult[0]?.count || 0);
-
-        // 3. Net Sales (Current Month) -> Sum totalAmount of COMPLETED orders
-        const salesResult = await prisma.order.aggregate({
-            _sum: {
-                totalAmount: true
-            },
-            where: {
-                societyId: targetSocietyId,
-                status: OrderStatus.COMPLETED,
-                orderDate: {
-                    gte: startOfMonth,
-                    lte: endOfMonth
+        // ─── PARALLEL: All 4 stats queries at once ────────────────────
+        const [stockValueResult, lowStockResult, salesResult, newProducts] = await Promise.all([
+            // 1. Total Stock Value
+            prisma.$queryRaw<any[]>`
+                SELECT COALESCE(SUM(price * stock), 0) as total 
+                FROM "Product" 
+                WHERE "societyId" = ${targetSocietyId} 
+                AND "isActive" = true 
+                AND "isDeleted" = false
+            `,
+            // 2. Low Stock Items
+            prisma.$queryRaw<any[]>`
+                SELECT COUNT(*)::int as count
+                FROM "Product"
+                WHERE "societyId" = ${targetSocietyId}
+                AND "isActive" = true
+                AND "isDeleted" = false
+                AND stock <= "minStock"
+            `,
+            // 3. Net Sales (Current Month)
+            prisma.order.aggregate({
+                _sum: { totalAmount: true },
+                where: {
+                    societyId: targetSocietyId,
+                    status: OrderStatus.COMPLETED,
+                    orderDate: { gte: startOfMonth, lte: endOfMonth }
                 }
-            }
-        });
-        const netSales = Number(salesResult._sum.totalAmount || 0);
-
-        // 4. New Products (Current Month) -> Count products created this month
-        const newProducts = await prisma.product.count({
-            where: {
-                societyId: targetSocietyId,
-                isActive: true, // Only count active? Ui says "NUEVOS", presumably valid ones.
-                isDeleted: false,
-                createdAt: {
-                    gte: startOfMonth,
-                    lte: endOfMonth
+            }),
+            // 4. New Products (Current Month)
+            prisma.product.count({
+                where: {
+                    societyId: targetSocietyId,
+                    isActive: true,
+                    isDeleted: false,
+                    createdAt: { gte: startOfMonth, lte: endOfMonth }
                 }
-            }
-        });
+            })
+        ]);
 
         const stats = {
-            totalStockValue,
-            lowStockItems,
-            netSales,
+            totalStockValue: Number(stockValueResult[0]?.total || 0),
+            lowStockItems: Number(lowStockResult[0]?.count || 0),
+            netSales: Number(salesResult._sum.totalAmount || 0),
             newProducts
         };
 
-        // Cache for 5 minutes (dashboard doesn't need real-time usually, but short enough)
         await redis.set(cacheKey, stats, 300);
-
         return stats;
     },
 
     /**
      * Get sales performance (monthly revenue) for the current year
+     * OPTIMIZADO: Usa SQL GROUP BY en vez de cargar todas las órdenes en memoria
      */
     getSalesPerformance: async (societyId: string | undefined) => {
-        let targetSocietyId = societyId;
-
-        const isUuid = /^[0-9a-fA-F-]{36}$/.test(societyId || '');
-        if (societyId && !isUuid) {
-            const society = await prisma.society.findUnique({ where: { code: societyId } });
-            if (society) targetSocietyId = society.id;
-            else throw new Error('Invalid Society Code');
-        }
-
-        if (!targetSocietyId) throw new Error('Society ID is required');
+        const targetSocietyId = await resolveSocietyId(societyId);
 
         const cacheKey = `dashboard:sales-performance:${targetSocietyId}`;
         const cachedChart = await redis.get(cacheKey);
@@ -122,27 +97,26 @@ export const DashboardService = {
         const startOfYear = new Date(currentYear, 0, 1);
         const endOfYear = new Date(currentYear, 11, 31, 23, 59, 59, 999);
 
-        // Fetch completed orders for the year
-        const orders = await prisma.order.findMany({
-            where: {
-                societyId: targetSocietyId,
-                status: OrderStatus.COMPLETED,
-                orderDate: { gte: startOfYear, lte: endOfYear }
-            },
-            select: { totalAmount: true, orderDate: true }
-        });
+        // SQL GROUP BY instead of loading all orders into JS memory
+        const results: any[] = await prisma.$queryRaw`
+            SELECT EXTRACT(MONTH FROM "orderDate")::int as month,
+                   COALESCE(SUM("totalAmount"), 0) as total
+            FROM "Order"
+            WHERE "societyId" = ${targetSocietyId}
+            AND status = 'COMPLETED'
+            AND "orderDate" >= ${startOfYear} AND "orderDate" <= ${endOfYear}
+            GROUP BY EXTRACT(MONTH FROM "orderDate")
+            ORDER BY month
+        `;
 
-        // Initialize monthly data array
         const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-        const monthlySales = months.map(month => ({ name: month, total: 0 }));
+        const monthlySales = months.map((name, i) => ({ name, total: 0 }));
 
-        // Aggregate sales by month
-        orders.forEach(order => {
-            const monthIndex = order.orderDate.getMonth();
-            monthlySales[monthIndex].total += Number(order.totalAmount || 0);
+        results.forEach(row => {
+            monthlySales[row.month - 1].total = Number(row.total);
         });
 
-        await redis.set(cacheKey, monthlySales, 300); // 5 minutes cache
+        await redis.set(cacheKey, monthlySales, 300);
         return monthlySales;
     },
 
@@ -150,14 +124,7 @@ export const DashboardService = {
      * Get revenue by category for the current month
      */
     getRevenueByCategory: async (societyId: string | undefined) => {
-        let targetSocietyId = societyId;
-        const isUuid = /^[0-9a-fA-F-]{36}$/.test(societyId || '');
-        if (societyId && !isUuid) {
-            const society = await prisma.society.findUnique({ where: { code: societyId } });
-            if (society) targetSocietyId = society.id;
-            else throw new Error('Invalid Society Code');
-        }
-        if (!targetSocietyId) throw new Error('Society ID is required');
+        const targetSocietyId = await resolveSocietyId(societyId);
 
         const cacheKey = `dashboard:revenue-category:${targetSocietyId}`;
         const cachedChart = await redis.get(cacheKey);
@@ -166,9 +133,8 @@ export const DashboardService = {
         const startOfMonth = getFirstDayOfCurrentMonthLima();
         const endOfMonth = getLastDayOfCurrentMonthLima();
 
-        // Raw query for complex grouping
         const results: any[] = await prisma.$queryRaw`
-            SELECT c.name as category, SUM(oi.total) as revenue 
+            SELECT c.name as category, COALESCE(SUM(oi.total), 0) as revenue 
             FROM "OrderItem" oi
             JOIN "Order" o ON oi."orderId" = o.id
             JOIN "Product" p ON oi."productId" = p.id
@@ -200,14 +166,7 @@ export const DashboardService = {
      * Get top selling products (Best Sellers)
      */
     getTopProducts: async (societyId: string | undefined) => {
-        let targetSocietyId = societyId;
-        const isUuid = /^[0-9a-fA-F-]{36}$/.test(societyId || '');
-        if (societyId && !isUuid) {
-            const society = await prisma.society.findUnique({ where: { code: societyId } });
-            if (society) targetSocietyId = society.id;
-            else throw new Error('Invalid Society Code');
-        }
-        if (!targetSocietyId) throw new Error('Society ID is required');
+        const targetSocietyId = await resolveSocietyId(societyId);
 
         const cacheKey = `dashboard:top-products:${targetSocietyId}`;
         const cachedChart = await redis.get(cacheKey);
@@ -235,14 +194,7 @@ export const DashboardService = {
      * Get payment methods for the current month
      */
     getPaymentMethods: async (societyId: string | undefined) => {
-        let targetSocietyId = societyId;
-        const isUuid = /^[0-9a-fA-F-]{36}$/.test(societyId || '');
-        if (societyId && !isUuid) {
-            const society = await prisma.society.findUnique({ where: { code: societyId } });
-            if (society) targetSocietyId = society.id;
-            else throw new Error('Invalid Society Code');
-        }
-        if (!targetSocietyId) throw new Error('Society ID is required');
+        const targetSocietyId = await resolveSocietyId(societyId);
 
         const cacheKey = `dashboard:payment-methods:${targetSocietyId}`;
         const cachedChart = await redis.get(cacheKey);
@@ -271,17 +223,11 @@ export const DashboardService = {
     },
 
     /**
-     * Get cash flow (income from sales vs expenses from purchases) for the current year
+     * Get cash flow (income vs expenses) for the current year
+     * OPTIMIZADO: 2 queries SQL GROUP BY en paralelo
      */
     getCashFlow: async (societyId: string | undefined) => {
-        let targetSocietyId = societyId;
-        const isUuid = /^[0-9a-fA-F-]{36}$/.test(societyId || '');
-        if (societyId && !isUuid) {
-            const society = await prisma.society.findUnique({ where: { code: societyId } });
-            if (society) targetSocietyId = society.id;
-            else throw new Error('Invalid Society Code');
-        }
-        if (!targetSocietyId) throw new Error('Society ID is required');
+        const targetSocietyId = await resolveSocietyId(societyId);
 
         const cacheKey = `dashboard:cash-flow:${targetSocietyId}`;
         const cachedChart = await redis.get(cacheKey);
@@ -291,55 +237,44 @@ export const DashboardService = {
         const startOfYear = new Date(currentYear, 0, 1);
         const endOfYear = new Date(currentYear, 11, 31, 23, 59, 59, 999);
 
-        // Fetch Sales (Income)
-        const sales = await prisma.order.findMany({
-            where: {
-                societyId: targetSocietyId,
-                status: 'COMPLETED',
-                orderDate: { gte: startOfYear, lte: endOfYear }
-            },
-            select: { totalAmount: true, orderDate: true }
-        });
-
-        // Fetch Purchases (Expenses)
-        const purchases = await prisma.purchase.findMany({
-            where: {
-                societyId: targetSocietyId,
-                status: 'COMPLETED',
-                purchaseDate: { gte: startOfYear, lte: endOfYear }
-            },
-            select: { totalAmount: true, purchaseDate: true }
-        });
+        // ─── PARALLEL: Sales + Purchases grouped by month in SQL ──────
+        const [salesByMonth, purchasesByMonth] = await Promise.all([
+            prisma.$queryRaw<any[]>`
+                SELECT EXTRACT(MONTH FROM "orderDate")::int as month,
+                       COALESCE(SUM("totalAmount"), 0) as total
+                FROM "Order"
+                WHERE "societyId" = ${targetSocietyId}
+                AND status = 'COMPLETED'
+                AND "orderDate" >= ${startOfYear} AND "orderDate" <= ${endOfYear}
+                GROUP BY EXTRACT(MONTH FROM "orderDate")
+            `,
+            prisma.$queryRaw<any[]>`
+                SELECT EXTRACT(MONTH FROM "purchaseDate")::int as month,
+                       COALESCE(SUM("totalAmount"), 0) as total
+                FROM "Purchase"
+                WHERE "societyId" = ${targetSocietyId}
+                AND status = 'COMPLETED'
+                AND "purchaseDate" >= ${startOfYear} AND "purchaseDate" <= ${endOfYear}
+                GROUP BY EXTRACT(MONTH FROM "purchaseDate")
+            `
+        ]);
 
         const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
-        const flow = months.map(month => ({ period: month, income: 0, expense: 0 }));
+        const flow = months.map(period => ({ period, income: 0, expense: 0 }));
 
-        sales.forEach(order => {
-            const monthIndex = order.orderDate.getMonth();
-            flow[monthIndex].income += Number(order.totalAmount || 0);
-        });
-
-        purchases.forEach(purchase => {
-            const monthIndex = purchase.purchaseDate.getMonth();
-            flow[monthIndex].expense += Number(purchase.totalAmount || 0);
-        });
+        salesByMonth.forEach(row => { flow[row.month - 1].income = Number(row.total); });
+        purchasesByMonth.forEach(row => { flow[row.month - 1].expense = Number(row.total); });
 
         await redis.set(cacheKey, flow, 300);
         return flow;
     },
 
     /**
-     * Get branch performance (Sales by branch) for the current month
+     * Get branch performance for the current month
+     * OPTIMIZADO: 1 sola query SQL con JOIN en vez de 2 queries separadas
      */
     getBranchPerformance: async (societyId: string | undefined) => {
-        let targetSocietyId = societyId;
-        const isUuid = /^[0-9a-fA-F-]{36}$/.test(societyId || '');
-        if (societyId && !isUuid) {
-            const society = await prisma.society.findUnique({ where: { code: societyId } });
-            if (society) targetSocietyId = society.id;
-            else throw new Error('Invalid Society Code');
-        }
-        if (!targetSocietyId) throw new Error('Society ID is required');
+        const targetSocietyId = await resolveSocietyId(societyId);
 
         const cacheKey = `dashboard:branch-performance:${targetSocietyId}`;
         const cachedChart = await redis.get(cacheKey);
@@ -348,29 +283,22 @@ export const DashboardService = {
         const startOfMonth = getFirstDayOfCurrentMonthLima();
         const endOfMonth = getLastDayOfCurrentMonthLima();
 
-        const results = await prisma.order.groupBy({
-            by: ['branchId'],
-            _sum: { totalAmount: true },
-            where: {
-                societyId: targetSocietyId,
-                status: 'COMPLETED',
-                orderDate: { gte: startOfMonth, lte: endOfMonth }
-            }
-        });
+        // 1 query con JOIN en vez de groupBy + findMany separados
+        const results: any[] = await prisma.$queryRaw`
+            SELECT b.name as branch, COALESCE(SUM(o."totalAmount"), 0) as revenue
+            FROM "Order" o
+            JOIN "BranchOffice" b ON o."branchId" = b.id
+            WHERE o."societyId" = ${targetSocietyId}
+            AND o.status = 'COMPLETED'
+            AND o."orderDate" >= ${startOfMonth} AND o."orderDate" <= ${endOfMonth}
+            GROUP BY b.name
+            ORDER BY revenue DESC
+        `;
 
-        // Fetch branch names
-        const branches = await prisma.branchOffice.findMany({
-            where: { id: { in: results.map(r => r.branchId) } },
-            select: { id: true, name: true }
-        });
-
-        const formattedData = results.map(row => {
-            const branch = branches.find(b => b.id === row.branchId);
-            return {
-                branch: branch ? branch.name : 'Desconocida',
-                revenue: Number(row._sum.totalAmount || 0)
-            };
-        }).sort((a, b) => b.revenue - a.revenue);
+        const formattedData = results.map(row => ({
+            branch: row.branch,
+            revenue: Number(row.revenue)
+        }));
 
         await redis.set(cacheKey, formattedData, 300);
         return formattedData;

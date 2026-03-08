@@ -17,39 +17,38 @@ const CACHE_TTL_LIST = 300; // 5 min
 
 export const OrderPaymentService = {
   create: async (data: CreateOrderPaymentInput) => {
-    // 1. Resolve & Validate Entities (ID or Code)
+    // ─── 1. PARALLEL: Resolve & Validate Entities ─────────────────────
+    const [societyResult, currencyResult, orderResult] = await Promise.all([
+      // Society (ID or Code)
+      (async () => {
+        let society = await prisma.society.findUnique({ where: { id: data.societyId } });
+        if (!society) society = await prisma.society.findUnique({ where: { code: data.societyId } });
+        if (!society) throw new Error(`Sociedad no encontrada (ID/Code: ${data.societyId})`);
+        return society;
+      })(),
+      // Currency (ID or Code)
+      (async () => {
+        let currency = await prisma.currency.findUnique({ where: { id: data.currencyId } });
+        if (!currency) currency = await prisma.currency.findUnique({ where: { code: data.currencyId } });
+        if (!currency) throw new Error(`Moneda no encontrada (ID/Code: ${data.currencyId})`);
+        return currency;
+      })(),
+      // Order (Optional, ID or Code)
+      (async () => {
+        if (!data.orderId) return null;
+        let order = await prisma.order.findUnique({ where: { id: data.orderId } });
+        if (!order) order = await prisma.order.findUnique({ where: { orderCode: data.orderId } });
+        if (!order) throw new Error(`Pedido no encontrado (ID/Code: ${data.orderId})`);
+        return order;
+      })()
+    ]);
 
-    // Society
-    let society = await prisma.society.findUnique({ where: { id: data.societyId } });
-    if (!society) {
-      society = await prisma.society.findUnique({ where: { code: data.societyId } });
-    }
-    if (!society) throw new Error(`Sociedad no encontrada (ID/Code: ${data.societyId})`);
-
-    // Currency
-    let currency = await prisma.currency.findUnique({ where: { id: data.currencyId } });
-    if (!currency) {
-      currency = await prisma.currency.findUnique({ where: { code: data.currencyId } });
-    }
-    if (!currency) throw new Error(`Moneda no encontrada (ID/Code: ${data.currencyId})`);
-
-    // Order (Optional)
-    let orderId = data.orderId;
-    if (data.orderId) {
-      let order = await prisma.order.findUnique({ where: { id: data.orderId } });
-      if (!order) {
-        order = await prisma.order.findUnique({ where: { orderCode: data.orderId } });
-      }
-      if (!order) throw new Error(`Pedido no encontrado (ID/Code: ${data.orderId})`);
-      orderId = order.id;
-    }
-
-    // Update data with resolved IDs
+    // ─── 2. Crear el pago ─────────────────────────────────────────────
     const finalData = {
       ...data,
-      societyId: society.id,
-      currencyId: currency.id,
-      orderId: orderId,
+      societyId: societyResult.id,
+      currencyId: currencyResult.id,
+      orderId: orderResult?.id || undefined,
       status: data.status || PaymentStatus.PENDING,
       paymentDate: data.paymentDate ? toLimaTimezone(data.paymentDate) : toLimaTimezone(new Date())
     };
@@ -58,31 +57,38 @@ export const OrderPaymentService = {
       data: finalData
     });
 
-    // Invalidar cache
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    // ─── 3. BACKGROUND: Cache + CashShift (fire-and-forget) ──────────
+    const resolvedSocietyId = societyResult.id;
+    const resolvedOrderId = created.orderId;
+    const createdBy = data.createdBy;
 
-    if (created.orderId) {
-      await redis.del(`orders:${created.orderId}`); // Invalidar orden también
-
-      // [INTEGRATION] Cash Shift - Automatic Registration
+    setImmediate(async () => {
       try {
-        const order = await prisma.order.findUnique({
-          where: { id: created.orderId },
-          select: { branchId: true }
-        });
+        // A. Invalidar cache
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
 
-        if (order && order.branchId && data.createdBy) {
-          await CashShiftService.registerPaymentMovement(
-            created,
-            data.createdBy,
-            order.branchId,
-            society.id
-          );
+        if (resolvedOrderId) {
+          await redis.del(`orders:${resolvedOrderId}`);
+
+          // B. [INTEGRATION] Cash Shift - Automatic Registration
+          const order = await prisma.order.findUnique({
+            where: { id: resolvedOrderId },
+            select: { branchId: true }
+          });
+
+          if (order && order.branchId && createdBy) {
+            await CashShiftService.registerPaymentMovement(
+              created,
+              createdBy,
+              order.branchId,
+              resolvedSocietyId
+            );
+          }
         }
       } catch (error) {
-        console.error('Error auto-registering cash movement:', error);
+        console.error('[OrderPayment] ❌ Error en procesamiento background (create):', error);
       }
-    }
+    });
 
     return created;
   },

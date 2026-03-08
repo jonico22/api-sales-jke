@@ -33,66 +33,63 @@ export class ProductBulkService {
                 .on('error', reject);
         });
 
-        // 2. Prepare Data (Get IDs & Validate Limits)
-        const society = await prisma.society.findUnique({
-            where: { id: societyId },
-            select: { id: true, code: true, maxProducts: true, totalProducts: true }
-        });
+        // Clean up file after reading
+        fs.unlink(filePath, () => { });
 
-        if (!society) {
-            throw new Error('Sociedad no encontrada.');
+        if (results.length === 0) {
+            throw new Error('El archivo CSV está vacío.');
         }
 
+        // ─── 2. PARALLEL: Pre-fetch all needed data at once ─────────────
+        const [society, mainBranch, categories, existingProducts] = await Promise.all([
+            prisma.society.findUnique({
+                where: { id: societyId },
+                select: { id: true, code: true, maxProducts: true, totalProducts: true }
+            }),
+            prisma.branchOffice.findFirst({
+                where: { societyId, isMain: true },
+            }),
+            prisma.category.findMany({
+                where: { societyId },
+            }),
+            prisma.product.findMany({
+                where: { societyId, isDeleted: false },
+                select: { code: true }
+            })
+        ]);
+
+        if (!society) throw new Error('Sociedad no encontrada.');
+        if (!mainBranch) throw new Error('No se encontró una Sucursal Principal habilitada para esta sociedad.');
+        // ─── 3. Validate limits ─────────────────────────────────────────
         const newProductsCount = results.length;
         if (society.totalProducts + newProductsCount > society.maxProducts) {
             throw new Error(`Límite de productos excedido. Actualmente tienes ${society.totalProducts} productos y estás intentando subir ${newProductsCount}. El límite permitido es de ${society.maxProducts}.`);
         }
 
-        const mainBranch = await prisma.branchOffice.findFirst({
-            where: { societyId, isMain: true },
-        });
-
-        if (!mainBranch) {
-            throw new Error('No se encontró una Sucursal Principal habilitada para esta sociedad.');
-        }
-
-        const categories = await prisma.category.findMany({
-            where: { societyId },
-        });
-
-        const categoryMap = new Map(categories.map(c => [c.code, c.id])); // Map Code -> ID
-
-        // 2.1 Pre-fetch existing product codes for this society to avoid duplicates
-        const existingProducts = await prisma.product.findMany({
-            where: { societyId, isDeleted: false },
-            select: { code: true }
-        });
+        const categoryMap = new Map(categories.map(c => [c.code, c.id]));
         const existingCodes = new Set(existingProducts.map(p => p.code));
         const seenInFile = new Set<string>();
 
         let processedCount = 0;
         let errors: string[] = [];
 
-        // 3. Process & Insert (Transaction)
+        // ─── 4. Process & Insert (Transaction) ─────────────────────────
         await prisma.$transaction(async (tx) => {
             for (const [index, row] of results.entries()) {
-                const rowNum = index + 2; // Header is 1
+                const rowNum = index + 2;
 
                 try {
-                    // Validation
                     if (!row.NombreProducto || !row.CodigoInterno || !row.CodigoCategoria) {
                         throw new Error(`Faltan datos obligatorios (Nombre, SKU, Categoría)`);
                     }
 
                     const sku = row.CodigoInterno.trim();
 
-                    // Check duplicate in DB
                     if (existingCodes.has(sku)) {
                         errors.push(`Fila ${rowNum}: El Código/SKU '${sku}' ya existe en el sistema.`);
                         continue;
                     }
 
-                    // Check duplicate in current file
                     if (seenInFile.has(sku)) {
                         errors.push(`Fila ${rowNum}: El Código/SKU '${sku}' está duplicado en este archivo.`);
                         continue;
@@ -109,16 +106,15 @@ export class ProductBulkService {
                     const precioVenta = parseFloat(row.PrecioVenta || '0');
                     const precioCosto = parseFloat(row.PrecioCosto || '0');
 
-                    // Create Product
                     const newProduct = await tx.product.create({
                         data: {
                             societyId,
                             name: row.NombreProducto,
-                            code: row.CodigoInterno, // Using SKU as internal code
+                            code: row.CodigoInterno,
                             categoryId,
                             price: precioVenta,
                             priceCost: precioCosto,
-                            stock: stockInicial, // Global stock
+                            stock: stockInicial,
                             minStock: stockMinimo,
                             barcode: row.CodigoBarras || row['CodigoBarras(Opcional)'],
                             brand: row.Marca || row['Marca(Opcional)'],
@@ -130,7 +126,6 @@ export class ProductBulkService {
                         },
                     });
 
-                    // Create Stock in Main Branch
                     await tx.branchOfficeProduct.create({
                         data: {
                             productId: newProduct.id,
@@ -161,7 +156,6 @@ export class ProductBulkService {
                 }
             }
 
-            // 3.1 Update totalProducts in Society
             if (processedCount > 0) {
                 await tx.society.update({
                     where: { id: societyId },
@@ -170,21 +164,26 @@ export class ProductBulkService {
             }
         }, {
             maxWait: 5000,
-            timeout: 60000 // Increased timeout for potentially large bulk updates
+            timeout: 60000
         });
 
-        // 4. Cache Invalidation (Aggressive)
+        // ─── 5. BACKGROUND: Cache Invalidation ───────────────────────────
         if (processedCount > 0) {
-            await redis.deleteKeysByPrefix('products:');
-            // Also invalidate branch office products if stock changed
-            await redis.deleteKeysByPrefix('branch_office_products:');
-
-            // Invalidate Society Cache (for totalProducts update)
-            await redis.del(`societies:${society.id}`);
-            await redis.del(`societies:${society.code}`);
-            await redis.deleteKeysByPrefix(`societies:list:`);
-
-            console.log('[ProductBulkService] All related cache invalidated after bulk upload');
+            const societyCode = society.code;
+            setImmediate(async () => {
+                try {
+                    await Promise.all([
+                        redis.deleteKeysByPrefix('products:'),
+                        redis.deleteKeysByPrefix('branch_office_products:'),
+                        redis.del(`societies:${societyId}`),
+                        redis.del(`societies:${societyCode}`),
+                        redis.del(`societies:code:${societyCode.toUpperCase()}`),
+                        redis.deleteKeysByPrefix('societies:list:')
+                    ]);
+                } catch (e) {
+                    console.error('[ProductBulkService] Error background cache:', e);
+                }
+            });
         }
 
         return {

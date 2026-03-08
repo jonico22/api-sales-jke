@@ -22,26 +22,25 @@ export class CategoryBulkService {
                 .on('error', reject);
         });
 
-        // Clean up file
-        fs.unlinkSync(filePath);
+        // Clean up file (async, non-blocking)
+        fs.unlink(filePath, () => { });
 
         if (results.length === 0) {
             throw new Error('El archivo CSV está vacío.');
         }
 
-        // 2. Validate Limit based on maxProducts
-        const society = await prisma.society.findUnique({
-            where: { id: societyId },
-            select: { maxProducts: true }
-        });
+        // ─── 2. PARALLEL: Pre-fetch society + current count ──────────────
+        const [society, currentCategoriesCount] = await Promise.all([
+            prisma.society.findUnique({
+                where: { id: societyId },
+                select: { maxProducts: true }
+            }),
+            prisma.category.count({
+                where: { societyId, isDeleted: false }
+            })
+        ]);
 
-        if (!society) {
-            throw new Error('Sociedad no encontrada.');
-        }
-
-        const currentCategoriesCount = await prisma.category.count({
-            where: { societyId, isDeleted: false }
-        });
+        if (!society) throw new Error('Sociedad no encontrada.');
 
         const newCategoriesCount = results.length;
         if (currentCategoriesCount + newCategoriesCount > society.maxProducts) {
@@ -51,13 +50,12 @@ export class CategoryBulkService {
         let processedCount = 0;
         let errors: string[] = [];
 
-        // 2. Process & Insert (Transaction)
+        // ─── 3. Process & Insert (Transaction) ───────────────────────────
         await prisma.$transaction(async (tx) => {
             for (const [index, row] of results.entries()) {
-                const rowNum = index + 2; // Header is 1
+                const rowNum = index + 2;
 
                 try {
-                    // Validation
                     if (!row.NombreCategoria || !row.CodigoCategoria) {
                         throw new Error(`Faltan datos obligatorios (Nombre, Código) en fila ${rowNum}`);
                     }
@@ -75,7 +73,6 @@ export class CategoryBulkService {
 
                     processedCount++;
                 } catch (error: any) {
-                    // Handle duplicate code error
                     if (error.code === 'P2002') {
                         const duplicateField = error.meta?.target?.includes('code') ? 'código' : 'campo';
                         throw new Error(`Fila ${rowNum}: El ${duplicateField} '${row.CodigoCategoria}' ya existe en la base de datos.`);
@@ -86,9 +83,16 @@ export class CategoryBulkService {
             }
         });
 
-        // 3. Invalidate Cache
-        await redis.deleteKeysByPrefix('categories:');
-        console.log('[CategoryBulkService] Cache invalidado tras carga masiva');
+        // ─── 4. BACKGROUND: Cache Invalidation ───────────────────────────
+        if (processedCount > 0) {
+            setImmediate(async () => {
+                try {
+                    await redis.deleteKeysByPrefix('categories:');
+                } catch (e) {
+                    console.error('[CategoryBulkService] Error background cache:', e);
+                }
+            });
+        }
 
         return {
             success: true,
