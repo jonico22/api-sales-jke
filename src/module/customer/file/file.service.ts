@@ -113,14 +113,31 @@ export const FileService = {
             if (dateRange.to) whereClause.uploadedAt.lte = dateRange.to;
         }
 
-        const [data, total] = await prisma.$transaction([
-            prisma.file.findMany({
-                where: whereClause,
-                skip: prismaParams.skip,
-                take: prismaParams.take,
-                orderBy: prismaParams.orderBy ?? { uploadedAt: sortOrder },
-            }),
-            prisma.file.count({ where: whereClause }),
+        // Fetch paginated data AND storage info in parallel
+        const storageInfoPromise = targetSocietyId
+            ? Promise.all([
+                prisma.society.findUnique({
+                    where: { id: targetSocietyId },
+                    select: { storageLimit: true }
+                }),
+                prisma.file.aggregate({
+                    where: { societyId: targetSocietyId, category: 'GENERAL' },
+                    _sum: { size: true }
+                })
+            ])
+            : Promise.resolve(null);
+
+        const [[data, total], storageResult] = await Promise.all([
+            prisma.$transaction([
+                prisma.file.findMany({
+                    where: whereClause,
+                    skip: prismaParams.skip,
+                    take: prismaParams.take,
+                    orderBy: prismaParams.orderBy ?? { uploadedAt: sortOrder },
+                }),
+                prisma.file.count({ where: whereClause }),
+            ]),
+            storageInfoPromise
         ]);
 
         const formattedData = data.map(item => ({
@@ -131,27 +148,15 @@ export const FileService = {
 
         const result = buildPaginatedResult(formattedData, page, limit, total);
 
-        // 3. Obtener info de Almacenamiento (Si tenemos Society Id)
+        // Build storage info from parallel result
         let storageInfo = null;
-        if (targetSocietyId) {
-            const [society, currentUsage] = await Promise.all([
-                prisma.society.findUnique({
-                    where: { id: targetSocietyId },
-                    select: { storageLimit: true }
-                }),
-                prisma.file.aggregate({
-                    where: { societyId: targetSocietyId, category: 'GENERAL' },
-                    _sum: { size: true }
-                })
-            ]);
-
+        if (storageResult) {
+            const [society, currentUsage] = storageResult;
             if (society) {
-                let limit = Number(society.storageLimit);
-                if (!limit || limit === 0) {
-                    limit = 157286400; // Fallback 150MB
-                }
+                let limitVal = Number(society.storageLimit);
+                if (!limitVal || limitVal === 0) limitVal = 157286400; // 150MB fallback
                 storageInfo = {
-                    limitBytes: limit,
+                    limitBytes: limitVal,
                     usedBytes: currentUsage._sum.size || 0
                 };
             }
@@ -159,8 +164,10 @@ export const FileService = {
 
         const finalResult = { ...result, storageInfo };
 
-        // 4. Set Cache
-        await redis.set(cacheKey, finalResult, CACHE_TTL_LIST);
+        // Set Cache (background)
+        setImmediate(async () => {
+            try { await redis.set(cacheKey, finalResult, CACHE_TTL_LIST); } catch (_) { }
+        });
 
         return finalResult;
     },
@@ -204,24 +211,29 @@ export const FileService = {
             },
         });
 
-        // Actualizar storage usado (solo agregarlo si tiene size)
+        // Storage update (synchronous, important for consistency)
         if (created.size) {
-            const updatedSociety = await prisma.society.update({
+            await prisma.society.update({
                 where: { id: created.societyId },
                 data: { usedStorage: { increment: created.size } }
             });
-
-            // Invalidate Society Cache
-            await redis.del(`societies:${updatedSociety.id}`);
-            await redis.del(`societies:${updatedSociety.code}`);
-            await redis.deleteKeysByPrefix(`societies:list:`);
-            await redis.deleteKeysByPrefix(`societies:select:`);
         }
 
-        // Invalidate List Cache
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-        // Invalidate Category Cache (as per requirement)
-        await redis.deleteKeysByPrefix('categories:');
+        // ─── BACKGROUND: Cache Invalidation ────────────────────────────
+        const societyId = created.societyId;
+        setImmediate(async () => {
+            try {
+                await Promise.all([
+                    redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+                    redis.deleteKeysByPrefix('categories:'),
+                    redis.del(`societies:${societyId}`),
+                    redis.deleteKeysByPrefix('societies:list:'),
+                    redis.deleteKeysByPrefix('societies:select:')
+                ]);
+            } catch (e) {
+                console.error('[FileService] Error background (create):', e);
+            }
+        });
 
         return created;
     },
@@ -235,11 +247,18 @@ export const FileService = {
             data,
         });
 
-        // Invalidate Cache
-        await redis.del(`${CACHE_PREFIX}${id}`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-        // Invalidate Category Cache
-        await redis.deleteKeysByPrefix('categories:');
+        // ─── BACKGROUND: Cache Invalidation ────────────────────────────
+        setImmediate(async () => {
+            try {
+                await Promise.all([
+                    redis.del(`${CACHE_PREFIX}${id}`),
+                    redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+                    redis.deleteKeysByPrefix('categories:')
+                ]);
+            } catch (e) {
+                console.error('[FileService] Error background (update):', e);
+            }
+        });
 
         return updated;
     },
@@ -283,36 +302,42 @@ export const FileService = {
             where: { id },
         });
 
-        // Disminuir storage usado
+        // Storage decrement (synchronous, important for consistency)
         if (deleted.size) {
-            const updatedSociety = await prisma.society.update({
+            await prisma.society.update({
                 where: { id: deleted.societyId },
                 data: { usedStorage: { decrement: deleted.size } }
             });
-
-            // Invalidate Society Cache
-            await redis.del(`societies:${updatedSociety.id}`);
-            await redis.del(`societies:${updatedSociety.code}`);
-            await redis.deleteKeysByPrefix(`societies:list:`);
-            await redis.deleteKeysByPrefix(`societies:select:`);
         }
 
-        // Physical Delete from R2
-        if (deleted.key) {
+        // ─── BACKGROUND: R2 Delete + Cache Invalidation ───────────────
+        const deletedKey = deleted.key;
+        const deletedSocietyId = deleted.societyId;
+
+        setImmediate(async () => {
             try {
-                await StorageService.deleteFile(deleted.key);
-                console.log(`[FileService] Archivo físico eliminado de storage: ${deleted.key}`);
-            } catch (error) {
-                console.error(`[FileService] Error eliminando archivo físico de storage (${deleted.key}):`, error);
-                // No lanzamos error para no romper el flujo si el archivo ya no existía en R2
-            }
-        }
+                // Physical delete from R2 (non-blocking)
+                if (deletedKey) {
+                    try {
+                        await StorageService.deleteFile(deletedKey);
+                    } catch (e) {
+                        console.error(`[FileService] Error deleting from R2 (${deletedKey}):`, e);
+                    }
+                }
 
-        // Invalidate Cache
-        await redis.del(`${CACHE_PREFIX}${id}`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-        // Invalidate Category Cache
-        await redis.deleteKeysByPrefix('categories:');
+                // Cache invalidation
+                await Promise.all([
+                    redis.del(`${CACHE_PREFIX}${id}`),
+                    redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+                    redis.deleteKeysByPrefix('categories:'),
+                    redis.del(`societies:${deletedSocietyId}`),
+                    redis.deleteKeysByPrefix('societies:list:'),
+                    redis.deleteKeysByPrefix('societies:select:')
+                ]);
+            } catch (e) {
+                console.error('[FileService] Error background (delete):', e);
+            }
+        });
 
         return deleted;
     }

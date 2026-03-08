@@ -51,8 +51,15 @@ export const OrderItemService = {
       }
     });
 
-    // Invalidate List Cache
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    // ─── BACKGROUND: Cache Invalidation ────────────────────────────
+    setImmediate(async () => {
+      try {
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+      } catch (e) {
+        console.error('[OrderItemService] Error background (create):', e);
+      }
+    });
+
     return newItem;
   },
 
@@ -113,7 +120,7 @@ export const OrderItemService = {
         },
         skip: prismaParams.skip,
         take: prismaParams.take,
-        // orderBy: prismaParams.orderBy, // OrderItem might not have simple orderBy 
+        orderBy: prismaParams.orderBy,
       }),
       prisma.orderItem.count({ where: whereClause })
     ]);
@@ -132,8 +139,8 @@ export const OrderItemService = {
     const item = await prisma.orderItem.findUnique({
       where: { id },
       include: {
-        order: true,
-        product: true,
+        order: { select: { id: true, orderCode: true, status: true, totalAmount: true } },
+        product: { select: { id: true, name: true, code: true, price: true, imageId: true } },
       },
     });
 
@@ -143,15 +150,35 @@ export const OrderItemService = {
 
   update: async (id: string, data: any) => {
     const updated = await prisma.orderItem.update({ where: { id }, data: data });
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+
+    setImmediate(async () => {
+      try {
+        await Promise.all([
+          redis.del(`${CACHE_PREFIX}${id}`),
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`)
+        ]);
+      } catch (e) {
+        console.error('[OrderItemService] Error background (update):', e);
+      }
+    });
+
     return updated;
   },
 
   delete: async (id: string) => {
     const deleted = await prisma.orderItem.delete({ where: { id } });
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+
+    setImmediate(async () => {
+      try {
+        await Promise.all([
+          redis.del(`${CACHE_PREFIX}${id}`),
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`)
+        ]);
+      } catch (e) {
+        console.error('[OrderItemService] Error background (delete):', e);
+      }
+    });
+
     return deleted;
   },
 };

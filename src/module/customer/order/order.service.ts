@@ -83,75 +83,74 @@ const buildOrderWhereClause = async (filters?: OrderFilters) => {
   return { whereClause, subscriptionId };
 };
 
+// ─── Helper: Resolve Entities in Parallel ─────────────────────────────
+const resolveSociety = async (idOrCode: string) => {
+  let society = await prisma.society.findUnique({ where: { id: idOrCode } });
+  if (!society) society = await prisma.society.findUnique({ where: { code: idOrCode } });
+  if (!society) throw new Error(`Sociedad no encontrada (ID/Code: ${idOrCode})`);
+  return society;
+};
+
+const resolveBranch = async (idOrCode: string, societyId: string) => {
+  let branch = await prisma.branchOffice.findUnique({ where: { id: idOrCode } });
+  if (!branch) {
+    branch = await prisma.branchOffice.findUnique({
+      where: { societyId_code: { societyId, code: idOrCode } }
+    });
+  }
+  if (!branch) throw new Error(`Sucursal no encontrada (ID/Code: ${idOrCode})`);
+  return branch;
+};
+
+const resolvePartner = async (idOrDoc: string) => {
+  let partner = await prisma.bussinessPartner.findUnique({ where: { id: idOrDoc } });
+  if (!partner) partner = await prisma.bussinessPartner.findFirst({ where: { documentNumber: idOrDoc } });
+  if (!partner) throw new Error(`Cliente no encontrado (ID/Doc: ${idOrDoc})`);
+  return partner;
+};
+
+const resolveCurrency = async (idOrCode: string) => {
+  let currency = await prisma.currency.findUnique({ where: { id: idOrCode } });
+  if (!currency) currency = await prisma.currency.findUnique({ where: { code: idOrCode } });
+  if (!currency) throw new Error(`Moneda no encontrada (ID/Code: ${idOrCode})`);
+  return currency;
+};
+
 export const OrderService = {
   /**
    * Crear una nueva orden con cálculo de financieros backend-side
+   * OPTIMIZADO: Validaciones paralelas, stock batch, notificaciones en background
    */
   create: async (data: CreateOrderInput) => {
-    // 1. Validar existencias básicas (Partner, Society, Branch, Currency)
-    // Validate Society (ID or Code)
-    let society = await prisma.society.findUnique({ where: { id: data.societyId } });
-    if (!society) {
-      society = await prisma.society.findUnique({ where: { code: data.societyId } });
-    }
-    if (!society) throw new Error(`Sociedad no encontrada (ID/Code: ${data.societyId})`);
-
-    // Validate Branch (ID or Code)
-    let branch = await prisma.branchOffice.findUnique({ where: { id: data.branchId } });
-    if (!branch) {
-      // Branch code is unique per society, so we need the resolved societyId
-      branch = await prisma.branchOffice.findUnique({
-        where: {
-          societyId_code: {
-            societyId: society.id,
-            code: data.branchId
-          }
-        }
-      });
-    }
-    if (!branch) throw new Error(`Sucursal no encontrada (ID/Code: ${data.branchId})`);
-
-    // Validate Partner (ID or Document Number?)
-    // Partner doesn't have a simple 'code' usually, but documentNumber is unique.
-    let partner = await prisma.bussinessPartner.findUnique({ where: { id: data.partnerId } });
-    if (!partner) {
-      partner = await prisma.bussinessPartner.findFirst({ where: { documentNumber: data.partnerId } });
-    }
-    if (!partner) throw new Error(`Cliente no encontrado (ID/Doc: ${data.partnerId})`);
-
-    // Validate Currency (ID or Code)
-    let currency = await prisma.currency.findUnique({ where: { id: data.currencyId } });
-    if (!currency) {
-      currency = await prisma.currency.findUnique({ where: { code: data.currencyId } });
-    }
-    if (!currency) throw new Error(`Moneda no encontrada (ID/Code: ${data.currencyId})`);
-
-    // Re-assign resolved IDs to data object to ensure database consistency
+    // ─── 1. PARALLEL: Validar entidades + obtener productos ────────────
+    // Society must resolve first because Branch needs societyId for composite key
+    const society = await resolveSociety(data.societyId);
     data.societyId = society.id;
+
+    // Now resolve Branch, Partner, Currency AND Products in parallel
+    const productIds = data.orderItems.map(i => i.productId);
+    const [branch, partner, currency, products] = await Promise.all([
+      resolveBranch(data.branchId, society.id),
+      resolvePartner(data.partnerId),
+      resolveCurrency(data.currencyId),
+      prisma.product.findMany({ where: { id: { in: productIds } } })
+    ]);
+
+    // Re-assign resolved IDs
     data.branchId = branch.id;
     data.partnerId = partner.id;
     data.currencyId = currency.id;
-    // 2. Obtener precios de productos para validar/calcular
-    const productIds = data.orderItems.map(i => i.productId);
-    const products = await prisma.product.findMany({
-      where: { id: { in: productIds } }
-    });
 
     // Map para acceso rápido
     const productMap = new Map<string, Product>();
     products.forEach(p => productMap.set(p.id, p));
 
-    // 3. Calcular Totales
+    // ─── 2. Calcular Totales ──────────────────────────────────────────
     const TAX_RATE = 0.18; // IGV 18%
 
-    // Preparar items para creación
     const itemsToCreate = data.orderItems.map(item => {
       const product = productMap.get(item.productId);
       if (!product) throw new Error(`Producto ${item.productId} no encontrado`);
-
-      // Logic: Price Calculation (Tax Inclusive)
-      // List Price = product.price (Database)
-      // Sold Price = item.unitPrice (Frontend Input) - This INCLUDES TAX (IGV)
 
       const listPrice = Number(product.price);
       const soldPrice = item.unitPrice;
@@ -159,74 +158,54 @@ export const OrderService = {
       let finalUnitPrice = soldPrice;
       let finalDiscount = 0;
 
-      // If Sold Price is LESS than List Price, record difference as discount
-      // Note: Comparing prices inclusive of tax
       if (soldPrice < listPrice) {
-        finalUnitPrice = listPrice; // Record List Price
+        finalUnitPrice = listPrice;
         finalDiscount = (listPrice - soldPrice) * item.quantity;
       } else {
         finalUnitPrice = soldPrice;
         finalDiscount = 0;
       }
 
-      // 1. Calculate Item Total (Gross)
-      // This is what customer pays for this item line (before global discount)
       const itemTotalGross = item.quantity * soldPrice;
-
-      // 2. Calculate Subtotal (Base Imponible)
-      // Subtotal = Total / 1.18
       const subtotalItem = Number((itemTotalGross / (1 + TAX_RATE)).toFixed(2));
-
-      // 3. Calculate Tax (IGV)
-      // Tax = Total - Subtotal
       const taxItem = Number((itemTotalGross - subtotalItem).toFixed(2));
 
       return {
         productId: item.productId,
         quantity: item.quantity,
-        unitPrice: finalUnitPrice, // Using List Price if discounted
+        unitPrice: finalUnitPrice,
         discount: finalDiscount,
-
         subtotal: subtotalItem,
         taxAmount: taxItem,
-        total: itemTotalGross, // Store GROSS total for item
+        total: itemTotalGross,
         comment: item.comment,
-        costPrice: product.priceCost || 0 // Snapshot del costo actual
+        costPrice: product.priceCost || 0
       };
     });
 
-    // Order Level Totals
-    // calculatedSubtotal is sum of item subtotals (Base Imponible)
-
-    // Total Tax is sum of item taxes (derived from difference logic above or re-calculated)
-    // To minimize rounding errors, we can sum totals and subtotals.
     const orderTotalGross = itemsToCreate.reduce((acc, item) => acc + item.total, 0);
     const orderSubtotal = itemsToCreate.reduce((acc, item) => acc + item.subtotal, 0);
     const totalTax = Number((orderTotalGross - orderSubtotal).toFixed(2));
-
-    // Final Total Amount = Gross Total - Global Discount
     const totalAmount = orderTotalGross - data.discount;
 
-    // 4. VALIDATE STOCK AVAILABILITY (Before creating order)
-    // Only validate if order will reserve stock (PENDING_PAYMENT or COMPLETED)
+    // ─── 3. BATCH: Validar Stock (1 sola query en vez de N) ───────────
     if (data.status === OrderStatus.PENDING_PAYMENT || data.status === OrderStatus.COMPLETED) {
+      const allBranchStocks = await prisma.branchOfficeProduct.findMany({
+        where: {
+          branchOfficeId: data.branchId,
+          productId: { in: productIds }
+        },
+        select: { productId: true, availableStock: true }
+      });
+
+      const stockMap = new Map(allBranchStocks.map(s => [s.productId, s.availableStock]));
       const stockErrors: string[] = [];
 
       for (const item of itemsToCreate) {
         const product = productMap.get(item.productId);
         if (!product) continue;
 
-        // Check stock in the specific branch
-        const branchStock = await prisma.branchOfficeProduct.findUnique({
-          where: {
-            productId_branchOfficeId: {
-              productId: item.productId,
-              branchOfficeId: data.branchId
-            }
-          }
-        });
-
-        const availableStock = branchStock?.availableStock ?? 0;
+        const availableStock = stockMap.get(item.productId) ?? 0;
 
         if (availableStock < item.quantity) {
           stockErrors.push(
@@ -241,10 +220,10 @@ export const OrderService = {
       }
     }
 
-    // 5. Generar Código
+    // ─── 4. Generar Código ─────────────────────────────────────────────
     const orderCode = data.orderCode || `ORD-${Date.now()}`;
 
-    // 5. Transacción de creación
+    // ─── 5. Transacción de creación ───────────────────────────────────
     const order = await prisma.$transaction(async (tx) => {
       const newOrder = await tx.order.create({
         data: {
@@ -263,7 +242,6 @@ export const OrderService = {
           comment: data.comment,
           paymentDate: data.paymentDate ? toLimaTimezone(data.paymentDate) : null,
 
-          // Financials Calculated
           subtotal: orderSubtotal,
           discount: data.discount,
           taxAmount: totalTax,
@@ -281,13 +259,12 @@ export const OrderService = {
         }
       });
 
-      // 6. [STOCK] Reserve Stock ONLY if PENDING_PAYMENT or COMPLETED
-      // If PENDING (Draft), do not reserve.
+      // [STOCK] Reserve Stock ONLY if PENDING_PAYMENT or COMPLETED
       if (newOrder.status === OrderStatus.PENDING_PAYMENT || newOrder.status === OrderStatus.COMPLETED) {
         for (const item of itemsToCreate) {
           await InventoryService.reserveStock(
             item.productId,
-            data.branchId, // Use resolved data.branchId
+            data.branchId,
             item.quantity,
             tx
           );
@@ -302,14 +279,14 @@ export const OrderService = {
             branchOfficeId: data.branchId,
             quantity: item.quantity,
             type: TransactionType.SALE_EXIT,
-            unitCost: 0, // Need to fetch cost? OrderItem has costPrice.
-            totalCost: 0, // update logic handled cost.
+            unitCost: 0,
+            totalCost: 0,
             referenceId: newOrder.id,
             referenceType: 'ORDER',
             documentNumber: newOrder.orderCode
           }, tx);
 
-          // [NEW] Increment Sales Count
+          // Increment Sales Count
           await tx.product.update({
             where: { id: item.productId },
             data: {
@@ -322,54 +299,58 @@ export const OrderService = {
       return newOrder;
     });
 
-    // 7. [Notification] Send Notification if Created as COMPLETED
-    if (order.status === OrderStatus.COMPLETED && society.subscriptionId) {
+    // ─── 6. BACKGROUND: Notificaciones y Cache (fire-and-forget) ──────
+    // El usuario recibe su respuesta INMEDIATAMENTE.
+    // Las notificaciones y la limpieza de caché se procesan en segundo plano.
+    const societyId = society.id;
+    const subscriptionId = society.subscriptionId;
+
+    setImmediate(async () => {
       try {
-        const partnerName = partner.companyName ||
-          `${partner.firstName || ''} ${partner.lastName || ''}`.trim();
+        // A. Notificaciones (solo si COMPLETED)
+        if (order.status === OrderStatus.COMPLETED && subscriptionId) {
+          const partnerName = partner.companyName ||
+            `${partner.firstName || ''} ${partner.lastName || ''}`.trim();
 
-        console.log('[OrderService] 🟢 Intentando publicar notificación (CREATE) para orden:', order.orderCode);
+          console.log('[OrderService] 🟢 Publicando notificación (CREATE) para orden:', order.orderCode);
 
-        // A. Realtime Update
-        await publishRealtimeUpdate(
-          society.subscriptionId,
-          'VENTA', // Entity Type
-          {
-            id: order.id,
-            status: 'COMPLETADO',
-            orderCode: order.orderCode,
-            totalAmount: order.totalAmount,
-            partnerName: partnerName,
-            paidAt: new Date()
-          }
-        );
-        await publishRealtimeUpdate(society.subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' });
+          await Promise.all([
+            publishRealtimeUpdate(subscriptionId, 'VENTA', {
+              id: order.id,
+              status: 'COMPLETADO',
+              orderCode: order.orderCode,
+              totalAmount: order.totalAmount,
+              partnerName: partnerName,
+              paidAt: new Date()
+            }),
+            publishRealtimeUpdate(subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' }),
+            publishNotification({
+              type: NotificationType.SALES,
+              title: 'Venta Realizada',
+              message: `La orden #${order.orderCode} ha sido procesada exitosamente.`,
+              subscriptionId: subscriptionId,
+              priority: NotificationPriority.HIGH,
+              link: `/orders/history?id=${order.id}`,
+              metadata: {
+                orderId: order.id,
+                amount: order.totalAmount
+              }
+            })
+          ]);
+        }
 
-        // B. Visual Notification (Toast)
-        await publishNotification({
-          type: NotificationType.SALES,
-          title: 'Venta Realizada',
-          message: `La orden #${order.orderCode} ha sido procesada exitosamente.`,
-          subscriptionId: society.subscriptionId,
-          priority: NotificationPriority.HIGH,
-          link: `/orders/history?id=${order.id}`,
-          metadata: {
-            orderId: order.id,
-            amount: order.totalAmount
-          }
-        });
+        // B. Invalidar Caches
+        await Promise.all([
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+          ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${societyId}`)),
+          redis.deleteKeysByPrefix('products:'),
+          redis.deleteKeysByPrefix('products:select:'),
+          redis.deleteKeysByPrefix('branch_office_products:')
+        ]);
       } catch (error) {
-        console.error('[OrderService] ❌ Error enviando notificación en create:', error);
+        console.error('[OrderService] ❌ Error en procesamiento background (create):', error);
       }
-    }
-
-    // Invalidate Cache
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await Promise.all(['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${society.id}`))); // Invalidate Dashboard Stats
-    // Invalidate Product Cache (Stock Changed)
-    await redis.deleteKeysByPrefix('products:');
-    await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
-    await redis.deleteKeysByPrefix('branch_office_products:');
+    });
 
     return order;
   },
@@ -586,66 +567,66 @@ export const OrderService = {
       return updated;
     });
 
-    // 3. Post-Transaction Actions (Notifications, Cache Invalidation)
+    // ─── BACKGROUND: Notificaciones y Cache (fire-and-forget) ──────
+    const resultSocietyId = result.societyId;
 
-    // A. Realtime Update for Completed Orders
-    if (isCompleting) {
+    setImmediate(async () => {
       try {
-        const fullOrder = await prisma.order.findUnique({
-          where: { id: result.id },
-          include: {
-            society: { select: { subscriptionId: true } },
-            partner: { select: { companyName: true, firstName: true, lastName: true } }
-          }
-        });
-
-        if (fullOrder?.society?.subscriptionId) {
-          const partnerName = fullOrder.partner.companyName ||
-            `${fullOrder.partner.firstName || ''} ${fullOrder.partner.lastName || ''}`.trim();
-
-          console.log('[OrderService] 🟢 Intentando publicar notificación (UPDATE) para orden:', fullOrder.society.subscriptionId);
-
-          await publishRealtimeUpdate(
-            fullOrder.society.subscriptionId,
-            'VENTA', // Entity Type
-            {
-              id: fullOrder.id,
-              status: 'COMPLETADO',
-              orderCode: fullOrder.orderCode,
-              totalAmount: fullOrder.totalAmount,
-              partnerName: partnerName,
-              paidAt: new Date() // Current time as payment/completion time
-            }
-          );
-          await publishRealtimeUpdate(fullOrder.society.subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' });
-
-          // 2. Notificación Visual (Toast)
-          await publishNotification({
-            type: NotificationType.SALES,
-            title: 'Venta Realizada',
-            message: `La orden #${fullOrder.orderCode} ha sido procesada exitosamente.`,
-            subscriptionId: fullOrder.society.subscriptionId,
-            priority: NotificationPriority.HIGH,
-            // Opcional: link para ir al detalle
-            link: `/orders/history?id=${fullOrder.id}`,
-            metadata: {
-              orderId: fullOrder.id,
-              amount: fullOrder.totalAmount
+        // A. Realtime Update for Completed Orders
+        if (isCompleting) {
+          const fullOrder = await prisma.order.findUnique({
+            where: { id: result.id },
+            include: {
+              society: { select: { subscriptionId: true } },
+              partner: { select: { companyName: true, firstName: true, lastName: true } }
             }
           });
-        }
-      } catch (error) {
-        console.error('Error publishing realtime update for order:', id, error);
-      }
-    }
 
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await Promise.all(['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${result.societyId}`))); // Invalidate Dashboard Stats
-    // Invalidate Product Cache (Stock Changed)
-    await redis.deleteKeysByPrefix('products:');
-    await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
-    await redis.deleteKeysByPrefix('branch_office_products:');
+          if (fullOrder?.society?.subscriptionId) {
+            const partnerName = fullOrder.partner.companyName ||
+              `${fullOrder.partner.firstName || ''} ${fullOrder.partner.lastName || ''}`.trim();
+
+            console.log('[OrderService] 🟢 Publicando notificación (UPDATE) para orden:', fullOrder.society.subscriptionId);
+
+            await Promise.all([
+              publishRealtimeUpdate(fullOrder.society.subscriptionId, 'VENTA', {
+                id: fullOrder.id,
+                status: 'COMPLETADO',
+                orderCode: fullOrder.orderCode,
+                totalAmount: fullOrder.totalAmount,
+                partnerName: partnerName,
+                paidAt: new Date()
+              }),
+              publishRealtimeUpdate(fullOrder.society.subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' }),
+              publishNotification({
+                type: NotificationType.SALES,
+                title: 'Venta Realizada',
+                message: `La orden #${fullOrder.orderCode} ha sido procesada exitosamente.`,
+                subscriptionId: fullOrder.society.subscriptionId,
+                priority: NotificationPriority.HIGH,
+                link: `/orders/history?id=${fullOrder.id}`,
+                metadata: {
+                  orderId: fullOrder.id,
+                  amount: fullOrder.totalAmount
+                }
+              })
+            ]);
+          }
+        }
+
+        // B. Invalidar Caches
+        await Promise.all([
+          redis.del(`${CACHE_PREFIX}${id}`),
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+          ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${resultSocietyId}`)),
+          redis.deleteKeysByPrefix('products:'),
+          redis.deleteKeysByPrefix('products:select:'),
+          redis.deleteKeysByPrefix('branch_office_products:')
+        ]);
+      } catch (error) {
+        console.error('[OrderService] ❌ Error en procesamiento background (update):', error);
+      }
+    });
 
     return result;
   },
