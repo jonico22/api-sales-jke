@@ -406,22 +406,25 @@ export const OrderService = {
           currency: { select: { code: true, symbol: true } },
           society: { select: { id: true, name: true } },
           branch: { select: { id: true, name: true } },
-          OrderPayment: { select: { paymentMethod: true, amount: true } }, // Include methods and amounts
-          _count: { select: { orderItems: true } },
-          orderItems: { select: { quantity: true } } // Include quantities for total calculation
+          OrderPayment: { select: { paymentMethod: true, amount: true } },
+          _count: { select: { orderItems: true } }
         }
       }),
       prisma.order.count({ where: whereClause })
     ]);
 
-    // Calculate total quantity of products
+    // Use _count instead of loading all items just to sum quantity
     const formattedData = data.map(order => ({
       ...order,
-      totalProducts: order.orderItems.reduce((sum, item) => sum + item.quantity, 0)
+      totalProducts: order._count.orderItems
     }));
 
     const result = buildPaginatedResult(formattedData, page, limit, total);
-    await redis.set(cacheKey, result, CACHE_TTL_LIST);
+
+    // Background cache set
+    setImmediate(async () => {
+      try { await redis.set(cacheKey, result, CACHE_TTL_LIST); } catch (_) { }
+    });
 
     return result as PaginatedResult<Order & { totalProducts: number }>;
   },
@@ -437,31 +440,40 @@ export const OrderService = {
     const order = await prisma.order.findUnique({
       where: { id },
       include: {
-        partner: true,
-        branch: true,
-        currency: true,
-        society: { select: { id: true, name: true } },
+        partner: {
+          select: {
+            id: true, companyName: true, firstName: true, lastName: true,
+            documentNumber: true, documentType: true, email: true, phone: true,
+            address: true
+          }
+        },
+        branch: { select: { id: true, name: true, code: true, address: true } },
+        currency: { select: { id: true, code: true, symbol: true, name: true } },
+        society: { select: { id: true, name: true, code: true } },
         orderItems: {
           include: {
             product: {
               select: {
-                id: true,
-                name: true,
-                code: true,
-                imageId: true,
-                price: true,     // Current List Price
-                stock: true,     // Current Global Stock
-                priceCost: true, // Current Cost
-                description: true
+                id: true, name: true, code: true, imageId: true,
+                price: true, priceCost: true
               }
             }
           }
         },
-        OrderPayment: true // Incluir pagos relacionados
+        OrderPayment: {
+          select: {
+            id: true, paymentMethod: true, amount: true, paymentDate: true,
+            referenceCode: true, imageId: true, status: true
+          }
+        }
       }
     });
 
-    if (order) await redis.set(cacheKey, order, CACHE_TTL_SINGLE);
+    if (order) {
+      setImmediate(async () => {
+        try { await redis.set(cacheKey, order, CACHE_TTL_SINGLE); } catch (_) { }
+      });
+    }
     return order;
   },
 
@@ -669,13 +681,24 @@ export const OrderService = {
       });
     });
 
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await Promise.all(['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${result.societyId}`))); // Invalidate Dashboard Stats
-    // Invalidate Product Cache (Stock Changed)
-    await redis.deleteKeysByPrefix('products:');
-    await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
-    await redis.deleteKeysByPrefix('branch_office_products:');
+    // ─── BACKGROUND: Cache Invalidation ──────────────────────────────
+    const deletedSocietyId = result.societyId;
+
+    setImmediate(async () => {
+      try {
+        await Promise.all([
+          redis.del(`${CACHE_PREFIX}${id}`),
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+          ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
+            .map(k => redis.del(`dashboard:${k}:${deletedSocietyId}`)),
+          redis.deleteKeysByPrefix('products:'),
+          redis.deleteKeysByPrefix('products:select:'),
+          redis.deleteKeysByPrefix('branch_office_products:')
+        ]);
+      } catch (e) {
+        console.error('[OrderService] ❌ Error background (delete):', e);
+      }
+    });
 
     return result;
   },
