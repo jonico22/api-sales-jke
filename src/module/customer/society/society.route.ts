@@ -5,8 +5,9 @@ const router = Router();
 
 router.post('/', controller.create);
 router.get('/', controller.findAll);
-router.get('/:id', controller.findOne);
-router.put('/:id', controller.update);
-router.delete('/:id', controller.remove);
+router.get('/current', controller.current); // New endpoint
+router.get('/:code', controller.findOne);
+router.put('/:code', controller.update);
+router.delete('/:code', controller.remove);
 
 export default router;

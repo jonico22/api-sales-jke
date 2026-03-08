@@ -11,7 +11,7 @@ from (
 	 union all
 	 select '00b23aff-6157-44f4-bb58-ed9898e455cf','PASAPORTE','Pasaporte',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP,true,NULL,NULL
 ) as t
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (code) DO NOTHING;
 
 -- ReceiptType
 INSERT INTO public."ReceiptType"
@@ -22,7 +22,7 @@ FROM (
     UNION ALL
     SELECT 'a7c0b2b4-7cc1-40cf-9cd6-73b0b5ce6556', 'FA', 'Factura', 'Factura', true, true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 ) t
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (code) DO NOTHING;
 
 
 -- Tax
@@ -33,7 +33,7 @@ FROM (
     SELECT 'd619aae6-4032-44cf-bc68-81500de37252', 'IGV', 'Impuesto a la renta', 18, 'percentage'::"TaxType",
            'Impuesto a la renta', true, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
 ) t
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (code) DO NOTHING;
 
 
 -- Currency
@@ -45,4 +45,4 @@ FROM (
     SELECT '221c1d15-04c9-4159-9ed1-8c6b2ad18e47', 'Nuevos soles', 'PEN', 'S/.', true,
            CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, NULL, NULL
 ) t
-ON CONFLICT (id) DO NOTHING;
+ON CONFLICT (code) DO NOTHING;

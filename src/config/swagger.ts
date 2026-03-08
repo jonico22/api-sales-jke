@@ -1,6 +1,10 @@
-import { OpenAPIRegistry, OpenApiGeneratorV3 } from '@asteasolutions/zod-to-openapi';
+import { OpenAPIRegistry, OpenApiGeneratorV3, extendZodWithOpenApi } from '@asteasolutions/zod-to-openapi';
 import swaggerJSDoc from 'swagger-jsdoc';
 import { envs } from '@/config/envs';
+import { z } from 'zod';
+
+// Extender Zod con métodos de OpenAPI
+extendZodWithOpenApi(z);
 
 // 1. Creamos el registro de modelos
 export const registry = new OpenAPIRegistry();
@@ -21,7 +25,7 @@ const swaggerOptions: swaggerJSDoc.Options = {
       },
     },
   },
-  apis: ['./src/routes/*.ts'], 
+  apis: ['./src/routes/*.ts'],
 };
 
 // Combinamos JSDoc con los modelos de Zod
@@ -29,11 +33,11 @@ export const getSafeSwaggerDoc = () => {
   const spec = swaggerJSDoc(swaggerOptions) as any;
   const generator = new OpenApiGeneratorV3(registry.definitions);
   const components = generator.generateComponents();
-  
+
   // Inyectamos los modelos generados por Zod en la definición de Swagger
-  spec.components.schemas = { 
-    ...spec.components.schemas, 
-    ...(components.components?.schemas || {}) 
+  spec.components.schemas = {
+    ...spec.components.schemas,
+    ...(components.components?.schemas || {})
   };
   return spec;
 };

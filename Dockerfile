@@ -1,40 +1,61 @@
-# 1. BASE: Instalación de dependencias y librerías de sistema
-FROM node:20-alpine AS base
-RUN apk add --no-cache openssl
+# 1. BASE
+FROM node:22-bookworm-slim AS base
+ENV TZ=America/Lima
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
-COPY package*.json ./
-COPY prisma ./prisma/
 
-# 2. DEVELOPMENT: Etapa para programar con Hot Reload
+# 2. DEVELOPMENT (Aquí arreglamos el problema)
 FROM base AS development
-# Instalamos todas las dependencias (incluye devDependencies)
-RUN npm install
+# --- CORRECCIÓN CRÍTICA ---
+# Forzamos entorno de desarrollo para que npm install instale TypeScript
+ENV NODE_ENV=development 
+# --------------------------
+COPY package*.json ./
+# Install with exact versions from lockfile
+RUN npm ci
+
+# 2. Copy Prisma schema and generate (cached if schema doesn't change)
+COPY prisma ./prisma/
+RUN DATABASE_URL="postgresql://placeholder:5432/db" npx prisma generate
+
+# 3. Copy ALL source code before build
 COPY . .
-# Generación de cliente (con URL ficticia) para que TS no de errores en el build
-RUN DATABASE_URL="postgresql://placeholder:placeholder@localhost:5432/placeholder" npx prisma generate
 
 EXPOSE 3000
-# El control ahora es 100% de NPM
 CMD ["npm", "run", "dev"]
 
-# 3. BUILD: Compilación de TS a JS
+# 3. BUILD
 FROM development AS build
+ARG SERVICE_URL_API
+ARG SERVICE_FQDN_API
+# Aquí volvemos a producción para el build
+ENV NODE_ENV=production
+# Aumentamos RAM
+ENV NODE_OPTIONS="--max-old-space-size=4096"
+
+# Build using npm script
 RUN npm run build
+
 RUN npm prune --production
 
-# 4. PRODUCTION: Imagen ligera
-FROM node:20-alpine AS production
-RUN apk add --no-cache openssl
-WORKDIR /app
+# 4. PRODUCTION
+FROM base AS production
 ENV NODE_ENV=production
+ENV TZ=America/Lima
+WORKDIR /app
 
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/package*.json ./
 COPY --from=build /app/prisma ./prisma
-COPY --from=build /app/src/generated ./src/generated
 
-EXPOSE 3000
-# En producción no solemos migrar automáticamente por seguridad, 
-# pero puedes usar un script de npm si lo prefieres.
-CMD ["npm", "run", "start:prod"]
+# 👇 AÑADE ESTA LÍNEA (Vital para que funcionen los alias @/)
+COPY --from=build /app/tsconfig.json ./tsconfig.json
+EXPOSE 4500
+
+# Create Uploads Directory
+RUN mkdir -p /app/uploads/temp && chmod -R 777 /app/uploads
+
+RUN echo "📂 CONTENIDO DE DIST:" && ls -R dist
+
+CMD ["npm", "run", "start:prod-app"]

@@ -1,0 +1,25 @@
+# Este archivo se aplica automáticamente en desarrollo
+# Para producción, usa: docker-compose -f docker-compose.yml up
+services:
+  api:
+    environment:
+      # En desarrollo, Infisical se maneja con 'infisical run' desde el host
+      # Sobrescribimos las variables para que no se usen desde el contenedor
+      - DATABASE_URL
+      - DB_USER
+      - DB_PASSWORD
+      - DB_NAME
+      - REDIS_URL
+      - INFISICAL_MACHINE_IDENTITY_CLIENT_ID=
+      - INFISICAL_MACHINE_IDENTITY_CLIENT_SECRET=
+      - INFISICAL_ENV=
+      - INFISICAL_PROJECT_PATH=
+
+      - NEW_RELIC_ENABLED=true
+      - NEW_RELIC_PRISMA_ENABLED=true
+      - NEW_RELIC_DATASTORE_REPORTING_ENABLED=true
+    volumes:
+      - .:/app # Solo en desarrollo
+      - /app/node_modules
+      - /app/src/generated/prisma
+      - /app/node_modules/.prisma
