@@ -1,10 +1,17 @@
 import prisma from '@/config/prisma';
 
-import { createSocietySchema,updateSocietySchema } from './society.validation'
+import { createSocietySchema, updateSocietySchema } from './society.validation'
 import z from 'zod';
 
+import { v4 as uuidv4 } from 'uuid';
+
 export const createSociety = async (data: z.infer<typeof createSocietySchema>) => {
-  return prisma.society.create({ data });
+  return prisma.society.create({
+    data: {
+      ...data,
+      subscriptionId: uuidv4(),
+    }
+  });
 };
 
 export const getAllSocieties = async () => {

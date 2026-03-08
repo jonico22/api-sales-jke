@@ -12,7 +12,7 @@ export const CategoryService = {
 
   create: async (data: unknown) => {
     const parsed = createCategorySchema.parse(data);
-    return prisma.category.create({ data: parsed });
+    return prisma.category.create({ data: parsed.body });
   },
 
   update: async (id: string, data: unknown) => {
@@ -20,7 +20,10 @@ export const CategoryService = {
     return prisma.category.update({
       where: { id },
       data: {
-        ...parsed,
+        name: parsed.body.name,
+        code: parsed.body.code,
+        isActive: parsed.body.isActive,
+        isDeleted: parsed.body.isDeleted,
         updatedAt: new Date(),
       },
     });
