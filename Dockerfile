@@ -1,9 +1,7 @@
 # 1. BASE
 FROM node:22-bookworm-slim AS base
 ENV TZ=America/Lima
-RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates tzdata openssl && rm -rf /var/lib/apt/lists/*
-RUN curl -1sLf 'https://dl.cloudsmith.io/public/infisical/infisical-cli/setup.deb.sh' | bash && \
-    apt-get update && apt-get install -y --no-install-recommends infisical && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y --no-install-recommends tzdata openssl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 # 2. DEVELOPMENT (Aquí arreglamos el problema)
@@ -60,5 +58,4 @@ RUN mkdir -p /app/uploads/temp && chmod -R 777 /app/uploads
 
 RUN echo "📂 CONTENIDO DE DIST:" && ls -R dist
 
-CMD export INFISICAL_TOKEN=$(infisical login --method=universal-auth --client-id=$INFISICAL_CLIENT_ID --client-secret=$INFISICAL_CLIENT_SECRET --domain=${INFISICAL_API_URL:-https://app.infisical.com} --silent --plain) && \
-    infisical run --token=$INFISICAL_TOKEN --projectId=$INFISICAL_PROJECT_ID --env=$INFISICAL_ENV --path=$INFISICAL_PROJECT_PATH -- npm run start:prod-app
+CMD ["npm", "run", "start:prod-app"]

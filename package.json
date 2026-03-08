@@ -16,7 +16,7 @@
     "start:prod-app": "npm run migrate:deploy && node -r tsconfig-paths/register -r newrelic dist/src/index.js",
     "dev:native": "node --env-file=.env -r tsx src/index.ts",
     "docker:prod": "docker-compose -f docker-compose.yml up --build api",
-    "docker:dev": "cross-env NODE_ENV=development BUILD_TARGET=development infisical run --env=dev --path=/sales -- docker-compose --profile local-services up --build",
+    "docker:dev": "cross-env NODE_ENV=development BUILD_TARGET=development docker-compose --profile local-services up --build",
     "docker:down": "docker-compose --profile local-services down",
     "docker:clean": "docker-compose --profile local-services down -v --remove-orphans",
     "docker:reset": "npm run docker:clean && npm run docker:dev",

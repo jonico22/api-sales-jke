@@ -4,16 +4,12 @@ services:
       context: .
       target: ${BUILD_TARGET:-production}
       args:
-        - INFISICAL_CLIENT_ID=${INFISICAL_CLIENT_ID}
-        - INFISICAL_CLIENT_SECRET=${INFISICAL_CLIENT_SECRET}
-        - INFISICAL_ENV=${INFISICAL_ENV}
-        - INFISICAL_PROJECT_PATH=${INFISICAL_PROJECT_PATH}
-        - INFISICAL_PROJECT_ID=${INFISICAL_PROJECT_ID}
         - NODE_ENV=${NODE_ENV:-production}
     container_name: node_api_app
     restart: always
     ports:
       - "${PORT:-3000}:3000"
+    env_file: .env
     environment:
       # Variables generales (desarrollo y producción)
       - NODE_ENV=${NODE_ENV:-production}
@@ -41,13 +37,6 @@ services:
       - NEW_RELIC_APPLICATION_LOGGING_METRICS_ENABLED=true
       - NEW_RELIC_PRISMA_ENABLED=true
       - NEW_RELIC_TRANSACTION_TRACER_RECORD_SQL="obfuscated"
-      # Infisical (solo producción - en desarrollo se usa 'infisical run' desde el host)
-      - INFISICAL_CLIENT_ID=${INFISICAL_CLIENT_ID}
-      - INFISICAL_CLIENT_SECRET=${INFISICAL_CLIENT_SECRET}
-      - INFISICAL_ENV=${INFISICAL_ENV}
-      - INFISICAL_PROJECT_PATH=${INFISICAL_PROJECT_PATH:-/api}
-      - INFISICAL_PROJECT_ID=${INFISICAL_PROJECT_ID}
-      - INFISICAL_API_URL=${INFISICAL_API_URL:-https://app.infisical.com}
     # Los volúmenes para desarrollo se definen en docker-compose.override.yml
     # En producción, el código viene empaquetado en la imagen Docker
     networks:
