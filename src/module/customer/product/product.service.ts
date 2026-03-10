@@ -432,9 +432,13 @@ export const ProductService = {
   },
 
   /**
-   * Obtener lista única de marcas
+   * Obtener lista única de marcas (con cache)
    */
   getUniqueBrands: async (societyId?: string): Promise<{ id: string; brand: string }[]> => {
+    const cacheKey = `${CACHE_PREFIX}brands:${societyId || 'all'}`;
+    const cached = await redis.get<{ id: string; brand: string }[]>(cacheKey);
+    if (cached) return cached;
+
     const whereClause: any = { isDeleted: false, brand: { not: null } };
 
     if (societyId) {
@@ -455,23 +459,25 @@ export const ProductService = {
       orderBy: { brand: 'asc' }
     });
 
-    return result
+    const brands = result
       .filter((item): item is { brand: string } => typeof item.brand === 'string' && item.brand.length > 0)
-      .map(item => ({
-        id: item.brand,
-        brand: item.brand
-      }));
+      .map(item => ({ id: item.brand, brand: item.brand }));
+
+    await redis.set(cacheKey, brands, CACHE_TTL_SELECT);
+    return brands;
   },
 
   /**
-   * Obtener lista única de colores
+   * Obtener lista única de colores (con cache)
    */
   getUniqueColors: async (societyId?: string): Promise<{ id: string; color: string; colorCode: string | null }[]> => {
+    const cacheKey = `${CACHE_PREFIX}colors:${societyId || 'all'}`;
+    const cached = await redis.get<{ id: string; color: string; colorCode: string | null }[]>(cacheKey);
+    if (cached) return cached;
+
     const whereClause: any = { isDeleted: false, color: { not: null } };
 
     if (societyId) {
-      // Logic for Society resolution (duplicated for safety)
-      // Ideally this should be a private helper, but keeping it inline for now
       const society = await prisma.society.findUnique({ where: { code: societyId } });
       if (society) {
         whereClause.societyId = society.id;
@@ -489,13 +495,12 @@ export const ProductService = {
       orderBy: { color: 'asc' }
     });
 
-    return result
+    const colors = result
       .filter((item): item is { color: string; colorCode: string | null } => typeof item.color === 'string' && item.color.length > 0)
-      .map(item => ({
-        id: item.color,
-        color: item.color,
-        colorCode: item.colorCode
-      }));
+      .map(item => ({ id: item.color, color: item.color, colorCode: item.colorCode }));
+
+    await redis.set(cacheKey, colors, CACHE_TTL_SELECT);
+    return colors;
   },
 
   /**
