@@ -69,6 +69,11 @@ const startServer = async () => {
     app.listen(envs.PORT, '0.0.0.0', () => {
       logger.info(`🚀 Servidor iniciado en puerto ${envs.PORT}`);
       logger.info(`🌍 Entorno actual: ${envs.NODE_ENV}`);
+
+      // Keep-alive: Ping a Neon DB cada 4 min para evitar cold start (auto-suspend a los 5 min)
+      setInterval(async () => {
+        try { await prisma.$queryRaw`SELECT 1`; } catch (_) { }
+      }, 4 * 60 * 1000);
     });
   } catch (error) {
     logger.fatal(error, '❌ Error crítico al iniciar la aplicación');
