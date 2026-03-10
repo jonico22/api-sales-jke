@@ -16,7 +16,7 @@ RUN npm ci
 
 # 2. Copy Prisma schema and generate (cached if schema doesn't change)
 COPY prisma ./prisma/
-RUN DATABASE_URL="postgresql://placeholder:5432/db" npx prisma generate
+RUN DATABASE_URL="postgresql://placeholder:5432/db" DIRECT_URL="postgresql://placeholder:5432/db" npx prisma generate
 
 # 3. Copy ALL source code before build
 COPY . .
@@ -40,7 +40,8 @@ RUN npm prune --production
 
 # 4. PRODUCTION
 FROM base AS production
-ENV NODE_ENV=production
+ARG NODE_ENV=production
+ENV NODE_ENV=${NODE_ENV}
 ENV TZ=America/Lima
 WORKDIR /app
 
@@ -51,7 +52,6 @@ COPY --from=build /app/prisma ./prisma
 
 # 👇 AÑADE ESTA LÍNEA (Vital para que funcionen los alias @/)
 COPY --from=build /app/tsconfig.json ./tsconfig.json
-EXPOSE 4500
 
 # Create Uploads Directory
 RUN mkdir -p /app/uploads/temp && chmod -R 777 /app/uploads

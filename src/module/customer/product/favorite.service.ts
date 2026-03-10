@@ -1,6 +1,10 @@
 
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
+import { formatToLimaTime } from '@/utils/dateFormatter';
+
+const CACHE_PREFIX = 'favorites:';
+const CACHE_TTL = 300; // 5 min
 
 export const FavoriteService = {
     /**
@@ -28,35 +32,43 @@ export const FavoriteService = {
         });
 
         if (existing) {
-            // Remove
-            await prisma.favorite.delete({
-                where: { id: existing.id },
+            await prisma.favorite.delete({ where: { id: existing.id } });
+
+            // Background: invalidate cache
+            setImmediate(async () => {
+                try { await redis.del(`${CACHE_PREFIX}${userId}:${targetSocietyId}`); } catch (_) { }
             });
+
             return { isFavorite: false };
         } else {
-            // Add
             await prisma.favorite.create({
-                data: {
-                    productId,
-                    userId,
-                    societyId: targetSocietyId,
-                },
+                data: { productId, userId, societyId: targetSocietyId },
             });
+
+            // Background: invalidate cache
+            setImmediate(async () => {
+                try { await redis.del(`${CACHE_PREFIX}${userId}:${targetSocietyId}`); } catch (_) { }
+            });
+
             return { isFavorite: true };
         }
     },
 
     getByUser: async (userId: string, societyId?: string) => {
-        let whereClause: any = { userId };
-
-        if (societyId) {
-            let targetSocietyId = societyId;
-            if (!/^[0-9a-fA-F-]{36}$/.test(societyId)) {
-                const society = await prisma.society.findUnique({ where: { code: societyId } });
-                if (society) targetSocietyId = society.id;
-            }
-            whereClause.societyId = targetSocietyId;
+        // Resolve society
+        let targetSocietyId = societyId;
+        if (societyId && !/^[0-9a-fA-F-]{36}$/.test(societyId)) {
+            const society = await prisma.society.findUnique({ where: { code: societyId } });
+            if (society) targetSocietyId = society.id;
         }
+
+        // Cache check
+        const cacheKey = `${CACHE_PREFIX}${userId}:${targetSocietyId || 'all'}`;
+        const cached = await redis.get<any[]>(cacheKey);
+        if (cached) return cached;
+
+        const whereClause: any = { userId };
+        if (targetSocietyId) whereClause.societyId = targetSocietyId;
 
         const favorites = await prisma.favorite.findMany({
             where: whereClause,
@@ -67,42 +79,27 @@ export const FavoriteService = {
                         id: true,
                         name: true,
                         code: true,
-                        description: true,
                         price: true,
                         priceCost: true,
                         stock: true,
-                        minStock: true,
-                        societyId: true,
-                        categoryId: true,
                         imageId: true,
                         isActive: true,
-                        isDeleted: true,
-                        createdAt: true,
-                        createdBy: true,
-                        updatedAt: true,
-                        updatedBy: true,
-                        barcode: true,
                         brand: true,
-                        unitOfMeasureId: true,
-                        unitOfMeasure: true,
-                        category: { select: { name: true } },
-                        image: true,
                         color: true,
                         colorCode: true,
-                        salesCount: true,
+                        category: { select: { name: true } },
                     }
                 }
             },
             orderBy: { createdAt: 'desc' }
         });
 
-        const { formatToLimaTime } = await import('@/utils/dateFormatter');
-
-        return favorites.map(f => ({
+        const result = favorites.map(f => ({
             ...f.product,
-            createdAt: formatToLimaTime(f.product.createdAt) as any,
-            updatedAt: f.product.updatedAt ? formatToLimaTime(f.product.updatedAt) as any : f.product.updatedAt,
             favoriteAt: formatToLimaTime(f.createdAt) as any
         }));
+
+        await redis.set(cacheKey, result, CACHE_TTL);
+        return result;
     }
 };

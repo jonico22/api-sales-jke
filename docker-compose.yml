@@ -7,13 +7,14 @@ services:
         - NODE_ENV=${NODE_ENV:-production}
     container_name: node_api_app
     restart: always
-    ports:
-      - "${PORT:-3000}:3000"
+    expose:
+      - "${PORT:-3000}"
     env_file: .env
     environment:
       # Variables generales (desarrollo y producción)
       - NODE_ENV=${NODE_ENV:-production}
       - DATABASE_URL
+      - DIRECT_URL
       - REDIS_URL=${REDIS_URL}
       - REDIS_ENABLED=true
       - LOG_LEVEL=${LOG_LEVEL:-info}

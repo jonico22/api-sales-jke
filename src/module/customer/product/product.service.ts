@@ -98,12 +98,7 @@ export const ProductService = {
 
     // 1. Intentar obtener del cache
     const cached = await redis.get<PaginatedResult<Product>>(cacheKey);
-    if (cached) {
-      console.log(`[Cache HIT] ${cacheKey}`);
-      return cached;
-    }
-
-    console.log(`[Cache MISS] ${cacheKey}`);
+    if (cached) return cached;
 
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
     const whereClause: any = { isDeleted: false };
@@ -137,7 +132,6 @@ export const ProductService = {
     // Búsqueda por nombre o código (case-insensitive)
     if (filters?.search) {
       whereClause.OR = [
-        { name: { contains: filters.search, mode: 'insensitive' } },
         { name: { contains: filters.search, mode: 'insensitive' } },
         { code: { contains: filters.search, mode: 'insensitive' } },
         { barcode: { contains: filters.search, mode: 'insensitive' } },
@@ -344,14 +338,8 @@ export const ProductService = {
   getById: async (id: string) => {
     const cacheKey = `${CACHE_PREFIX}${id}`;
 
-    // 1. Intentar obtener del cache
     const cached = await redis.get<Product>(cacheKey);
-    if (cached) {
-      console.log(`[Cache HIT] ${cacheKey}`);
-      return cached;
-    }
-
-    console.log(`[Cache MISS] ${cacheKey}`);
+    if (cached) return cached;
 
     // 2. Buscar en DB
     const product = await prisma.product.findUnique({
@@ -444,9 +432,13 @@ export const ProductService = {
   },
 
   /**
-   * Obtener lista única de marcas
+   * Obtener lista única de marcas (con cache)
    */
   getUniqueBrands: async (societyId?: string): Promise<{ id: string; brand: string }[]> => {
+    const cacheKey = `${CACHE_PREFIX}brands:${societyId || 'all'}`;
+    const cached = await redis.get<{ id: string; brand: string }[]>(cacheKey);
+    if (cached) return cached;
+
     const whereClause: any = { isDeleted: false, brand: { not: null } };
 
     if (societyId) {
@@ -467,23 +459,25 @@ export const ProductService = {
       orderBy: { brand: 'asc' }
     });
 
-    return result
+    const brands = result
       .filter((item): item is { brand: string } => typeof item.brand === 'string' && item.brand.length > 0)
-      .map(item => ({
-        id: item.brand,
-        brand: item.brand
-      }));
+      .map(item => ({ id: item.brand, brand: item.brand }));
+
+    await redis.set(cacheKey, brands, CACHE_TTL_SELECT);
+    return brands;
   },
 
   /**
-   * Obtener lista única de colores
+   * Obtener lista única de colores (con cache)
    */
   getUniqueColors: async (societyId?: string): Promise<{ id: string; color: string; colorCode: string | null }[]> => {
+    const cacheKey = `${CACHE_PREFIX}colors:${societyId || 'all'}`;
+    const cached = await redis.get<{ id: string; color: string; colorCode: string | null }[]>(cacheKey);
+    if (cached) return cached;
+
     const whereClause: any = { isDeleted: false, color: { not: null } };
 
     if (societyId) {
-      // Logic for Society resolution (duplicated for safety)
-      // Ideally this should be a private helper, but keeping it inline for now
       const society = await prisma.society.findUnique({ where: { code: societyId } });
       if (society) {
         whereClause.societyId = society.id;
@@ -501,30 +495,28 @@ export const ProductService = {
       orderBy: { color: 'asc' }
     });
 
-    return result
+    const colors = result
       .filter((item): item is { color: string; colorCode: string | null } => typeof item.color === 'string' && item.color.length > 0)
-      .map(item => ({
-        id: item.color,
-        color: item.color,
-        colorCode: item.colorCode
-      }));
+      .map(item => ({ id: item.color, color: item.color, colorCode: item.colorCode }));
+
+    await redis.set(cacheKey, colors, CACHE_TTL_SELECT);
+    return colors;
   },
 
   /**
    * Crear un nuevo producto e invalidar cache de listas
    */
   create: async (data: CreateProductInput) => {
-    // Resolver código de sociedad
-    const society = await prisma.society.findUnique({ where: { code: data.societyId } });
-    if (!society) return { error: 'Código de sociedad inválido' };
+    // ─── 1. PARALLEL: Resolver Society + Category ────────────────────
+    const [society, category] = await Promise.all([
+      prisma.society.findUnique({ where: { code: data.societyId } }),
+      prisma.category.findFirst({ where: { code: data.categoryId, isDeleted: false } })
+    ]);
 
-    // Resolver código de categoría
-    const category = await prisma.category.findFirst({
-      where: { code: data.categoryId, isDeleted: false }
-    });
+    if (!society) return { error: 'Código de sociedad inválido' };
     if (!category) return { error: 'Código de categoría inválido' };
 
-    // Crear producto con UUIDs resueltos
+    // ─── 2. Crear producto ────────────────────────────────────────────
     const created = await prisma.product.create({
       data: {
         name: data.name,
@@ -552,49 +544,52 @@ export const ProductService = {
       },
     });
 
-    // Auto-assign to Main Branch
+    // ─── 3. Auto-assign to Main Branch + Update Counter ──────────────
     const mainBranch = await prisma.branchOffice.findFirst({
-      where: {
-        societyId: society.id,
-        // Try to find by code convention or assume first one is main if we don't have isMain flag yet.
-        // Using the convention from SocietyService
-        code: 'ALM-PRINCIPAL'
-      }
+      where: { societyId: society.id, code: 'ALM-PRINCIPAL' }
     });
 
-    if (mainBranch) {
-      await prisma.branchOfficeProduct.create({
+    await Promise.all([
+      mainBranch ? prisma.branchOfficeProduct.create({
         data: {
           branchOfficeId: mainBranch.id,
           productId: created.id,
-          physicalStock: data.stock ?? 0, // Initial stock goes to main branch
-          availableStock: data.stock ?? 0, // Available matches physical initially
+          physicalStock: data.stock ?? 0,
+          availableStock: data.stock ?? 0,
           location: 'ALMACEN-GENERAL',
           isActive: true
         }
-      });
-    }
+      }) : Promise.resolve(),
+      prisma.society.update({
+        where: { id: society.id },
+        data: { totalProducts: { increment: 1 } }
+      })
+    ]);
 
-    // Actualizar cantidad total de productos
-    await prisma.society.update({
-      where: { id: society.id },
-      data: { totalProducts: { increment: 1 } }
+    // ─── 4. BACKGROUND: Cache + Notifications ────────────────────────
+    const societyId = society.id;
+    const subscriptionId = society.subscriptionId;
+
+    setImmediate(async () => {
+      try {
+        await redis.deleteKeysByPrefix('products:');
+        await Promise.all(
+          ['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
+            .map(k => redis.del(`dashboard:${k}:${societyId}`))
+        );
+
+        if (subscriptionId) {
+          await Promise.all([
+            publishRealtimeUpdate(subscriptionId, 'PRODUCTO', {
+              id: created.id, action: 'CREATED', name: created.name, code: created.code
+            }),
+            publishRealtimeUpdate(subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' })
+          ]);
+        }
+      } catch (error) {
+        console.error('[ProductService] ❌ Error background (create):', error);
+      }
     });
-
-    // Invalidar cache de productos (agresivo para asegurar consistencia)
-    await redis.deleteKeysByPrefix('products:');
-    await Promise.all(['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${society.id}`)));
-
-    // [NEW] Realtime Notification
-    if (society.subscriptionId) {
-      await publishRealtimeUpdate(society.subscriptionId, 'PRODUCTO', {
-        id: created.id,
-        action: 'CREATED',
-        name: created.name,
-        code: created.code
-      });
-      await publishRealtimeUpdate(society.subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' });
-    }
 
     return created;
   },
@@ -605,20 +600,23 @@ export const ProductService = {
   update: async (id: string, data: UpdateProductInput) => {
     const updateData: any = { ...data };
 
-    // Si se envía código de sociedad, resolver a UUID
-    if (data.societyId) {
-      const society = await prisma.society.findUnique({ where: { code: data.societyId } });
-      if (!society) return { error: 'Código de sociedad inválido' };
-      updateData.societyId = society.id;
-    }
+    // ─── PARALLEL: Resolver Society + Category si se envían ──────────
+    const [societyResult, categoryResult] = await Promise.all([
+      data.societyId
+        ? prisma.society.findUnique({ where: { code: data.societyId } })
+        : Promise.resolve(null),
+      data.categoryId
+        ? prisma.category.findFirst({ where: { code: data.categoryId, isDeleted: false } })
+        : Promise.resolve(null)
+    ]);
 
-    // Si se envía código de categoría, resolver a UUID
+    if (data.societyId) {
+      if (!societyResult) return { error: 'Código de sociedad inválido' };
+      updateData.societyId = societyResult.id;
+    }
     if (data.categoryId) {
-      const category = await prisma.category.findFirst({
-        where: { code: data.categoryId, isDeleted: false }
-      });
-      if (!category) return { error: 'Código de categoría inválido' };
-      updateData.categoryId = category.id;
+      if (!categoryResult) return { error: 'Código de categoría inválido' };
+      updateData.categoryId = categoryResult.id;
     }
 
     const updated = await prisma.product.update({
@@ -631,29 +629,16 @@ export const ProductService = {
       },
     });
 
-    // SYNC STOCK WITH MAIN BRANCH
-    // If stock is updated directly on Product, we must reflect this in the Main Branch
-    // to ensure OrderService validation passes.
+    // SYNC STOCK WITH MAIN BRANCH (critical, must stay synchronous)
     if (data.stock !== undefined) {
-      const societyId = updated.societyId;
-
-      // Find Main Branch
       const mainBranch = await prisma.branchOffice.findFirst({
-        where: {
-          societyId: societyId,
-          code: 'ALM-PRINCIPAL' // Convention
-        }
+        where: { societyId: updated.societyId, code: 'ALM-PRINCIPAL' }
       });
 
       if (mainBranch) {
-        // Upsert BranchOfficeProduct
-        // We need to preserve reservedStock if it exists
         const existingBOP = await prisma.branchOfficeProduct.findUnique({
           where: {
-            productId_branchOfficeId: {
-              productId: id,
-              branchOfficeId: mainBranch.id
-            }
+            productId_branchOfficeId: { productId: id, branchOfficeId: mainBranch.id }
           }
         });
 
@@ -663,16 +648,9 @@ export const ProductService = {
 
         await prisma.branchOfficeProduct.upsert({
           where: {
-            productId_branchOfficeId: {
-              productId: id,
-              branchOfficeId: mainBranch.id
-            }
+            productId_branchOfficeId: { productId: id, branchOfficeId: mainBranch.id }
           },
-          update: {
-            physicalStock: newPhysical,
-            availableStock: newAvailable
-            // reservedStock remains unchanged
-          },
+          update: { physicalStock: newPhysical, availableStock: newAvailable },
           create: {
             productId: id,
             branchOfficeId: mainBranch.id,
@@ -683,26 +661,34 @@ export const ProductService = {
             isActive: true
           }
         });
-
-        // Also invalidate branch office products cache
-        await redis.deleteKeysByPrefix('branch_office_products:');
       }
     }
 
-    // Invalidar todo el cache de productos
-    await redis.deleteKeysByPrefix('products:');
-    await Promise.all(['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${updated.societyId}`)));
+    // ─── BACKGROUND: Cache + Notifications ────────────────────────────
+    const updatedSocietyId = updated.societyId;
+    const subscriptionId = updated.society.subscriptionId;
 
-    // [NEW] Realtime Notification
-    if (updated.society.subscriptionId) {
-      await publishRealtimeUpdate(updated.society.subscriptionId, 'PRODUCTO', {
-        id: updated.id,
-        action: 'UPDATED',
-        name: updated.name,
-        code: updated.code
-      });
-      await publishRealtimeUpdate(updated.society.subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' });
-    }
+    setImmediate(async () => {
+      try {
+        await Promise.all([
+          redis.deleteKeysByPrefix('products:'),
+          redis.deleteKeysByPrefix('branch_office_products:'),
+          ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
+            .map(k => redis.del(`dashboard:${k}:${updatedSocietyId}`))
+        ]);
+
+        if (subscriptionId) {
+          await Promise.all([
+            publishRealtimeUpdate(subscriptionId, 'PRODUCTO', {
+              id: updated.id, action: 'UPDATED', name: updated.name, code: updated.code
+            }),
+            publishRealtimeUpdate(subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' })
+          ]);
+        }
+      } catch (error) {
+        console.error('[ProductService] ❌ Error background (update):', error);
+      }
+    });
 
     return updated;
   },
@@ -713,38 +699,41 @@ export const ProductService = {
   delete: async (id: string, updatedBy?: string) => {
     const deleted = await prisma.product.update({
       where: { id },
-      data: {
-        isDeleted: true,
-        isActive: false,
-        updatedBy,
-      },
-      include: {
-        society: { select: { subscriptionId: true } }
-      }
+      data: { isDeleted: true, isActive: false, updatedBy },
+      include: { society: { select: { subscriptionId: true } } }
     });
 
-    // Disminuir cantidad total de productos (soft delete)
+    // Decrement counter (synchronous, important for consistency)
     await prisma.society.update({
       where: { id: deleted.societyId },
       data: { totalProducts: { decrement: 1 } }
     });
 
-    // Invalidar todo el cache de productos
-    await redis.deleteKeysByPrefix('products:');
-    // Also invalidate branch office products in case the user is viewing stock list
-    await redis.deleteKeysByPrefix('branch_office_products:');
-    await Promise.all(['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow'].map(k => redis.del(`dashboard:${k}:${deleted.societyId}`)));
+    // ─── BACKGROUND: Cache + Notifications ────────────────────────────
+    const deletedSocietyId = deleted.societyId;
+    const subscriptionId = deleted.society.subscriptionId;
 
-    // [NEW] Realtime Notification
-    if (deleted.society.subscriptionId) {
-      await publishRealtimeUpdate(deleted.society.subscriptionId, 'PRODUCTO', {
-        id: deleted.id,
-        action: 'DELETED',
-        name: deleted.name,
-        code: deleted.code
-      });
-      await publishRealtimeUpdate(deleted.society.subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' });
-    }
+    setImmediate(async () => {
+      try {
+        await Promise.all([
+          redis.deleteKeysByPrefix('products:'),
+          redis.deleteKeysByPrefix('branch_office_products:'),
+          ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
+            .map(k => redis.del(`dashboard:${k}:${deletedSocietyId}`))
+        ]);
+
+        if (subscriptionId) {
+          await Promise.all([
+            publishRealtimeUpdate(subscriptionId, 'PRODUCTO', {
+              id: deleted.id, action: 'DELETED', name: deleted.name, code: deleted.code
+            }),
+            publishRealtimeUpdate(subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' })
+          ]);
+        }
+      } catch (error) {
+        console.error('[ProductService] ❌ Error background (delete):', error);
+      }
+    });
 
     return deleted;
   },
@@ -755,14 +744,8 @@ export const ProductService = {
   getForSelect: async (societyCode?: string, categoryCode?: string) => {
     const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}:${categoryCode || 'all'}`;
 
-    // 1. Intentar obtener del cache
     const cached = await redis.get<any[]>(cacheKey);
-    if (cached) {
-      console.log(`[Cache HIT] ${cacheKey}`);
-      return cached;
-    }
-
-    console.log(`[Cache MISS] ${cacheKey}`);
+    if (cached) return cached;
 
     const whereClause: any = { isDeleted: false, isActive: true };
 

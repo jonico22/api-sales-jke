@@ -68,14 +68,8 @@ export const CategoryService = {
     ];
     const cacheKey = cacheKeyParts.join(':');
 
-    // 1. Intentar obtener del cache
     const cached = await redis.get<PaginatedResult<Category>>(cacheKey);
-    if (cached) {
-      console.log(`[Cache HIT] ${cacheKey}`);
-      return cached;
-    }
-
-    console.log(`[Cache MISS] ${cacheKey}`);
+    if (cached) return cached;
 
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
     const whereClause: any = { isDeleted: false };
@@ -184,14 +178,8 @@ export const CategoryService = {
   getById: async (id: string) => {
     const cacheKey = `${CACHE_PREFIX}${id}`;
 
-    // 1. Intentar obtener del cache
     const cached = await redis.get<Category>(cacheKey);
-    if (cached) {
-      console.log(`[Cache HIT] ${cacheKey}`);
-      return cached;
-    }
-
-    console.log(`[Cache MISS] ${cacheKey}`);
+    if (cached) return cached;
 
     // 2. Buscar en DB
     const category = await prisma.category.findUnique({
@@ -285,8 +273,14 @@ export const CategoryService = {
     data.societyId = society.id;
     const created = await prisma.category.create({ data });
 
-    // Invalidar cache de listas y selects (agresivo)
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
+    // BACKGROUND: Invalidar cache
+    setImmediate(async () => {
+      try {
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
+      } catch (e) {
+        console.error('[CategoryService] Error background (create):', e);
+      }
+    });
 
     return created;
   },
@@ -306,8 +300,14 @@ export const CategoryService = {
       data,
     });
 
-    // Invalidar todo el cache de categorías
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
+    // BACKGROUND: Invalidar cache
+    setImmediate(async () => {
+      try {
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
+      } catch (e) {
+        console.error('[CategoryService] Error background (update):', e);
+      }
+    });
 
     return updated;
   },
@@ -325,8 +325,14 @@ export const CategoryService = {
       },
     });
 
-    // Invalidar todo el cache de categorías
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
+    // BACKGROUND: Invalidar cache
+    setImmediate(async () => {
+      try {
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
+      } catch (e) {
+        console.error('[CategoryService] Error background (delete):', e);
+      }
+    });
 
     return deleted;
   },
@@ -337,14 +343,8 @@ export const CategoryService = {
   getForSelect: async (societyCode?: string) => {
     const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}`;
 
-    // 1. Intentar obtener del cache
     const cached = await redis.get<{ id: string; name: string; code: string }[]>(cacheKey);
-    if (cached) {
-      console.log(`[Cache HIT] ${cacheKey}`);
-      return cached;
-    }
-
-    console.log(`[Cache MISS] ${cacheKey}`);
+    if (cached) return cached;
 
     const whereClause: any = { isDeleted: false, isActive: true };
 

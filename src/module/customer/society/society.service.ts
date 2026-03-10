@@ -13,7 +13,7 @@ import { formatToLimaTime, convertLimaDateRangeToUTC } from '@/utils/dateFormatt
 // Constantes de cache
 const CACHE_PREFIX = 'societies:';
 const CACHE_TTL_LIST = 300; // 5 minutos
-const CACHE_TTL_SINGLE = 600; // 10 minutos
+const CACHE_TTL_SINGLE = 1800; // 30 minutos (society config cambia poco)
 const CACHE_TTL_SELECT = 900; // 15 minutos
 
 export interface SocietyFilters {
@@ -33,19 +33,16 @@ export const SocietyService = {
     // Extract Legal Entity data
     const { ruc, businessName, tradeName, address, email, phone, ...societyData } = rest;
 
-    // 1. Default Currency: PEN
-    if (!mainCurrencyId) {
-      const defaultCurrency = await prisma.currency.findUnique({ where: { code: 'PEN' } });
-      if (defaultCurrency) mainCurrencyId = defaultCurrency.id;
-    }
+    // ─── 1. PARALLEL: Default Currency + Tax ─────────────────────────
+    const [defaultCurrency, defaultTax] = await Promise.all([
+      !mainCurrencyId ? prisma.currency.findUnique({ where: { code: 'PEN' } }) : null,
+      !taxIds || taxIds.length === 0 ? prisma.tax.findUnique({ where: { code: 'IGV' } }) : null
+    ]);
 
-    // 2. Default Tax: IGV
-    if (!taxIds || taxIds.length === 0) {
-      const defaultTax = await prisma.tax.findUnique({ where: { code: 'IGV' } });
-      if (defaultTax) taxIds = [defaultTax.id];
-    }
+    if (!mainCurrencyId && defaultCurrency) mainCurrencyId = defaultCurrency.id;
+    if ((!taxIds || taxIds.length === 0) && defaultTax) taxIds = [defaultTax.id];
 
-    // Use transaction to handle Society + Legal Entity (BusinessPartner)
+    // ─── 2. Transacción de creación ──────────────────────────────────
     const result = await prisma.$transaction(async (tx) => {
       // A. Create Society
       const createdSociety = await tx.society.create({
@@ -62,7 +59,7 @@ export const SocietyService = {
               code: 'ALM-PRINCIPAL',
               isMain: true,
               isActive: true,
-              address: address || undefined, // Use legal address if provided
+              address: address || undefined,
               phone: phone || undefined,
               email: email || undefined
             }
@@ -73,7 +70,6 @@ export const SocietyService = {
 
       // B. Optional: Create Legal Entity (BusinessPartner)
       if (ruc || businessName) {
-        // Check if a BusinessPartner with this RUC already exists
         let legalEntity = null;
         if (ruc) {
           legalEntity = await tx.bussinessPartner.findUnique({
@@ -82,7 +78,6 @@ export const SocietyService = {
         }
 
         if (!legalEntity && (ruc || businessName)) {
-          // si enviar el ruc debe asociarle el tipo de documento
           const documentType = await tx.documentType.findUnique({ where: { code: 'RUC' } });
 
           legalEntity = await tx.bussinessPartner.create({
@@ -91,11 +86,9 @@ export const SocietyService = {
               type: PartnerType.BOTH,
               typeBP: 'COMPANY',
               tradeName: tradeName,
-              // Ensure null if empty string to avoid unique constraint issues
               documentNumber: ruc || null,
               typeDocId: ruc ? documentType?.id : null,
               address: address,
-              // Check if email provided, else generic
               email: email || `legal.${createdSociety.code}.${Date.now()}@placeholder.com`,
               phone: phone,
               isActive: true,
@@ -110,7 +103,6 @@ export const SocietyService = {
             where: { id: createdSociety.id },
             data: { legalEntityId: legalEntity.id }
           });
-          // Update local object reference
           createdSociety.legalEntityId = legalEntity.id;
         }
       }
@@ -119,12 +111,12 @@ export const SocietyService = {
       await tx.bussinessPartner.create({
         data: {
           societyId: createdSociety.id,
-          type: PartnerType.CUSTOMER, // General Public is a Customer
+          type: PartnerType.CUSTOMER,
           typeBP: 'PERSON',
           firstName: 'PÚBLICO',
           lastName: 'GENERAL',
-          email: `general.${createdSociety.code}@system.local`, // Ensure uniqueness per society
-          documentNumber: null, // Allowed by Postgres unique constraint (multiple nulls)
+          email: `general.${createdSociety.code}@system.local`,
+          documentNumber: null,
           isActive: true,
           isDeleted: false,
         }
@@ -133,9 +125,17 @@ export const SocietyService = {
       return createdSociety;
     });
 
-    // Invalidate Cache
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    // ─── 3. BACKGROUND: Cache Invalidation ────────────────────────────
+    setImmediate(async () => {
+      try {
+        await Promise.all([
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`)
+        ]);
+      } catch (error) {
+        console.error('[SocietyService] ❌ Error en background (create):', error);
+      }
+    });
 
     return result;
   },
@@ -233,15 +233,13 @@ export const SocietyService = {
   },
 
   getByCode: async (code: string) => {
-    const cacheKey = `${CACHE_PREFIX}${code}`;
+    const cacheKey = `${CACHE_PREFIX}code:${code.toUpperCase()}`;
 
     const cached = await redis.get<any>(cacheKey);
     if (cached) return cached;
 
-    const society = await prisma.society.findFirst({
-      where: {
-        code: { equals: code, mode: 'insensitive' }
-      },
+    const society = await prisma.society.findUnique({
+      where: { code: code },
       select: {
         id: true,
         name: true,
@@ -268,10 +266,18 @@ export const SocietyService = {
         logo: {
           select: { id: true, path: true }
         },
-        legalEntity: true,
-        // Optional: Regional configs if needed by frontend logic (formats etc), 
-        // but strictly removing dates/users as requested.
-        subscriptionId: true, // Needed for permission checks usually
+        legalEntity: {
+          select: {
+            id: true,
+            companyName: true,
+            tradeName: true,
+            documentNumber: true,
+            address: true,
+            email: true,
+            phone: true,
+          }
+        },
+        subscriptionId: true,
       }
     });
 
@@ -315,11 +321,21 @@ export const SocietyService = {
       }
     });
 
-    // Invalidate Cache
-    await redis.del(`${CACHE_PREFIX}${code}`); // Invalidate single by code
-    await redis.del(`${CACHE_PREFIX}${updated.id}`); // Invalidate single by ID
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    // ─── BACKGROUND: Cache Invalidation ────────────────────────────
+    const updatedId = updated.id;
+    setImmediate(async () => {
+      try {
+        await Promise.all([
+          redis.del(`${CACHE_PREFIX}code:${code.toUpperCase()}`),
+          redis.del(`${CACHE_PREFIX}${code}`),
+          redis.del(`${CACHE_PREFIX}${updatedId}`),
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`)
+        ]);
+      } catch (error) {
+        console.error('[SocietyService] ❌ Error en background (update):', error);
+      }
+    });
 
     return updated;
   },
@@ -331,9 +347,19 @@ export const SocietyService = {
       data: { isDeleted: true, isActive: false }
     });
 
-    await redis.del(`${CACHE_PREFIX}${code}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    // ─── BACKGROUND: Cache Invalidation ────────────────────────────
+    setImmediate(async () => {
+      try {
+        await Promise.all([
+          redis.del(`${CACHE_PREFIX}code:${code.toUpperCase()}`),
+          redis.del(`${CACHE_PREFIX}${code}`),
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`)
+        ]);
+      } catch (error) {
+        console.error('[SocietyService] ❌ Error en background (delete):', error);
+      }
+    });
 
     return deleted;
   }

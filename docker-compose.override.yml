@@ -23,3 +23,5 @@ services:
       - /app/node_modules
       - /app/src/generated/prisma
       - /app/node_modules/.prisma
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
