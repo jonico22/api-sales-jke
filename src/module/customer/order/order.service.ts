@@ -11,7 +11,7 @@ import {
 } from '@/utils/pagination';
 import { Order, OrderStatus, Product, TransactionType } from '@prisma/client';
 import { InventoryService } from '@/module/inventory/inventory.service';
-import { toLimaTimezone, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
+import { toLimaTimezone, convertLimaDateRangeToUTC, formatToLimaTime } from '@/utils/dateFormatter';
 
 const CACHE_PREFIX = 'orders:';
 const CACHE_TTL_LIST = 300;
@@ -739,7 +739,7 @@ export const OrderService = {
       if (order.orderItems.length === 0) {
         data.push({
           'Código Orden': order.orderCode,
-          'Fecha': order.orderDate.toISOString().split('T')[0],
+          'Fecha': formatToLimaTime(order.orderDate),
           'Estado': order.status,
           'Cliente': partnerName,
           'Doc. Cliente': order.partner.documentNumber,
@@ -753,22 +753,21 @@ export const OrderService = {
           'Precio Unit.': 0,
           'Descuento': 0,
           'Subtotal Item': 0,
-          'Total Item': 0,
-          'Usuario': order.createdBy || 'Sistema'
+          'Total Item': 0
         });
       } else {
         // Generar una fila por cada ítem
         order.orderItems.forEach(item => {
           data.push({
             'Código Orden': order.orderCode,
-            'Fecha': order.orderDate.toISOString().split('T')[0],
+            'Fecha': formatToLimaTime(order.orderDate),
             'Estado': order.status,
             'Cliente': partnerName,
             'Doc. Cliente': order.partner.documentNumber,
             'Sucursal': order.branch.name,
             'Moneda': order.currency.code,
             'Método Pago': paymentMethods,
-            'Total Orden': Number(order.totalAmount), // Repetido por contexto
+            'Total Orden': Number(order.totalAmount),
             // Detalle del Item
             'Producto': item.product.name,
             'Código Producto': item.product.code,
@@ -776,8 +775,7 @@ export const OrderService = {
             'Precio Unit.': Number(item.unitPrice),
             'Descuento': Number(item.discount),
             'Subtotal Item': Number(item.subtotal),
-            'Total Item': Number(item.total),
-            'Usuario': order.createdBy || 'Sistema'
+            'Total Item': Number(item.total)
           });
         });
       }
