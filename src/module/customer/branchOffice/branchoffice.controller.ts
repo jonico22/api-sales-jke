@@ -41,12 +41,14 @@ export const BranchOfficeController = {
 
   create: async (req: Request, res: Response) => {
     const result = await BranchOfficeService.create(req.body);
+    if (!result) return res.status(400).json({ message: 'Invalid society code' });
     res.status(201).json(result);
   },
 
   update: async (req: Request, res: Response) => {
     const id = branchOfficeIdSchema.parse(req.params.id);
     const result = await BranchOfficeService.update(id, req.body);
+    if (!result) return res.status(400).json({ message: 'Invalid society code or branch office not found' });
     res.json(result);
   },
 
