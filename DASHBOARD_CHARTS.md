@@ -76,7 +76,6 @@ Esta guía detalla los endpoints disponibles para alimentar los gráficos analí
   ]
   ```
 
----
 
 ## 7. API de Sucursales (Branch Offices)
 
@@ -364,4 +363,149 @@ Base URL: `GET /api/cash-shifts`
 > **Nota:** Este método (`registerPaymentMovement`) es utilizado internamente por `OrderPaymentService` cuando se registra un pago. No es un endpoint público. Automáticamente crea un movimiento `INCOME` en la caja abierta del usuario que procesa el pago.
 
 ---
+
+## 9. API de Movimientos entre Sucursales (Internal Transfers)
+
+Base URL: `/api/branch-movements`
+
+### 9.1 Listar Movimientos (Paginado)
+- **Endpoint:** `GET /api/branch-movements`
+- **Descripción:** Obtiene el historial de traslados entre sucursales.
+- **Query Parameters:**
+
+| Parámetro | Tipo | Descripción |
+|-----------|------|-------------|
+| `societyId` | `uuid` | Filtrar por ID de sociedad |
+| `societyCode` | `string` | Filtrar por código de sociedad |
+| `originBranchId` | `uuid` | Sucursal de salida |
+| `destinationBranchId` | `uuid` | Sucursal de destino |
+| `productId` | `uuid` | Producto trasladado |
+| `status` | `enum` | `PENDING`, `COMPLETED`, `CANCELLED` |
+| `dateFrom` | `string` | Fecha inicio (YYYY-MM-DD) |
+| `dateTo` | `string` | Fecha fin |
+| `page`, `limit` | `number` | Paginación |
+
+### 9.2 Crear Traslado (Paso 1: Reserva)
+- **Endpoint:** `POST /api/branch-movements`
+- **Descripción:** Inicia un traslado. **Reserva** el stock en la sucursal de origen (lo quita de `availableStock` y lo pone en `reservedStock`). El estado inicial es `PENDING`.
+- **Body:**
+  ```json
+  {
+    "originBranchId": "uuid",
+    "destinationBranchId": "uuid",
+    "productId": "uuid",
+    "quantityMoved": 10,
+    "notes": "Traslado semanal",
+    "referenceCode": "GUIA-001",
+    "createdBy": "user-uuid"
+  }
+  ```
+
+### 9.3 Confirmar Recepción (Paso 2: Completar)
+- **Endpoint:** `PUT /api/branch-movements/:id`
+- **Descripción:** Confirma la llegada de los productos a la sucursal de destino.
+- **Acción:** Resta definitivamente el stock de la sucursal de origen y lo suma a la de destino.
+- **Body:**
+  ```json
+  {
+    "status": "COMPLETED"
+  }
+  ```
+
+### 9.4 Cancelar Traslado
+- **Endpoint:** `PUT /api/branch-movements/:id`
+- **Descripción:** Revierte el traslado mientras esté `PENDING`. Devuelve el stock reservado a `availableStock` en el origen.
+- **Body:**
+  ```json
+  {
+    "status": "CANCELLED",
+    "cancellationReason": "Error en pedido"
+  }
+  ```
+
+### 9.5 Traslados en Bloque (Bulk Transfer)
+- **Endpoint:** `POST /api/branch-movements/bulk`
+- **Descripción:** Permite mover varios productos a la vez entre las mismas sucursales. La operación es **atómica** (se procesan todos o ninguno).
+- **Body:**
+  ```json
+  {
+    "originBranchId": "uuid",
+    "destinationBranchId": "uuid",
+    "items": [
+      { "productId": "uuid-1", "quantityMoved": 5, "notes": "Item 1" },
+      { "productId": "uuid-2", "quantityMoved": 15 }
+    ],
+    "referenceCode": "GUIA-BULK-001",
+    "createdBy": "user-uuid"
+  }
+  ```
+- **Respuesta:**
+  ```json
+  {
+    "batchId": "BATCH-XXXXX",
+    "count": 2,
+    "movements": [ ... ]
+  }
+  ```
+
 *Nota: Estos endpoints se han diseñado para alimentar componentes de gráficos modernos como Recharts, Tremor o Chart.js en el frontend.*
+
+ ## 10. API de Inventario por Sucursal (Branch Office Products)
+ 
+ Base URL: `/api/branch-office-products`
+ 
+ ### 10.1 Listar Inventario (Paginado)
+ - **Endpoint:** `GET /api/branch-office-products`
+ - **Descripción:** Obtiene el stock disponible y físico de productos por sucursal.
+ - **Query Parameters:**
+ 
+ | Parámetro | Tipo | Descripción |
+ |-----------|------|-------------|
+ | `societyId` | `uuid` | Filtrar por ID de sociedad |
+ | `societyCode` | `string` | Filtrar por código de sociedad |
+ | `branchOfficeId` | `uuid` | Filtrar por sucursal específica |
+ | `productId` | `uuid` | Filtrar por un producto específico |
+ | `productName` | `string` | Buscar por nombre de producto (parcial) |
+ | `location` | `string` | Filtrar por ubicación en almacén |
+ | `lowStock` | `boolean` | Filtrar productos con stock bajo |
+ | `isActive` | `boolean` | Filtrar por estado activo |
+ | `stockFrom` | `number` | Stock físico mínimo |
+ | `stockTo` | `number` | Stock físico máximo |
+ | `page`, `limit` | `number` | Paginación |
+ 
+ - **Respuesta:**
+   ```json
+   {
+     "data": [
+       {
+         "id": "uuid",
+         "productId": "uuid",
+         "branchOfficeId": "uuid",
+         "availableStock": 45,
+         "physicalStock": 50,
+         "reservedStock": 5,
+         "location": "A-01-05",
+         "product": { "name": "Producto A", "code": "PROD-001", ... },
+         "branchOffice": { "name": "Sede Principal", ... }
+       }
+     ]
+   }
+   ```
+ 
+ ### 10.2 Detalle de Inventario
+ - **Endpoint:** `GET /api/branch-office-products/:id`
+ - **Respuesta:** Incluye el detalle del producto y la sucursal.
+ 
+ ### 10.3 Crear Registro de Stock
+ - **Endpoint:** `POST /api/branch-office-products`
+ - **Body:** `productId`, `branchOfficeId`, `physicalStock`, `availableStock`, etc.
+ 
+ ### 10.4 Actualizar Stock/Ubicación
+ - **Endpoint:** `PUT /api/branch-office-products/:id`
+ - **Body:** Campos opcionales para actualizar stock o ubicación.
+ 
+ ### 10.5 Eliminar Registro (Hard Delete)
+ - **Endpoint:** `DELETE /api/branch-office-products/:id`
+ 
+ ---
+ *Nota: Estos endpoints se han diseñado para alimentar componentes de gráficos modernos como Recharts, Tremor o Chart.js en el frontend.*

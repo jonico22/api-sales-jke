@@ -203,4 +203,29 @@ export const BranchOfficeProductService = {
 
     return deleted;
   },
+
+  /**
+   * Obtener stocks y datos básicos de productos para operaciones en bloque (Bulk)
+   */
+  getProductsStockForBulk: async (branchOfficeId: string, productIds: string[]) => {
+    const result = await prisma.branchOfficeProduct.findMany({
+      where: {
+        branchOfficeId,
+        productId: { in: productIds }
+      },
+      select: {
+        productId: true,
+        availableStock: true,
+        product: {
+          select: {
+            id: true,
+            name: true,
+            priceCost: true
+          }
+        }
+      }
+    });
+
+    return result;
+  },
 };
