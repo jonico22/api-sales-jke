@@ -297,6 +297,8 @@ export const OrderService = {
       }
 
       return newOrder;
+    }, {
+      timeout: 30000
     });
 
     // ─── 6. BACKGROUND: Notificaciones y Cache (fire-and-forget) ──────
@@ -577,6 +579,8 @@ export const OrderService = {
       }
 
       return updated;
+    }, {
+      timeout: 30000
     });
 
     // ─── BACKGROUND: Notificaciones y Cache (fire-and-forget) ──────
@@ -679,6 +683,8 @@ export const OrderService = {
           updatedAt: new Date()
         }
       });
+    }, {
+      timeout: 30000
     });
 
     // ─── BACKGROUND: Cache Invalidation ──────────────────────────────

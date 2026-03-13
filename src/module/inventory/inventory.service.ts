@@ -77,8 +77,14 @@ export const InventoryService = {
             },
         });
 
-        // Invalidate Cache
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        // Invalidate Cache in background
+        setImmediate(async () => {
+            try {
+                await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+            } catch (e) {
+                console.error('[InventoryService] Error invalidating cache:', e);
+            }
+        });
 
         return record;
     },
@@ -215,13 +221,23 @@ export const InventoryService = {
                 referenceType: 'MANUAL_ADJUSTMENT',
                 documentNumber: data.notes,
             }, tx);
+        }, {
+            timeout: 15000
         });
 
-        // Invalidate Caches
-        await redis.deleteKeysByPrefix('products:');
-        await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
-        await redis.deleteKeysByPrefix('branch_office_products:');
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        // Invalidate Caches in background
+        setImmediate(async () => {
+            try {
+                await Promise.all([
+                    redis.deleteKeysByPrefix('products:'),
+                    redis.deleteKeysByPrefix('products:select:'),
+                    redis.deleteKeysByPrefix('branch_office_products:'),
+                    redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`)
+                ]);
+            } catch (e) {
+                console.error('[InventoryService] Error invalidating caches (adjustment):', e);
+            }
+        });
 
         return result;
     },
@@ -312,8 +328,16 @@ export const InventoryService = {
             data: { stock: { increment: quantity } }
         });
 
-        // 3. Invalidate Caches
-        await redis.deleteKeysByPrefix('products:');
-        await redis.deleteKeysByPrefix('products:select:');
+        // 3. Invalidate Caches in background
+        setImmediate(async () => {
+            try {
+                await Promise.all([
+                    redis.deleteKeysByPrefix('products:'),
+                    redis.deleteKeysByPrefix('products:select:'),
+                ]);
+            } catch (e) {
+                console.error('[InventoryService] Error invalidating caches (cancelReservation):', e);
+            }
+        });
     }
 };

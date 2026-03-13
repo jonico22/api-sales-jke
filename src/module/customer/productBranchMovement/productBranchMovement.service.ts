@@ -1,6 +1,8 @@
-import { Prisma, MovementStatus } from '@prisma/client'; // Import MovementStatus if exported, or use string? Prisma exports it.
+import { Prisma, MovementStatus, TransactionType } from '@prisma/client'; // Import MovementStatus if exported, or use string? Prisma exports it.
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
+import { InventoryService } from '@/module/inventory/inventory.service';
+import { BranchOfficeProductService } from '@/module/customer/branchOfficeProduct/branchofficeproduct.service';
 import {
   PaginatedResult,
   getPrismaPaginationParams,
@@ -8,13 +10,15 @@ import {
   PaginationQuery,
 } from '@/utils/pagination';
 import { formatToLimaTime, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
-import { createProductBranchMovementSchema, updateProductBranchMovementSchema } from './productBranchMovement.validation';
+import { createProductBranchMovementSchema, updateProductBranchMovementSchema, bulkCreateProductBranchMovementSchema } from './productBranchMovement.validation';
 
 const CACHE_PREFIX = 'branch_movements:';
 const CACHE_TTL_LIST = 300;
 const CACHE_TTL_SINGLE = 600;
 
 export interface ProductBranchMovementFilters {
+  societyId?: string;
+  societyCode?: string;
   originBranchId?: string;
   destinationBranchId?: string;
   productId?: string;
@@ -38,9 +42,11 @@ export class ProductBranchMovementService {
     const sortOrder = paginationQuery?.sortOrder ?? 'desc';
 
     // Cache Key
+    const societyValue = filters?.societyCode || filters?.societyId;
     const cacheKeyParts = [
       CACHE_PREFIX,
       'list',
+      societyValue || 'all',
       filters?.originBranchId || 'all',
       filters?.destinationBranchId || 'all',
       filters?.productId || 'all',
@@ -62,6 +68,18 @@ export class ProductBranchMovementService {
     // 2. Build Query
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
     const whereClause: any = {};
+
+    // Filter by Society (via originBranch)
+    if (filters?.societyCode) {
+      const society = await prisma.society.findUnique({ where: { code: filters.societyCode } });
+      if (society) {
+        whereClause.originBranch = { societyId: society.id };
+      } else {
+        return buildPaginatedResult([], page, limit, 0);
+      }
+    } else if (filters?.societyId) {
+      whereClause.originBranch = { societyId: filters.societyId };
+    }
 
     if (filters?.originBranchId) whereClause.originBranchId = filters.originBranchId;
     if (filters?.destinationBranchId) whereClause.destinationBranchId = filters.destinationBranchId;
@@ -132,34 +150,32 @@ export class ProductBranchMovementService {
   static async create(data: any) {
     const validated = createProductBranchMovementSchema.parse(data);
 
-    // Transaction: Verify Stock -> Reserve -> Create Record
-    const result = await prisma.$transaction(async (tx) => {
-      // 1. Check Origin Stock
-      const originStock = await tx.branchOfficeProduct.findUnique({
-        where: {
-          productId_branchOfficeId: {
-            productId: validated.productId,
-            branchOfficeId: validated.originBranchId
-          }
-        }
-      });
+    // 1. Resolve product info for error messages
+    const product = await prisma.product.findUnique({ where: { id: validated.productId } });
+    if (!product) throw new Error('Producto no encontrado');
 
-      if (!originStock) throw new Error('Product not found in origin branch');
-      if (originStock.availableStock < validated.quantityMoved) {
-        throw new Error(`Insufficient stock in origin. Available: ${originStock.availableStock}, Requested: ${validated.quantityMoved}`);
+    // 2. Check Stock
+    const originStock = await prisma.branchOfficeProduct.findUnique({
+      where: {
+        productId_branchOfficeId: {
+          productId: validated.productId,
+          branchOfficeId: validated.originBranchId
+        }
       }
+    });
 
-      // 2. Reserve Stock (Move from Available to Reserved)
-      await tx.branchOfficeProduct.update({
-        where: { id: originStock.id },
-        data: {
-          availableStock: { decrement: validated.quantityMoved },
-          reservedStock: { increment: validated.quantityMoved }
-        }
-      });
+    if (!originStock) throw new Error(`El producto "${product.name}" no está registrado en la sucursal de origen`);
+    if (originStock.availableStock < validated.quantityMoved) {
+      throw new Error(`Stock insuficiente para "${product.name}". Disponible: ${originStock.availableStock}, Solicitado: ${validated.quantityMoved}`);
+    }
 
-      // 3. Create Movement Record
-      return await tx.productBranchMovement.create({
+    // 3. Transaction
+    const result = await prisma.$transaction(async (tx) => {
+      // A. Reserve Stock (Branch + Global)
+      await InventoryService.reserveStock(validated.productId, validated.originBranchId, validated.quantityMoved, tx);
+
+      // B. Create Movement
+      const movement = await tx.productBranchMovement.create({
         data: {
           originBranchId: validated.originBranchId,
           destinationBranchId: validated.destinationBranchId,
@@ -169,33 +185,151 @@ export class ProductBranchMovementService {
           referenceCode: validated.referenceCode,
           status: 'PENDING',
           createdBy: validated.createdBy,
-          // Add batchId if provided in data, though schema for create might need update or we treat as extra
-          // Assuming data has it or we add to validation. For now, let's allow it if passed
           batchId: (data as any).batchId,
         }
       });
+
+      // C. Log Transaction (TRANSFER_OUT)
+      // Note: InventoryService.logTransaction expects signed quantity for certain types or handles it.
+      // We'll log as TRANSFER_OUT with negative quantity.
+      await InventoryService.logTransaction({
+        productId: validated.productId,
+        branchOfficeId: validated.originBranchId,
+        type: TransactionType.TRANSFER_OUT,
+        quantity: -validated.quantityMoved,
+        unitCost: Number(product.priceCost) || 0,
+        totalCost: (Number(product.priceCost) || 0) * validated.quantityMoved,
+        referenceId: movement.id,
+        referenceType: 'TRANSFER',
+        documentNumber: validated.referenceCode
+      }, tx);
+
+      return movement;
     });
 
-    // Invalidate List Cache
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    // 4. Background Processing
+    setImmediate(async () => {
+      try {
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+      } catch (e) {
+        console.error('[MovementService] Cache error:', e);
+      }
+    });
+
     return result;
+  }
+
+  /**
+   * Create Bulk Transfer: Reserves stock for multiple items
+   */
+  static async createBulk(data: any) {
+    const validated = bulkCreateProductBranchMovementSchema.parse(data);
+    const batchId = `BATCH-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`.toUpperCase();
+
+    const productIds = validated.items.map(i => i.productId);
+
+    // 1. Resolve Products and Stocks in single query (Optimized)
+    const combinedStocks = await BranchOfficeProductService.getProductsStockForBulk(
+      validated.originBranchId,
+      productIds
+    );
+
+    const stockMap = new Map(combinedStocks.map(s => [s.productId, s]));
+
+    // 2. Validate all items before starting transaction
+    const errors: string[] = [];
+    for (const item of validated.items) {
+      const stockInfo = stockMap.get(item.productId);
+      const product = stockInfo?.product;
+
+      if (!product) {
+        errors.push(`Producto ID ${item.productId} no encontrado o no registrado en la sucursal de origen`);
+        continue;
+      }
+
+      const available = stockInfo?.availableStock ?? 0;
+
+      if (available < item.quantityMoved) {
+        errors.push(`Stock insuficiente para "${product.name}". Disponible: ${available}, Solicitado: ${item.quantityMoved}`);
+      }
+    }
+
+    if (errors.length > 0) {
+      throw new Error(`No se pudo procesar el traslado en bloque:\n${errors.join('\n')}`);
+    }
+
+    // 3. atomic Transaction
+    const results = await prisma.$transaction(async (tx) => {
+      const movements = [];
+
+      for (const item of validated.items) {
+        const stockInfo = stockMap.get(item.productId)!;
+        const product = stockInfo.product;
+
+        // A. Reserve Stock (Branch + Global)
+        await InventoryService.reserveStock(item.productId, validated.originBranchId, item.quantityMoved, tx);
+
+        // B. Create Movement
+        const movement = await tx.productBranchMovement.create({
+          data: {
+            originBranchId: validated.originBranchId,
+            destinationBranchId: validated.destinationBranchId,
+            productId: item.productId,
+            quantityMoved: item.quantityMoved,
+            notes: item.notes,
+            referenceCode: validated.referenceCode,
+            status: 'PENDING',
+            createdBy: validated.createdBy,
+            batchId: batchId,
+          }
+        });
+
+        // C. Log Transaction (TRANSFER_OUT)
+        await InventoryService.logTransaction({
+          productId: item.productId,
+          branchOfficeId: validated.originBranchId,
+          type: TransactionType.TRANSFER_OUT,
+          quantity: -item.quantityMoved,
+          unitCost: Number(product.priceCost) || 0,
+          totalCost: (Number(product.priceCost) || 0) * item.quantityMoved,
+          referenceId: movement.id,
+          referenceType: 'TRANSFER',
+          documentNumber: validated.referenceCode
+        }, tx);
+
+        movements.push(movement);
+      }
+
+      return { batchId, count: movements.length, movements };
+    });
+
+    // 4. Background Processing
+    setImmediate(async () => {
+      try {
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        await redis.deleteKeysByPrefix('products:'); // Stocks updated
+        await redis.deleteKeysByPrefix('branch_office_products:');
+      } catch (e) {
+        console.error('[MovementService] Bulk Cache error:', e);
+      }
+    });
+
+    return results;
   }
 
   /**
    * Update Transfer: Confirm or Cancel
    */
   static async update(id: string, data: Prisma.ProductBranchMovementUpdateInput) {
-    // We expect specific status changes for logic
-    // Using simple update schema for now, but logic depends on status transition
-
-    // First fetch current to know state
-    const current = await prisma.productBranchMovement.findUnique({ where: { id } });
-    if (!current) throw new Error('Movement not found');
+    const current = await prisma.productBranchMovement.findUnique({
+      where: { id },
+      include: { product: true }
+    });
+    if (!current) throw new Error('Movimiento no encontrado');
 
     if (current.status !== 'PENDING' && data.status) {
-      // If trying to change status but already finalized
       if (data.status !== current.status) {
-        throw new Error(`Cannot change status of a ${current.status} movement.`);
+        throw new Error(`No se puede cambiar el estado de un movimiento que ya está ${current.status}.`);
       }
     }
 
@@ -204,7 +338,7 @@ export class ProductBranchMovementService {
 
       if (data.status === 'COMPLETED' && current.status === 'PENDING') {
         // CONFIRM TRANSFER
-        // 1. Origin: -Physical, -Reserved
+        // 1. Origin: -Physical, -Reserved (STOCK EXIT)
         await tx.branchOfficeProduct.updateMany({
           where: { productId: current.productId, branchOfficeId: current.originBranchId },
           data: {
@@ -213,61 +347,61 @@ export class ProductBranchMovementService {
           }
         });
 
-        // 2. Destination: +Physical, +Available
-        // Ensure record exists
-        let destStock = await tx.branchOfficeProduct.findUnique({
+        // 2. Destination: +Physical, +Available (STOCK ENTRY)
+        const destStock = await tx.branchOfficeProduct.upsert({
           where: {
             productId_branchOfficeId: {
               productId: current.productId,
               branchOfficeId: current.destinationBranchId
             }
-          }
-        });
-
-        if (!destStock) {
-          // Create if not exists (Assume stock 0 initial)
-          destStock = await tx.branchOfficeProduct.create({
-            data: {
-              productId: current.productId,
-              branchOfficeId: current.destinationBranchId,
-              physicalStock: 0,
-              availableStock: 0,
-              reservedStock: 0
-            }
-          });
-        }
-
-        await tx.branchOfficeProduct.update({
-          where: { id: destStock.id },
-          data: {
+          },
+          update: {
             physicalStock: { increment: current.quantityMoved },
             availableStock: { increment: current.quantityMoved },
+            lastRestockedAt: new Date()
+          },
+          create: {
+            productId: current.productId,
+            branchOfficeId: current.destinationBranchId,
+            physicalStock: current.quantityMoved,
+            availableStock: current.quantityMoved,
             lastRestockedAt: new Date()
           }
         });
 
-        // 3. Update Movement
+        // 3. Global: +Available (Arrival makes them available again)
+        await tx.product.update({
+          where: { id: current.productId },
+          data: { stock: { increment: current.quantityMoved } }
+        });
+
+        // 4. Log Transaction (TRANSFER_IN) at Destination
+        await InventoryService.logTransaction({
+          productId: current.productId,
+          branchOfficeId: current.destinationBranchId,
+          type: TransactionType.TRANSFER_IN,
+          quantity: current.quantityMoved,
+          unitCost: Number(current.product.priceCost) || 0,
+          totalCost: (Number(current.product.priceCost) || 0) * current.quantityMoved,
+          referenceId: current.id,
+          referenceType: 'TRANSFER',
+          documentNumber: current.referenceCode || undefined
+        }, tx);
+
+        // 5. Update Movement Status
         updatedMovement = await tx.productBranchMovement.update({
           where: { id },
           data: {
             ...data,
-            receivedAt: new Date(), // Auto-set
+            receivedAt: new Date(),
             status: 'COMPLETED'
           }
         });
 
       } else if (data.status === 'CANCELLED' && current.status === 'PENDING') {
-        // CANCEL TRANSFER
-        // 1. Origin: +Available, -Reserved (Return to stock)
-        await tx.branchOfficeProduct.updateMany({
-          where: { productId: current.productId, branchOfficeId: current.originBranchId },
-          data: {
-            availableStock: { increment: current.quantityMoved },
-            reservedStock: { decrement: current.quantityMoved }
-          }
-        });
+        // CANCEL TRANSFER: Rollback Reservation
+        await InventoryService.cancelReservation(current.productId, current.originBranchId, current.quantityMoved, tx);
 
-        // 2. Update Movement
         updatedMovement = await tx.productBranchMovement.update({
           where: { id },
           data: {
@@ -276,7 +410,7 @@ export class ProductBranchMovementService {
           }
         });
       } else {
-        // Just metadata update (notes, etc)
+        // Standard metadata update
         updatedMovement = await tx.productBranchMovement.update({
           where: { id },
           data
@@ -286,37 +420,40 @@ export class ProductBranchMovementService {
       return updatedMovement;
     });
 
-    // Invalidate Cache
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    // Background processing
+    setImmediate(async () => {
+      try {
+        await redis.del(`${CACHE_PREFIX}${id}`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        await redis.deleteKeysByPrefix('products:');
+        await redis.deleteKeysByPrefix('branch_office_products:');
+      } catch (e) {
+        console.error('[MovementService] Update background error:', e);
+      }
+    });
 
     return result;
   }
 
   static async delete(id: string) {
-    // Only allow delete if PENDING? Or soft delete? 
-    // For Safety: Only allow delete if PENDING (and restore stock) or just soft delete.
-    // Let's implement Strict Delete: Restore stock if PENDING.
     const current = await prisma.productBranchMovement.findUnique({ where: { id } });
-    if (!current) return; // Already gone
+    if (!current) return;
 
     await prisma.$transaction(async (tx) => {
       if (current.status === 'PENDING') {
-        // Rollback reservation
-        await tx.branchOfficeProduct.updateMany({
-          where: { productId: current.productId, branchOfficeId: current.originBranchId },
-          data: {
-            availableStock: { increment: current.quantityMoved },
-            reservedStock: { decrement: current.quantityMoved }
-          }
-        });
+        // Restore stock if deleting a pending transfer
+        await InventoryService.cancelReservation(current.productId, current.originBranchId, current.quantityMoved, tx);
       }
-      // If Completed, we usually DO NOT delete history. But if user forces...
-      // For now, let's standard delete.
       await tx.productBranchMovement.delete({ where: { id } });
     });
 
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    setImmediate(async () => {
+      try {
+        await redis.del(`${CACHE_PREFIX}${id}`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+      } catch (e) {
+        console.error('[MovementService] Delete background error:', e);
+      }
+    });
   }
 }

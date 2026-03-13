@@ -34,6 +34,15 @@ export class ProductBranchMovementController {
     res.status(201).json(movement);
   }
 
+  static async createBulk(req: Request, res: Response) {
+    try {
+      const result = await ProductBranchMovementService.createBulk(req.body);
+      res.status(201).json(result);
+    } catch (error: any) {
+      res.status(400).json({ message: error.message });
+    }
+  }
+
   static async update(req: Request, res: Response) {
     const { id } = paramsSchema.parse(req.params);
     // Use partial schema or custom input? Service expects Partial<Input>

@@ -193,8 +193,17 @@ export const BranchOfficeService = {
     return data;
   },
 
-  create: async (data: unknown) => {
+  create: async (data: any) => {
     const parsed = createBranchOfficeSchema.parse(data);
+
+    // Resolve societyId if it's a code
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(parsed.societyId);
+    if (!isUuid) {
+      const society = await prisma.society.findUnique({ where: { code: parsed.societyId } });
+      if (!society) return null;
+      parsed.societyId = society.id;
+    }
+
     const created = await prisma.branchOffice.create({ data: parsed });
 
     // Invalidar cache
@@ -204,8 +213,18 @@ export const BranchOfficeService = {
     return created;
   },
 
-  update: async (id: string, data: unknown) => {
+  update: async (id: string, data: any) => {
     const parsed = updateBranchOfficeSchema.parse(data);
+
+    if (parsed.societyId) {
+      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(parsed.societyId);
+      if (!isUuid) {
+        const society = await prisma.society.findUnique({ where: { code: parsed.societyId } });
+        if (!society) return null;
+        parsed.societyId = society.id;
+      }
+    }
+
     const updated = await prisma.branchOffice.update({
       where: { id },
       data: {
