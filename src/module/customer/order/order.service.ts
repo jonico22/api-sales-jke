@@ -687,7 +687,6 @@ export const OrderService = {
       timeout: 30000
     });
 
-    // ─── BACKGROUND: Cache Invalidation ──────────────────────────────
     const deletedSocietyId = result.societyId;
 
     setImmediate(async () => {
@@ -725,7 +724,7 @@ export const OrderService = {
         currency: { select: { code: true } },
         society: { select: { name: true } },
         branch: { select: { name: true } },
-        OrderPayment: { select: { paymentMethod: true, amount: true } },
+        OrderPayment: { select: { paymentMethod: true, amount: true, paymentDate: true } },
         orderItems: {
           include: {
             product: { select: { name: true, code: true } }
@@ -737,22 +736,62 @@ export const OrderService = {
     // 3. Mapear datos a estructura plana (Denormalización: 1 fila por ítem)
     const data: any[] = [];
 
+    // Helper para traducir estados
+    const translateStatus = (status: string) => {
+      const map: Record<string, string> = {
+        'PENDING': 'Pendiente',
+        'PENDING_PAYMENT': 'Pendiente de Pago',
+        'COMPLETED': 'Completado',
+        'CANCELLED': 'Cancelado'
+      };
+      return map[status] || status;
+    };
+
+    // Helper para traducir métodos de pago
+    const translatePaymentMethod = (method: string) => {
+      const map: Record<string, string> = {
+        'CASH': 'Efectivo',
+        'CARD': 'Tarjeta',
+        'YAPE': 'Yape',
+        'PLIN': 'Plin',
+        'TRANSFER': 'Transferencia',
+        'OTHER': 'Otro'
+      };
+      return map[method] || method;
+    };
+
     orders.forEach(order => {
       const partnerName = order.partner.companyName || `${order.partner.firstName || ''} ${order.partner.lastName || ''}`.trim();
-      const paymentMethods = order.OrderPayment.map(p => p.paymentMethod).join(', ') || 'Sin Pago';
+      const paymentMethods = order.OrderPayment.map(p => translatePaymentMethod(p.paymentMethod)).join(', ') || 'Sin Pago';
+      const statusEsp = translateStatus(order.status);
+
+      // Determinar fecha de pago (usar la de la orden o la más reciente de los pagos)
+      let resolvedPaymentDate = order.paymentDate;
+      if (!resolvedPaymentDate && order.OrderPayment.length > 0) {
+        // Obtenemos la fecha de pago más reciente
+        resolvedPaymentDate = order.OrderPayment.reduce((max, p) =>
+          p.paymentDate > max ? p.paymentDate : max,
+          order.OrderPayment[0].paymentDate
+        );
+      }
+
+      const baseInfo = {
+        'Código Orden': order.orderCode,
+        'Fecha Orden': formatToLimaTime(order.orderDate),
+        'Fecha Pago': resolvedPaymentDate ? formatToLimaTime(resolvedPaymentDate) : 'Pendiente',
+        'Estado': statusEsp,
+        'Cliente': partnerName,
+        'Doc. Cliente': order.partner.documentNumber,
+        'Sucursal': order.branch.name,
+        'Moneda': order.currency.code,
+        'Método Pago': paymentMethods,
+        'Total Orden': Number(order.totalAmount),
+      };
 
       // Si la orden no tiene items (caso raro pero posible), agregamos una fila solo con cabecera
       if (order.orderItems.length === 0) {
         data.push({
-          'Código Orden': order.orderCode,
-          'Fecha': formatToLimaTime(order.orderDate),
-          'Estado': order.status,
-          'Cliente': partnerName,
-          'Doc. Cliente': order.partner.documentNumber,
-          'Sucursal': order.branch.name,
-          'Moneda': order.currency.code,
-          'Método Pago': paymentMethods,
-          'Total Orden': Number(order.totalAmount),
+          ...baseInfo,
           'Producto': 'N/A',
           'Código Producto': 'N/A',
           'Cantidad': 0,
@@ -765,15 +804,7 @@ export const OrderService = {
         // Generar una fila por cada ítem
         order.orderItems.forEach(item => {
           data.push({
-            'Código Orden': order.orderCode,
-            'Fecha': formatToLimaTime(order.orderDate),
-            'Estado': order.status,
-            'Cliente': partnerName,
-            'Doc. Cliente': order.partner.documentNumber,
-            'Sucursal': order.branch.name,
-            'Moneda': order.currency.code,
-            'Método Pago': paymentMethods,
-            'Total Orden': Number(order.totalAmount),
+            ...baseInfo,
             // Detalle del Item
             'Producto': item.product.name,
             'Código Producto': item.product.code,

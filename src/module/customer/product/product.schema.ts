@@ -102,6 +102,10 @@ export const productFiltersSchema = z.object({
       example: 'CAT-001',
       description: 'Código de categoría (legacy)'
     }),
+    branchId: z.string().uuid().optional().openapi({
+      example: '550e8400-e29b-41d4-a716-446655440000',
+      description: 'ID de la sucursal para filtrar productos con stock en esa sucursal'
+    }),
 
     // Búsqueda por nombre o código
     search: z.string().optional().openapi({

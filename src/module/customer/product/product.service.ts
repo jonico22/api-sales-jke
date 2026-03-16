@@ -28,6 +28,7 @@ export interface ProductFilters {
   societyId?: string;
   categoryCode?: string;
   categoryId?: string;
+  branchId?: string;       // Filtrar por sucursal (BranchOfficeProduct)
   search?: string;
   isActive?: boolean;
   priceFrom?: number;
@@ -71,6 +72,7 @@ export const ProductService = {
       societyCode || 'all',
       categoryCode || 'all',
       categoryId || 'all',
+      filters?.branchId || 'all',
       filters?.search || 'all',
       filters?.isActive !== undefined ? filters.isActive : 'all',
       filters?.priceFrom || 'all',
@@ -127,6 +129,13 @@ export const ProductService = {
       } else {
         return buildPaginatedResult([], page, limit, 0);
       }
+    }
+
+    // Filtro por sucursal (BranchOfficeProduct)
+    if (filters?.branchId) {
+      whereClause.BranchOfficeProduct = {
+        some: { branchOfficeId: filters.branchId }
+      };
     }
 
     // Búsqueda por nombre o código (case-insensitive)
