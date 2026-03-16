@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { ProductService } from './product.service';
-import { createProductSchema, updateProductSchema, productIdSchema, productFiltersSchema } from './product.schema';
+import { createProductSchema, updateProductSchema, productIdSchema, productFiltersSchema, productSelectFiltersSchema } from './product.schema';
 import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
 export const ProductController = {
@@ -127,9 +127,18 @@ export const ProductController = {
    * Obtener productos para select/dropdown (sin paginación)
    */
   getForSelect: async (req: Request, res: Response) => {
-    const societyCode = (req.query.societyCode || req.query.societyId) as string | undefined;
-    const categoryCode = (req.query.categoryCode || req.query.categoryId) as string | undefined;
-    const result = await ProductService.getForSelect(societyCode, categoryCode);
-    res.json(result);
+    try {
+      const { query } = productSelectFiltersSchema.parse({ query: req.query });
+      const { societyCode, societyId, categoryCode, categoryId, branchId } = query;
+
+      const result = await ProductService.getForSelect(
+        societyCode || societyId,
+        categoryCode || categoryId,
+        branchId
+      );
+      res.json(result);
+    } catch (error: any) {
+      res.status(400).json({ message: 'Error en parámetros de consulta', error: error.message });
+    }
   },
 };

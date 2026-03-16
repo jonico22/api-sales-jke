@@ -741,60 +741,98 @@ export const ProductService = {
   /**
    * Obtener productos para select/dropdown con cache largo
    */
-  getForSelect: async (societyCode?: string, categoryCode?: string) => {
-    const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}:${categoryCode || 'all'}`;
+    getForSelect: async (societyCode?: string, categoryCode?: string, branchId?: string) => {
+        const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}:${categoryCode || 'all'}:${branchId || 'all'}`;
 
-    const cached = await redis.get<any[]>(cacheKey);
-    if (cached) return cached;
+        const cached = await redis.get<any[]>(cacheKey);
+        if (cached) return cached;
 
-    const whereClause: any = { isDeleted: false, isActive: true };
+        const whereClause: any = { isDeleted: false, isActive: true };
 
-    // Si se envía código de sociedad, buscar su ID
-    if (societyCode) {
-      const society = await prisma.society.findUnique({ where: { code: societyCode } });
-      if (society) {
-        whereClause.societyId = society.id;
-      } else {
-        return [];
-      }
-    }
+        // 1. Resolve Society
+        let resolvedSocietyId: string | undefined;
+        if (societyCode) {
+            const society = await prisma.society.findUnique({ where: { code: societyCode } });
+            if (society) {
+                whereClause.societyId = society.id;
+                resolvedSocietyId = society.id;
+            } else {
+                return [];
+            }
+        }
 
-    // Si se envía código de categoría, buscar su ID
-    if (categoryCode) {
-      const category = await prisma.category.findFirst({
-        where: { code: categoryCode, isDeleted: false }
-      });
-      if (category) {
-        whereClause.categoryId = category.id;
-      } else {
-        return [];
-      }
-    }
+        // 2. Resolve Category
+        if (categoryCode) {
+            const category = await prisma.category.findFirst({
+                where: { code: categoryCode, isDeleted: false }
+            });
+            if (category) {
+                whereClause.categoryId = category.id;
+            } else {
+                return [];
+            }
+        }
 
-    const products = await prisma.product.findMany({
-      where: whereClause,
-      select: {
-        id: true,
-        name: true,
-        price: true,
-        stock: true,
-        code: true,
-        category: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-          },
-        },
-      },
-      orderBy: { name: 'asc' },
-    });
+        // 3. Resolve Branch Stock
+        let targetBranchId = branchId;
 
-    // Guardar en cache con TTL largo
-    await redis.set(cacheKey, products, CACHE_TTL_SELECT);
+        // If no branchId provided, default to main branch of society
+        if (!targetBranchId && resolvedSocietyId) {
+            const mainBranch = await prisma.branchOffice.findFirst({
+                where: { societyId: resolvedSocietyId, isMain: true }
+            });
+            if (mainBranch) {
+                targetBranchId = mainBranch.id;
+            }
+        }
 
-    return products;
-  },
+        // 4. Apply branch stock filter to whereClause
+        if (targetBranchId) {
+            whereClause.BranchOfficeProduct = {
+                some: {
+                    branchOfficeId: targetBranchId,
+                    availableStock: { gt: 0 }
+                }
+            };
+        }
+
+        const products = await prisma.product.findMany({
+            where: whereClause,
+            select: {
+                id: true,
+                name: true,
+                price: true,
+                code: true,
+                category: {
+                    select: {
+                        id: true,
+                        name: true,
+                        code: true,
+                    },
+                },
+                BranchOfficeProduct: targetBranchId ? {
+                    where: { branchOfficeId: targetBranchId },
+                    select: { availableStock: true }
+                } : undefined
+            },
+            orderBy: { name: 'asc' },
+        });
+
+        // Map stock to maintain a flat structure
+        const formattedProducts = products.map(p => {
+            const stock = (p as any).BranchOfficeProduct?.[0]?.availableStock ?? 0;
+            const { BranchOfficeProduct, ...rest } = p as any;
+            return {
+                ...rest,
+                stock
+            };
+        });
+
+        // Guardar en cache con TTL largo
+        await redis.set(cacheKey, formattedProducts, CACHE_TTL_SELECT);
+
+        return formattedProducts;
+    },
 
   /**
    * Invalidar todo el cache de productos (para uso manual si es necesario)

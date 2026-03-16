@@ -15,11 +15,8 @@ export const BranchOfficeProductController = {
       });
     }
 
-    const societyId = req.query.societyId as string | undefined;
-
     const data = await BranchOfficeProductService.getAll(
       paginationParse.data.query,
-      societyId,
       filtersParse.data.query
     );
     res.json(data);
@@ -47,5 +44,26 @@ export const BranchOfficeProductController = {
     const id = branchOfficeProductIdSchema.parse(req.params.id);
     await BranchOfficeProductService.delete(id);
     res.json({ message: 'BranchOfficeProduct deleted successfully' });
+  },
+
+  getForSelect: async (req: Request, res: Response) => {
+    const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
+    const branchOfficeId = req.query.branchOfficeId as string;
+    const societyCode = req.query.societyCode as string | undefined;
+
+    if (!paginationParse.success) {
+      return res.status(400).json(paginationParse.error.format());
+    }
+
+    if (!branchOfficeId) {
+      return res.status(400).json({ message: 'branchOfficeId is required' });
+    }
+
+    const result = await BranchOfficeProductService.getForSelect(
+      branchOfficeId,
+      societyCode,
+      paginationParse.data.query
+    );
+    res.json(result);
   },
 };

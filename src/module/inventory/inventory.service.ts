@@ -28,7 +28,7 @@ export interface LogTransactionInput {
     date?: Date;
 }
 
-const CACHE_PREFIX = 'inventory:';
+const CACHE_PREFIX = 'inventory';
 const CACHE_TTL_LIST = 60; // 1 minuto (Kardex changes frequently)
 
 export const InventoryService = {
@@ -80,7 +80,7 @@ export const InventoryService = {
         // Invalidate Cache in background
         setImmediate(async () => {
             try {
-                await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+                await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
             } catch (e) {
                 console.error('[InventoryService] Error invalidating cache:', e);
             }
@@ -232,7 +232,7 @@ export const InventoryService = {
                     redis.deleteKeysByPrefix('products:'),
                     redis.deleteKeysByPrefix('products:select:'),
                     redis.deleteKeysByPrefix('branch_office_products:'),
-                    redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`)
+                    redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`)
                 ]);
             } catch (e) {
                 console.error('[InventoryService] Error invalidating caches (adjustment):', e);

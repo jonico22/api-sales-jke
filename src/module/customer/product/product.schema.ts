@@ -193,3 +193,15 @@ export const productFiltersSchema = z.object({
   })
 });
 
+// Schema para FILTROS de select (sin paginación)
+export const productSelectFiltersSchema = z.object({
+  query: z.object({
+    societyCode: z.string().optional().openapi({ example: 'SOC-001' }),
+    societyId: z.string().optional().openapi({ example: 'SOC-001' }),
+    categoryCode: z.string().optional().openapi({ example: 'CAT-001' }),
+    categoryId: z.string().optional().openapi({ example: 'CAT-001' }),
+    branchId: z.string().uuid().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000', description: 'ID de la sucursal (opcional, por defecto ALM-PRINCIPAL)' }),
+  })
+});
+
+export type ProductSelectFilters = z.infer<typeof productSelectFiltersSchema>['query'];

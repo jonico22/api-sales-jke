@@ -426,6 +426,7 @@ model BranchOfficeProduct {
   defectiveStock Int     @default(0) // Stock defectuoso/merma
   location       String? // Ubicación en almacén (ej: A-01-05)
   isActive       Boolean @default(true)
+  isDeleted      Boolean @default(false)
 
   minStock        Int? // stock mínimo para alertas
   maxStock        Int? // stock máximo de referencia
@@ -915,8 +916,19 @@ model CashShift {
   // Acumulados Snapshots (calculados al cierre)
   incomeCash     Decimal @default(0) @db.Decimal(10, 2)
   incomeCard     Decimal @default(0) @db.Decimal(10, 2)
+  incomeYape     Decimal @default(0) @db.Decimal(10, 2)
+  incomePlin     Decimal @default(0) @db.Decimal(10, 2)
   incomeTransfer Decimal @default(0) @db.Decimal(10, 2)
   expenseCash    Decimal @default(0) @db.Decimal(10, 2)
+
+  observations String? @db.Text
+
+  // Reportes físicos por método (opcionales para conciliación detallada)
+  reportedCashAmount     Decimal? @db.Decimal(10, 2)
+  reportedCardAmount     Decimal? @db.Decimal(10, 2)
+  reportedYapeAmount     Decimal? @db.Decimal(10, 2)
+  reportedPlinAmount     Decimal? @db.Decimal(10, 2)
+  reportedTransferAmount Decimal? @db.Decimal(10, 2)
 
   movements CashMovement[]
 

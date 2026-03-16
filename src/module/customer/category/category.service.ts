@@ -16,7 +16,7 @@ type CreateCategoryInput = z.infer<typeof createCategorySchema>['body'];
 type UpdateCategoryInput = z.infer<typeof updateCategorySchema>['body'];
 
 // Constantes de cache
-const CACHE_PREFIX = 'categories:';
+const CACHE_PREFIX = 'categories';
 const CACHE_TTL_LIST = 300; // 5 minutos para listas
 const CACHE_TTL_SINGLE = 600; // 10 minutos para registro individual
 const CACHE_TTL_SELECT = 900; // 15 minutos para select (datos que cambian poco)
@@ -176,7 +176,7 @@ export const CategoryService = {
    * Obtener categoría por ID con cache
    */
   getById: async (id: string) => {
-    const cacheKey = `${CACHE_PREFIX}${id}`;
+    const cacheKey = `${CACHE_PREFIX}:${id}`;
 
     const cached = await redis.get<Category>(cacheKey);
     if (cached) return cached;
@@ -276,7 +276,7 @@ export const CategoryService = {
     // BACKGROUND: Invalidar cache
     setImmediate(async () => {
       try {
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:`);
       } catch (e) {
         console.error('[CategoryService] Error background (create):', e);
       }
@@ -303,7 +303,7 @@ export const CategoryService = {
     // BACKGROUND: Invalidar cache
     setImmediate(async () => {
       try {
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:`);
       } catch (e) {
         console.error('[CategoryService] Error background (update):', e);
       }
@@ -328,7 +328,7 @@ export const CategoryService = {
     // BACKGROUND: Invalidar cache
     setImmediate(async () => {
       try {
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:`);
       } catch (e) {
         console.error('[CategoryService] Error background (delete):', e);
       }
@@ -341,7 +341,7 @@ export const CategoryService = {
    * Obtener categorías para select/dropdown con cache largo
    */
   getForSelect: async (societyCode?: string) => {
-    const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}`;
+    const cacheKey = `${CACHE_PREFIX}:select:${societyCode || 'all'}`;
 
     const cached = await redis.get<{ id: string; name: string; code: string }[]>(cacheKey);
     if (cached) return cached;
@@ -377,7 +377,7 @@ export const CategoryService = {
    * Invalidar todo el cache de categorías (para uso manual si es necesario)
    */
   invalidateAllCache: async () => {
-    await redis.deleteKeysByPrefix(CACHE_PREFIX);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:`);
     console.log('[Cache] Todo el cache de categorías ha sido invalidado');
   },
 };

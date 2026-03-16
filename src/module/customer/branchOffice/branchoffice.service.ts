@@ -13,7 +13,7 @@ import { formatToLimaTime, convertLimaDateRangeToUTC } from '@/utils/dateFormatt
 // Tipos inferidos
 export type BranchOfficeFilters = z.infer<typeof branchOfficeFiltersSchema>['query'];
 
-const CACHE_PREFIX = 'branch_offices:';
+const CACHE_PREFIX = 'branch_offices';
 const CACHE_TTL_LIST = 300; // 5 minutos
 const CACHE_TTL_SINGLE = 600; // 10 minutos
 const CACHE_TTL_SELECT = 900; // 15 minutos
@@ -134,7 +134,7 @@ export const BranchOfficeService = {
   },
 
   getById: async (id: string) => {
-    const cacheKey = `${CACHE_PREFIX}${id}`;
+    const cacheKey = `${CACHE_PREFIX}:${id}`;
 
     // 1. Cache
     const cached = await redis.get(cacheKey);
@@ -160,7 +160,7 @@ export const BranchOfficeService = {
   },
 
   async getForSelect(societyCode?: string) {
-    const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}`;
+    const cacheKey = `${CACHE_PREFIX}:select:${societyCode || 'all'}`;
     const cached = await redis.get<any[]>(cacheKey);
     if (cached) return cached;
 
@@ -207,8 +207,8 @@ export const BranchOfficeService = {
     const created = await prisma.branchOffice.create({ data: parsed });
 
     // Invalidar cache
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:select:`);
 
     return created;
   },
@@ -234,9 +234,9 @@ export const BranchOfficeService = {
     });
 
     // Invalidar cache
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    await redis.del(`${CACHE_PREFIX}:${id}`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:select:`);
 
     return updated;
   },
@@ -252,9 +252,9 @@ export const BranchOfficeService = {
     });
 
     // Invalidar cache
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    await redis.del(`${CACHE_PREFIX}:${id}`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:select:`);
 
     return deleted;
   },
