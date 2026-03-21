@@ -50,6 +50,7 @@ export const BranchOfficeProductController = {
     const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
     const branchOfficeId = req.query.branchOfficeId as string;
     const societyCode = req.query.societyCode as string | undefined;
+    const search = req.query.search as string | undefined;
 
     if (!paginationParse.success) {
       return res.status(400).json(paginationParse.error.format());
@@ -62,7 +63,8 @@ export const BranchOfficeProductController = {
     const result = await BranchOfficeProductService.getForSelect(
       branchOfficeId,
       societyCode,
-      paginationParse.data.query
+      paginationParse.data.query,
+      search
     );
     res.json(result);
   },

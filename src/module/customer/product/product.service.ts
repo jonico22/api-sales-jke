@@ -60,8 +60,8 @@ export const ProductService = {
   ): Promise<PaginatedResult<Product>> => {
     const page = paginationQuery?.page ?? 1;
     const limit = paginationQuery?.limit ?? 10;
-    const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-    const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+    const sortBy = paginationQuery?.sortBy ?? 'name';
+    const sortOrder = paginationQuery?.sortOrder ?? 'asc';
 
     // Construir clave de cache única para esta combinación de filtros
     const societyCode = filters?.societyCode || filters?.societyId;
@@ -186,28 +186,30 @@ export const ProductService = {
       }
     }
 
-    // Filtro de stock bajo (stock <= minStock)
-    // Nota: Prisma no permite comparar campos directamente, así que lo haremos manualmente después
+    // Filtro de stock (combinable)
+    const stockConditions: any = {};
     const applyLowStockFilter = filters?.lowStock === true || filters?.stockStatus === 'low';
 
-    // Filtro stockStatus: Disponible (stock > 0) | Agotado (stock <= 0) | Bajo Stock (post-process)
-    if (filters?.stockStatus === 'available') {
-      whereClause.stock = { gt: 0 };
-    } else if (filters?.stockStatus === 'out') {
-      whereClause.stock = { lte: 0 }; // lte:0 es más compatible con Prisma que equals:0
+    if (applyLowStockFilter) {
+      stockConditions.lte = (prisma.product as any).fields.minStock;
     }
 
-    // Filtro de rango de stock
+    if (filters?.stockStatus === 'available') {
+      stockConditions.gt = 0;
+    } else if (filters?.stockStatus === 'out') {
+      stockConditions.lte = 0;
+    }
+
+    if (Object.keys(stockConditions).length > 0) {
+      whereClause.stock = stockConditions;
+    }
+
+    // Filtro de rango de stock (solo si no hay filtros específicos previos)
     if (filters?.stockFrom !== undefined || filters?.stockTo !== undefined) {
-      // No aplicar si ya hay filtro de stockStatus o lowStock
-      if (!applyLowStockFilter && !filters?.stockStatus) {
+      if (Object.keys(stockConditions).length === 0) {
         whereClause.stock = {};
-        if (filters.stockFrom !== undefined) {
-          whereClause.stock.gte = filters.stockFrom;
-        }
-        if (filters.stockTo !== undefined) {
-          whereClause.stock.lte = filters.stockTo;
-        }
+        if (filters.stockFrom !== undefined) whereClause.stock.gte = filters.stockFrom;
+        if (filters.stockTo !== undefined) whereClause.stock.lte = filters.stockTo;
       }
     }
 
@@ -284,13 +286,9 @@ export const ProductService = {
       prisma.product.count({ where: whereClause }),
     ]);
 
-    // Aplicar filtro de stock bajo si es necesario (post-procesamiento)
-    let filteredData = data;
-    let filteredTotal = total;
-    if (applyLowStockFilter) {
-      filteredData = data.filter(item => item.stock <= item.minStock);
-      filteredTotal = filteredData.length;
-    }
+    // El filtro de stock bajo ya fue aplicado en la consulta principal
+    const filteredData = data;
+    const filteredTotal = total;
 
     // Formatear fechas
     const formattedData = filteredData.map(item => ({

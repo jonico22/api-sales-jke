@@ -271,7 +271,8 @@ export const BranchOfficeProductService = {
   getForSelect: async (
     branchOfficeId: string,
     societyCode?: string,
-    paginationQuery?: PaginationQuery
+    paginationQuery?: PaginationQuery,
+    search?: string
   ): Promise<PaginatedResult<any>> => {
     const page = paginationQuery?.page ?? 1;
     const limit = paginationQuery?.limit ?? 100; // Un poco más alto por defecto para selects
@@ -285,6 +286,15 @@ export const BranchOfficeProductService = {
       if (society) {
         whereClause.branchOffice = { societyId: society.id };
       }
+    }
+
+    if (search) {
+      whereClause.product = {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { code: { contains: search, mode: 'insensitive' } },
+        ],
+      };
     }
 
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
