@@ -179,6 +179,14 @@ export const BussinessPartnerService = {
      * Crear un nuevo socio de negocio
      */
     async create(data: CreateBussinessPartnerInput) {
+        // Resolve societyId if it's a code
+        const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(data.societyId);
+        if (!isUuid) {
+            const society = await prisma.society.findUnique({ where: { code: data.societyId } });
+            if (!society) throw new Error(`Sociedad con código ${data.societyId} no encontrada`);
+            data.societyId = society.id;
+        }
+
         const created = await prisma.bussinessPartner.create({
             data,
             include: {
