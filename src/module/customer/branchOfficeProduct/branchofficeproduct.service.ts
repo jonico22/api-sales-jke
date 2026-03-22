@@ -293,6 +293,8 @@ export const BranchOfficeProductService = {
         OR: [
           { name: { contains: search, mode: 'insensitive' } },
           { code: { contains: search, mode: 'insensitive' } },
+          { brand: { contains: search, mode: 'insensitive' } },
+          { barcode: { contains: search, mode: 'insensitive' } },
         ],
       };
     }
@@ -315,7 +317,8 @@ export const BranchOfficeProductService = {
           product: {
             select: {
               name: true,
-              code: true
+              code: true,
+              brand: true
             }
           }
         }
@@ -328,6 +331,7 @@ export const BranchOfficeProductService = {
       id: item.productId,
       name: item.product.name,
       code: item.product.code,
+      brand: item.product.brand,
       stock: item.availableStock
     }));
 
