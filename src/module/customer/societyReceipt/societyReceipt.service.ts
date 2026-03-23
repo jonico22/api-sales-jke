@@ -16,12 +16,15 @@ const CACHE_TTL_LIST = 300; // 5 min
 const CACHE_TTL_SINGLE = 600; // 10 min
 
 export interface SocietyReceiptFilters {
-  search?: string;
+  societyCode?: string;
   societyId?: string;
   receiptTypeId?: string;
   status?: ReceiptStatus;
+  series?: string;
+  receiptNumber?: string;
   dateFrom?: string;
   dateTo?: string;
+  search?: string;
 }
 
 export const createSocietyReceipt = async (data: any) => {
@@ -48,14 +51,32 @@ export const getAllSocietyReceipts = async (
 ): Promise<PaginatedResult<SocietyReceipt>> => {
   const page = paginationQuery?.page ?? 1;
   const limit = paginationQuery?.limit ?? 10;
-  const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-  const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+  const sortBy = paginationQuery?.sortBy || 'createdAt';
+  const sortOrder = paginationQuery?.sortOrder || 'desc';
+
+  // Resolve societyId from filters
+  let resolvedSocietyId = filters?.societyId;
+  const societyCode = filters?.societyCode;
+
+  if (!resolvedSocietyId && societyCode) {
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
+    if (isUuid) {
+      resolvedSocietyId = societyCode;
+    } else {
+      const society = await prisma.society.findUnique({ where: { code: societyCode } });
+      if (society) {
+        resolvedSocietyId = society.id;
+      } else {
+        return buildPaginatedResult([], page, limit, 0);
+      }
+    }
+  }
 
   // Cache Key
   const cacheKeyParts = [
     CACHE_PREFIX,
     'list',
-    filters?.societyId || 'all',
+    resolvedSocietyId || 'all',
     filters?.receiptTypeId || 'all',
     filters?.status || 'all',
     filters?.search || 'all',
@@ -76,9 +97,11 @@ export const getAllSocietyReceipts = async (
   const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
   const whereClause: any = {};
 
-  if (filters?.societyId) whereClause.societyId = filters.societyId;
+  if (resolvedSocietyId) whereClause.societyId = resolvedSocietyId;
   if (filters?.receiptTypeId) whereClause.receiptTypeId = filters.receiptTypeId;
   if (filters?.status) whereClause.status = filters.status;
+  if (filters?.series) whereClause.series = { contains: filters.series, mode: 'insensitive' };
+  if (filters?.receiptNumber) whereClause.receiptNumber = { contains: filters.receiptNumber, mode: 'insensitive' };
 
   if (filters?.search) {
     whereClause.OR = [
@@ -128,19 +151,29 @@ export const getAllSocietyReceipts = async (
   return result;
 }
 
-export const getSocietyReceiptById = async (id: string) => {
+export const getSocietyReceiptById = async (id: string, societyCodeOrId?: string) => {
   const cacheKey = `${CACHE_PREFIX}${id}`;
+
   const cached = await redis.get<SocietyReceipt>(cacheKey);
   if (cached) return cached;
 
-  const receipt = await prisma.societyReceipt.findUnique({
-    where: { id },
+  let societyId = societyCodeOrId;
+  if (societyCodeOrId) {
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCodeOrId);
+    if (!isUuid) {
+      const society = await prisma.society.findUnique({ where: { code: societyCodeOrId } });
+      if (society) societyId = society.id;
+    }
+  }
+
+  const receipt = await prisma.societyReceipt.findFirst({
+    where: {
+      id,
+      ...(societyId && { societyId }),
+    },
     include: {
-      currency: true,
-      tax: true,
+      society: true,
       receiptType: true,
-      orderPayment: true,
-      file: true,
     },
   });
 
@@ -150,6 +183,16 @@ export const getSocietyReceiptById = async (id: string) => {
 
 export const updateSocietyReceipt = async (id: string, data: any) => {
   const validated = updateSocietyReceiptSchema.parse(data);
+
+  if (validated.societyId) {
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(validated.societyId);
+    if (!isUuid) {
+      const society = await prisma.society.findUnique({ where: { code: validated.societyId } });
+      if (!society) throw new Error(`Sociedad con código ${validated.societyId} no encontrada`);
+      validated.societyId = society.id;
+    }
+  }
+
   const updated = await prisma.societyReceipt.update({
     where: { id },
     data: validated,

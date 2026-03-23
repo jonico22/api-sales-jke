@@ -26,17 +26,16 @@ const buildOrderWhereClause = async (filters?: OrderFilters) => {
 
   // Resolve Society Code/ID (Pattern from CategoryService)
   if (societyCode) {
-    const society = await prisma.society.findUnique({ where: { code: societyCode } });
-    if (society) {
-      whereClause.societyId = society.id;
-      subscriptionId = society.subscriptionId;
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
+    if (isUuid) {
+      whereClause.societyId = societyCode;
+      const soc = await prisma.society.findUnique({ where: { id: societyCode } });
+      if (soc) subscriptionId = soc.subscriptionId;
     } else {
-      // If code looks like UUID, try as ID as fallback (legacy behavior support)
-      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
-      if (isUuid) {
-        whereClause.societyId = societyCode;
-        const soc = await prisma.society.findUnique({ where: { id: societyCode } });
-        if (soc) subscriptionId = soc.subscriptionId;
+      const society = await prisma.society.findUnique({ where: { code: societyCode } });
+      if (society) {
+        whereClause.societyId = society.id;
+        subscriptionId = society.subscriptionId;
       } else {
         // Return guaranteed empty result if code invalid
         return { whereClause: { id: '00000000-0000-0000-0000-000000000000' }, subscriptionId: undefined };
@@ -85,8 +84,14 @@ const buildOrderWhereClause = async (filters?: OrderFilters) => {
 
 // ─── Helper: Resolve Entities in Parallel ─────────────────────────────
 const resolveSociety = async (idOrCode: string) => {
-  let society = await prisma.society.findUnique({ where: { id: idOrCode } });
-  if (!society) society = await prisma.society.findUnique({ where: { code: idOrCode } });
+  const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(idOrCode);
+  let society;
+  if (isUuid) {
+    society = await prisma.society.findUnique({ where: { id: idOrCode } });
+  } else {
+    society = await prisma.society.findUnique({ where: { code: idOrCode } });
+  }
+
   if (!society) throw new Error(`Sociedad no encontrada (ID/Code: ${idOrCode})`);
   return society;
 };
@@ -366,8 +371,8 @@ export const OrderService = {
   ): Promise<PaginatedResult<Order & { totalProducts: number }>> => {
     const page = paginationQuery?.page ?? 1;
     const limit = paginationQuery?.limit ?? 10;
-    const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-    const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+    const sortBy = paginationQuery?.sortBy || 'createdAt';
+    const sortOrder = paginationQuery?.sortOrder || 'desc';
 
     // Construir clave de cache única
     const societyCode = filters?.societyCode || filters?.societyId;
@@ -687,7 +692,6 @@ export const OrderService = {
       timeout: 30000
     });
 
-    // ─── BACKGROUND: Cache Invalidation ──────────────────────────────
     const deletedSocietyId = result.societyId;
 
     setImmediate(async () => {
@@ -725,7 +729,7 @@ export const OrderService = {
         currency: { select: { code: true } },
         society: { select: { name: true } },
         branch: { select: { name: true } },
-        OrderPayment: { select: { paymentMethod: true, amount: true } },
+        OrderPayment: { select: { paymentMethod: true, amount: true, paymentDate: true } },
         orderItems: {
           include: {
             product: { select: { name: true, code: true } }
@@ -737,22 +741,62 @@ export const OrderService = {
     // 3. Mapear datos a estructura plana (Denormalización: 1 fila por ítem)
     const data: any[] = [];
 
+    // Helper para traducir estados
+    const translateStatus = (status: string) => {
+      const map: Record<string, string> = {
+        'PENDING': 'Pendiente',
+        'PENDING_PAYMENT': 'Pendiente de Pago',
+        'COMPLETED': 'Completado',
+        'CANCELLED': 'Cancelado'
+      };
+      return map[status] || status;
+    };
+
+    // Helper para traducir métodos de pago
+    const translatePaymentMethod = (method: string) => {
+      const map: Record<string, string> = {
+        'CASH': 'Efectivo',
+        'CARD': 'Tarjeta',
+        'YAPE': 'Yape',
+        'PLIN': 'Plin',
+        'TRANSFER': 'Transferencia',
+        'OTHER': 'Otro'
+      };
+      return map[method] || method;
+    };
+
     orders.forEach(order => {
       const partnerName = order.partner.companyName || `${order.partner.firstName || ''} ${order.partner.lastName || ''}`.trim();
-      const paymentMethods = order.OrderPayment.map(p => p.paymentMethod).join(', ') || 'Sin Pago';
+      const paymentMethods = order.OrderPayment.map(p => translatePaymentMethod(p.paymentMethod)).join(', ') || 'Sin Pago';
+      const statusEsp = translateStatus(order.status);
+
+      // Determinar fecha de pago (usar la de la orden o la más reciente de los pagos)
+      let resolvedPaymentDate = order.paymentDate;
+      if (!resolvedPaymentDate && order.OrderPayment.length > 0) {
+        // Obtenemos la fecha de pago más reciente
+        resolvedPaymentDate = order.OrderPayment.reduce((max, p) =>
+          p.paymentDate > max ? p.paymentDate : max,
+          order.OrderPayment[0].paymentDate
+        );
+      }
+
+      const baseInfo = {
+        'Código Orden': order.orderCode,
+        'Fecha Orden': formatToLimaTime(order.orderDate),
+        'Fecha Pago': resolvedPaymentDate ? formatToLimaTime(resolvedPaymentDate) : 'Pendiente',
+        'Estado': statusEsp,
+        'Cliente': partnerName,
+        'Doc. Cliente': order.partner.documentNumber,
+        'Sucursal': order.branch.name,
+        'Moneda': order.currency.code,
+        'Método Pago': paymentMethods,
+        'Total Orden': Number(order.totalAmount),
+      };
 
       // Si la orden no tiene items (caso raro pero posible), agregamos una fila solo con cabecera
       if (order.orderItems.length === 0) {
         data.push({
-          'Código Orden': order.orderCode,
-          'Fecha': formatToLimaTime(order.orderDate),
-          'Estado': order.status,
-          'Cliente': partnerName,
-          'Doc. Cliente': order.partner.documentNumber,
-          'Sucursal': order.branch.name,
-          'Moneda': order.currency.code,
-          'Método Pago': paymentMethods,
-          'Total Orden': Number(order.totalAmount),
+          ...baseInfo,
           'Producto': 'N/A',
           'Código Producto': 'N/A',
           'Cantidad': 0,
@@ -765,15 +809,7 @@ export const OrderService = {
         // Generar una fila por cada ítem
         order.orderItems.forEach(item => {
           data.push({
-            'Código Orden': order.orderCode,
-            'Fecha': formatToLimaTime(order.orderDate),
-            'Estado': order.status,
-            'Cliente': partnerName,
-            'Doc. Cliente': order.partner.documentNumber,
-            'Sucursal': order.branch.name,
-            'Moneda': order.currency.code,
-            'Método Pago': paymentMethods,
-            'Total Orden': Number(order.totalAmount),
+            ...baseInfo,
             // Detalle del Item
             'Producto': item.product.name,
             'Código Producto': item.product.code,

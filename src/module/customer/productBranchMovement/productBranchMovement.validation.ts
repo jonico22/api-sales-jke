@@ -24,6 +24,14 @@ export const bulkCreateProductBranchMovementSchema = z.object({
   createdBy: z.string().uuid().optional(),
 });
 
+export const transferAllSchema = z.object({
+  originBranchId: z.string().uuid(),
+  destinationBranchId: z.string().uuid(),
+  notes: z.string().optional(),
+  referenceCode: z.string().optional(),
+  createdBy: z.string().uuid().optional(),
+});
+
 export const updateProductBranchMovementSchema = createProductBranchMovementSchema.partial();
 
 export const paramsSchema = z.object({

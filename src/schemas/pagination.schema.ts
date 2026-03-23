@@ -30,8 +30,7 @@ export const paginationQuerySchema = z.object({
         // Orden ascendente o descendente
         sortOrder: z
             .enum(['asc', 'desc'])
-            .optional()
-            .default(PAGINATION_DEFAULTS.SORT_ORDER),
+            .optional(),
     }),
 });
 

@@ -5,7 +5,8 @@ import {
     closeShiftSchema,
     addManualMovementSchema,
     cashShiftIdSchema,
-    cashShiftFiltersSchema
+    cashShiftFiltersSchema,
+    getCurrentShiftSchema
 } from './cashShift.schema'; // [UPDATED]
 import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
@@ -71,24 +72,47 @@ export const CashShiftController = {
 
     addManualMovement: async (req: Request, res: Response) => {
         try {
-            // Manual movement requires ShiftID in body or params? Schema has it.
-            // Usually POST /cash-shifts/:id/movements or POST /cash-movements
-            // Let's assume POST /cash-shifts/movements and body has shiftId OR POST /cash-shifts/:id/movements
-            // Design: "addManualMovementSchema" has shiftId. 
-            // User might send it in body.
-            // Also strictly we need userId who is adding this.
-            // If auth middleware populates req.user.id... assuming for now passed in body or token -> logic
-            // Since no auth middleware in context, assuming passed in body or extracted.
-            // Schema manual movement doesn't enforce userId, but service needs it.
-            // I will attach a dummy or req.body.userId if provided.
-
             const { body } = addManualMovementSchema.parse({ body: req.body });
-            const userId = req.body.userId || 'unknown-user'; // Fallback if not strictly enforced by middleware yet
+            const userId = req.body.userId || 'unknown-user';
 
             const movement = await CashShiftService.addManualMovement({ ...body, userId });
             res.status(201).json(movement);
         } catch (error: any) {
             res.status(500).json({ message: 'Error agregando movimiento', error: error.message });
+        }
+    },
+
+    getCreatedByUsers: async (req: Request, res: Response) => {
+        try {
+            const societyIdOrCode = req.query.societyCode as string || req.query.societyId as string;
+            const users = await CashShiftService.getCreatedByUsers(societyIdOrCode);
+            res.json(users);
+        } catch (error: any) {
+            res.status(500).json({ message: 'Error obteniendo usuarios de cajas', error: error.message });
+        }
+    },
+
+    getCurrentShift: async (req: Request, res: Response) => {
+        try {
+            const { query } = getCurrentShiftSchema.parse({ query: req.query });
+            const { branchId, userId, societyId, societyCode } = query;
+
+            const shift = await CashShiftService.getCurrentShift(branchId, userId, societyCode || societyId);
+            res.json(shift);
+        } catch (error: any) {
+            res.status(500).json({ message: 'Error obteniendo estado de caja', error: error.message });
+        }
+    },
+
+    getForSelect: async (req: Request, res: Response) => {
+        try {
+            const societyIdOrCode = (req.query.societyCode || req.query.societyId) as string | undefined;
+            const branchId = req.query.branchId as string | undefined;
+            const status = req.query.status as string | undefined;
+            const result = await CashShiftService.getForSelect(societyIdOrCode, branchId, status);
+            res.json(result);
+        } catch (error: any) {
+            res.status(500).json({ message: 'Error obteniendo cajas para selector', error: error.message });
         }
     }
 };

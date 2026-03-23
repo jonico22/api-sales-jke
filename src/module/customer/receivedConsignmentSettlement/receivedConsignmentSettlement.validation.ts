@@ -29,6 +29,8 @@ export const receivedConsignmentSettlementIdSchema = z.object({
 
 export const filterReceivedConsignmentSettlementSchema = z.object({
   query: z.object({
+    societyId: z.string().optional(),
+    societyCode: z.string().optional(),
     outgoingAgreementId: z.string().optional(),
     status: z.nativeEnum(SettlementStatus).optional(),
     settlementDateFrom: z.coerce.date().optional(),

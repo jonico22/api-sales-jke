@@ -10,9 +10,9 @@ import {
   PaginationQuery,
 } from '@/utils/pagination';
 import { formatToLimaTime, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
-import { createProductBranchMovementSchema, updateProductBranchMovementSchema, bulkCreateProductBranchMovementSchema } from './productBranchMovement.validation';
+import { createProductBranchMovementSchema, bulkCreateProductBranchMovementSchema, transferAllSchema } from './productBranchMovement.validation';
 
-const CACHE_PREFIX = 'branch_movements:';
+const CACHE_PREFIX = 'branch_movements';
 const CACHE_TTL_LIST = 300;
 const CACHE_TTL_SINGLE = 600;
 
@@ -127,7 +127,7 @@ export class ProductBranchMovementService {
   }
 
   static async getById(id: string) {
-    const cacheKey = `${CACHE_PREFIX}${id}`;
+    const cacheKey = `${CACHE_PREFIX}:${id}`;
     const cached = await redis.get(cacheKey);
     if (cached) return cached;
 
@@ -164,7 +164,7 @@ export class ProductBranchMovementService {
       }
     });
 
-    if (!originStock) throw new Error(`El producto "${product.name}" no está registrado en la sucursal de origen`);
+    if (!originStock || originStock.isDeleted) throw new Error(`El producto "${product.name}" no está registrado o está inactivo en la sucursal de origen`);
     if (originStock.availableStock < validated.quantityMoved) {
       throw new Error(`Stock insuficiente para "${product.name}". Disponible: ${originStock.availableStock}, Solicitado: ${validated.quantityMoved}`);
     }
@@ -210,7 +210,7 @@ export class ProductBranchMovementService {
     // 4. Background Processing
     setImmediate(async () => {
       try {
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
       } catch (e) {
         console.error('[MovementService] Cache error:', e);
       }
@@ -242,12 +242,13 @@ export class ProductBranchMovementService {
       const stockInfo = stockMap.get(item.productId);
       const product = stockInfo?.product;
 
-      if (!product) {
-        errors.push(`Producto ID ${item.productId} no encontrado o no registrado en la sucursal de origen`);
+      const available = stockInfo?.availableStock ?? 0;
+      const isDeleted = stockInfo?.isDeleted ?? false;
+
+      if (!product || isDeleted) {
+        errors.push(`Producto "${product?.name || item.productId}" no está registrado o está inactivo en la sucursal de origen`);
         continue;
       }
-
-      const available = stockInfo?.availableStock ?? 0;
 
       if (available < item.quantityMoved) {
         errors.push(`Stock insuficiente para "${product.name}". Disponible: ${available}, Solicitado: ${item.quantityMoved}`);
@@ -301,12 +302,12 @@ export class ProductBranchMovementService {
       }
 
       return { batchId, count: movements.length, movements };
-    });
+    }, { timeout: 60000 });
 
     // 4. Background Processing
     setImmediate(async () => {
       try {
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
         await redis.deleteKeysByPrefix('products:'); // Stocks updated
         await redis.deleteKeysByPrefix('branch_office_products:');
       } catch (e) {
@@ -358,6 +359,8 @@ export class ProductBranchMovementService {
           update: {
             physicalStock: { increment: current.quantityMoved },
             availableStock: { increment: current.quantityMoved },
+            isDeleted: false,
+            isActive: true,
             lastRestockedAt: new Date()
           },
           create: {
@@ -365,6 +368,8 @@ export class ProductBranchMovementService {
             branchOfficeId: current.destinationBranchId,
             physicalStock: current.quantityMoved,
             availableStock: current.quantityMoved,
+            isActive: true,
+            isDeleted: false,
             lastRestockedAt: new Date()
           }
         });
@@ -423,8 +428,8 @@ export class ProductBranchMovementService {
     // Background processing
     setImmediate(async () => {
       try {
-        await redis.del(`${CACHE_PREFIX}${id}`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        await redis.del(`${CACHE_PREFIX}:${id}`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
         await redis.deleteKeysByPrefix('products:');
         await redis.deleteKeysByPrefix('branch_office_products:');
       } catch (e) {
@@ -449,11 +454,145 @@ export class ProductBranchMovementService {
 
     setImmediate(async () => {
       try {
-        await redis.del(`${CACHE_PREFIX}${id}`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        await redis.del(`${CACHE_PREFIX}:${id}`);
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
       } catch (e) {
         console.error('[MovementService] Delete background error:', e);
       }
     });
+  }
+
+  /**
+   * Transfer All Stock: Transfers every product with available stock from Origin to Destination
+   */
+  static async transferAll(data: any) {
+    const validated = transferAllSchema.parse(data);
+    const batchId = `TRANSFER-ALL-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`.toUpperCase();
+
+    // 1. Get all products with stock at the origin
+    const originProducts = await prisma.branchOfficeProduct.findMany({
+      where: {
+        branchOfficeId: validated.originBranchId,
+        availableStock: { gt: 0 }
+      },
+      include: {
+        product: {
+          select: {
+            id: true,
+            name: true,
+            priceCost: true
+          }
+        }
+      }
+    });
+
+    if (originProducts.length === 0) {
+      throw new Error('No hay productos con stock disponible en la sucursal de origen para transferir');
+    }
+
+    // 2. atomic Transaction
+    const results = await prisma.$transaction(async (tx) => {
+      const movements = [];
+      const now = new Date();
+
+      for (const bop of originProducts) {
+        const product = bop.product;
+        const qty = bop.availableStock;
+
+        // A. Origin: -Physical, -Available (STOCK EXIT)
+        await tx.branchOfficeProduct.update({
+          where: { productId_branchOfficeId: { productId: product.id, branchOfficeId: validated.originBranchId } },
+          data: {
+            physicalStock: { decrement: qty },
+            availableStock: { decrement: qty }
+          }
+        });
+
+        // B. Destination: +Physical, +Available (STOCK ENTRY)
+        await tx.branchOfficeProduct.upsert({
+          where: {
+            productId_branchOfficeId: {
+              productId: product.id,
+              branchOfficeId: validated.destinationBranchId
+            }
+          },
+          update: {
+            physicalStock: { increment: qty },
+            availableStock: { increment: qty },
+            isDeleted: false,
+            isActive: true,
+            lastRestockedAt: now
+          },
+          create: {
+            productId: product.id,
+            branchOfficeId: validated.destinationBranchId,
+            physicalStock: qty,
+            availableStock: qty,
+            isActive: true,
+            isDeleted: false,
+            lastRestockedAt: now
+          }
+        });
+
+        // C. Create Completed Movement
+        const movement = await tx.productBranchMovement.create({
+          data: {
+            originBranchId: validated.originBranchId,
+            destinationBranchId: validated.destinationBranchId,
+            productId: product.id,
+            quantityMoved: qty,
+            notes: validated.notes || 'Traslado total de almacén (Automático)',
+            referenceCode: validated.referenceCode,
+            status: 'COMPLETED',
+            receivedAt: now,
+            createdBy: validated.createdBy,
+            batchId: batchId,
+          }
+        });
+
+        // D. Log Kardex (TRANSFER_OUT) at Origin
+        await InventoryService.logTransaction({
+          productId: product.id,
+          branchOfficeId: validated.originBranchId,
+          type: TransactionType.TRANSFER_OUT,
+          quantity: -qty,
+          unitCost: Number(product.priceCost) || 0,
+          totalCost: (Number(product.priceCost) || 0) * qty,
+          referenceId: movement.id,
+          referenceType: 'TRANSFER',
+          documentNumber: validated.referenceCode
+        }, tx);
+
+        // E. Log Kardex (TRANSFER_IN) at Destination
+        await InventoryService.logTransaction({
+          productId: product.id,
+          branchOfficeId: validated.destinationBranchId,
+          type: TransactionType.TRANSFER_IN,
+          quantity: qty,
+          unitCost: Number(product.priceCost) || 0,
+          totalCost: (Number(product.priceCost) || 0) * qty,
+          referenceId: movement.id,
+          referenceType: 'TRANSFER',
+          documentNumber: validated.referenceCode
+        }, tx);
+
+        movements.push(movement);
+      }
+
+      return { batchId, count: movements.length, movements };
+    }, { timeout: 90000 }); // Increase timeout for potentially many products
+
+    // 3. Background Processing
+    setImmediate(async () => {
+      try {
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
+        await redis.deleteKeysByPrefix('products:');
+        await redis.deleteKeysByPrefix('branch_office_products:');
+      } catch (e) {
+        console.error('[MovementService] TransferAll Cache error:', e);
+      }
+    });
+
+    return results;
   }
 }

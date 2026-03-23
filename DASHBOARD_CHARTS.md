@@ -212,6 +212,8 @@ Base URL: `GET /api/cash-shifts`
     "initialAmount": 100.00,
     "incomeCash": 0,
     "incomeCard": 0,
+    "incomeYape": 0,
+    "incomePlin": 0,
     "incomeTransfer": 0,
     "expenseCash": 0
   }
@@ -219,14 +221,34 @@ Base URL: `GET /api/cash-shifts`
 - **Errores:**
   - `409`: `El usuario ya tiene una caja abierta (ID: xxx) en esta sucursal.`
 
-### 8.2 Cerrar Caja
+### 8.2 Consultar Estado de Caja Actual
+- **Endpoint:** `GET /api/cash-shifts/current`
+- **Descripción:** Verifica si el usuario tiene una caja abierta en la sucursal seleccionada. Útil para que el frontend decida si mostrar "Abrir" o "Cerrar" caja.
+- **Query Parameters:** `branchId` (requerido), `userId` (requerido), `societyId` (opcional).
+- **Respuesta (200):** Retorna el objeto de la caja si existe, o `null` si no hay caja abierta.
+  ```json
+  {
+    "id": "uuid",
+    "status": "OPEN",
+    "openedAt": "2025-02-01T13:00:00.000Z",
+    "branch": { "name": "Sede Principal" }
+  }
+  ```
+
+### 8.3 Cerrar Caja
 - **Endpoint:** `POST /api/cash-shifts/close/:id`
 - **Descripción:** Cierra un turno de caja. Calcula automáticamente los acumulados (ingresos/egresos por método) y la diferencia entre lo reportado y lo calculado por el sistema.
 - **Body:**
   ```json
   {
     "finalReportedAmount": 1500.00,
-    "userId": "user-id"
+    "reportedCashAmount": 1000.00,
+    "reportedCardAmount": 300.00,
+    "reportedYapeAmount": 100.00,
+    "reportedPlinAmount": 50.00,
+    "reportedTransferAmount": 50.00,
+    "userId": "user-id",
+    "observations": "Todo conforme"
   }
   ```
 - **Respuesta:**
@@ -242,8 +264,13 @@ Base URL: `GET /api/cash-shifts`
     "difference": 20.00,
     "incomeCash": 1200.00,
     "incomeCard": 300.00,
+    "incomeYape": 100.00,
+    "incomePlin": 80.00,
     "incomeTransfer": 150.00,
-    "expenseCash": 270.00
+    "expenseCash": 270.00,
+    "reportedCashAmount": 1000.00,
+    "reportedCardAmount": 300.00,
+    "observations": "Todo conforme"
   }
   ```
 - **Cálculos automáticos:**
@@ -254,13 +281,14 @@ Base URL: `GET /api/cash-shifts`
   - `400`: `Esta caja ya está cerrada.`
   - `400`: `Caja no encontrada.`
 
-### 8.3 Listar Turnos (Paginado)
+### 8.4 Listar Turnos (Paginado)
 - **Endpoint:** `GET /api/cash-shifts`
 - **Query Parameters:**
 
 | Parámetro | Tipo | Descripción |
 |-----------|------|-------------|
-| `societyId` | `uuid` | Filtrar por sociedad |
+| `societyId` | `uuid` | Filtrar por sociedad (UUID) |
+| `societyCode` | `string` | Filtrar por sociedad (Código) |
 | `branchId` | `uuid` | Filtrar por sucursal |
 | `userId` | `string` | Filtrar por cajero |
 | `status` | `OPEN/CLOSED` | Filtrar por estado |
@@ -279,11 +307,13 @@ Base URL: `GET /api/cash-shifts`
         "id": "uuid-shift",
         "status": "OPEN",
         "userId": "user-id",
-        "openedAt": "2025-02-01T13:00:00.000Z",
+        "openedAt": "14/03/2026 08:30",
         "initialAmount": 100.00,
         "branch": { "name": "Sede Principal" },
         "incomeCash": 800.00,
         "incomeCard": 200.00,
+        "incomeYape": 50.00,
+        "incomePlin": 50.00,
         "incomeTransfer": 100.00,
         "expenseCash": 50.00
       }
@@ -292,7 +322,7 @@ Base URL: `GET /api/cash-shifts`
   }
   ```
 
-### 8.4 Detalle de Turno
+### 8.5 Detalle de Turno
 - **Endpoint:** `GET /api/cash-shifts/:id`
 - **Descripción:** Retorna el turno con **todos sus movimientos** (ventas, gastos manuales) ordenados por fecha.
 - **Respuesta:**
@@ -302,6 +332,8 @@ Base URL: `GET /api/cash-shifts`
     "status": "OPEN",
     "initialAmount": 100.00,
     "branch": { "name": "Sede Principal" },
+    "incomeYape": 50.00,
+    "incomePlin": 50.00,
     "movements": [
       {
         "id": "uuid-mov",
@@ -309,7 +341,7 @@ Base URL: `GET /api/cash-shifts`
         "amount": 250.00,
         "paymentMethod": "CASH",
         "description": "Venta (Pago uuid-pago)",
-        "createdAt": "2025-02-01T15:30:00.000Z",
+        "createdAt": "14/03/2026 10:30",
         "orderPayment": {
           "id": "uuid-pago",
           "amount": 250.00,
@@ -329,7 +361,7 @@ Base URL: `GET /api/cash-shifts`
   }
   ```
 
-### 8.5 Agregar Movimiento Manual
+### 8.6 Agregar Movimiento Manual
 - **Endpoint:** `POST /api/cash-shifts/movements`
 - **Descripción:** Registra un ingreso o egreso manual en una caja abierta. Solo funciona si el turno está `OPEN`.
 - **Body:**
@@ -353,14 +385,20 @@ Base URL: `GET /api/cash-shifts`
     "amount": 50.00,
     "paymentMethod": "CASH",
     "description": "Pago de limpieza",
-    "createdAt": "2025-02-01T16:00:00.000Z"
+    "createdAt": "14/03/2026 11:00"
   }
   ```
 - **Errores:**
   - `500`: `Caja cerrada o no encontrada.`
 
-### 8.6 Registro Automático de Pagos (Interno)
+### 8.7 Registro Automático de Pagos (Interno)
 > **Nota:** Este método (`registerPaymentMovement`) es utilizado internamente por `OrderPaymentService` cuando se registra un pago. No es un endpoint público. Automáticamente crea un movimiento `INCOME` en la caja abierta del usuario que procesa el pago.
+
+### 8.8 Listar Usuarios de Cajas (Filtro)
+- **Endpoint:** `GET /api/cash-shifts/created-by`
+- **Descripción:** Retorna la lista de IDs de usuarios únicos que han abierto cajas. Útil para el filtro de usuario en el frontend.
+- **Query Parameters:** `societyCode` o `societyId` (opcional).
+- **Respuesta:** `["user-id-1", "user-id-2"]`
 
 ---
 
@@ -448,64 +486,186 @@ Base URL: `/api/branch-movements`
   }
   ```
 
+### 9.6 Traslado Total de Almacén (Transfer All)
+- **Endpoint:** `POST /api/branch-movements/transfer-all`
+- **Descripción:** Mueve **todo** el stock disponible de la sucursal de origen a la de destino en una sola operación.
+- **Body:**
+  ```json
+  {
+    "originBranchId": "uuid",
+    "destinationBranchId": "uuid",
+    "notes": "Cierre de sucursal o traslado total",
+    "referenceCode": "GUIA-TOTAL-001",
+    "createdBy": "user-uuid"
+  }
+  ```
+- **Respuesta:** Retorna el `batchId` y la lista de todos los movimientos generados.
+
+---
+
+## 10. API de Inventario por Sucursal (Branch Office Products)
+
+Base URL: `/api/branch-office-products`
+
+### 10.1 Listar Inventario (Paginado)
+- **Endpoint:** `GET /api/branch-office-products`
+- **Descripción:** Obtiene el stock disponible y físico de productos por sucursal.
+- **Query Parameters:**
+
+| Parámetro | Tipo | Descripción |
+|-----------|------|-------------|
+| `societyId` | `uuid` | Filtrar por ID de sociedad |
+| `societyCode` | `string` | Filtrar por código de sociedad |
+| `branchOfficeId` | `uuid` | Filtrar por sucursal específica |
+| `productId` | `uuid` | Filtrar por un producto específico |
+| `productName` | `string` | Buscar por nombre de producto (parcial) |
+| `location` | `string` | Filtrar por ubicación en almacén |
+| `lowStock` | `boolean` | Filtrar productos con stock bajo |
+| `isActive` | `boolean` | Filtrar por estado activo |
+| `stockFrom` | `number` | Stock físico mínimo |
+| `stockTo` | `number` | Stock físico máximo |
+| `page`, `limit` | `number` | Paginación |
+
+- **Respuesta:**
+  ```json
+  {
+    "data": [
+      {
+        "id": "uuid",
+        "productId": "uuid",
+        "branchOfficeId": "uuid",
+        "availableStock": 45,
+        "physicalStock": 50,
+        "reservedStock": 5,
+        "location": "A-01-05",
+        "product": { "name": "Producto A", "code": "PROD-001", ... },
+        "branchOffice": { "name": "Sede Principal", ... }
+      }
+    ]
+  }
+  ```
+
+### 10.2 Selector de Inventario por Sucursal (Select - Paginado)
+- **Endpoint:** `GET /api/branch-office-products/select`
+- **Descripción:** Retorna una lista ligera y **paginada** de productos en una sucursal específica (id, name, stock). Ideal para movimientos en bloque.
+- **Query Parameters:**
+  - `branchOfficeId` (requerido): ID de la sucursal.
+  - `societyCode` (opcional): Código de la sociedad.
+  - `page` (opcional): Número de página (default: 1).
+  - `limit` (opcional): Resultados por página (default: 100).
+- **Respuesta:**
+  ```json
+  {
+    "data": [
+      {
+        "id": "uuid-producto",
+        "name": "Producto ABC",
+        "code": "SKU-001",
+        "stock": 25
+      }
+    ],
+    "meta": { "page": 1, "limit": 100, "total": 120, "totalPages": 2 }
+  }
+  ```
+
+### 10.3 Detalle de Inventario
+- **Endpoint:** `GET /api/branch-office-products/:id`
+- **Respuesta:** Incluye el detalle del producto y la sucursal.
+
+### 10.4 Actualizar Stock/Ubicación
+- **Endpoint:** `PUT /api/branch-office-products/:id`
+- **Body:** Campos opcionales para actualizar stock o ubicación.
+
+---
+
+## 11. API de Inventario y Kardex (Inventory & Kardex)
+
+Base URL: `/api/inventory`
+
+### 11.1 Ver Kardex / Historial de Movimientos
+- **Endpoint:** `GET /api/inventory/kardex`
+- **Descripción:** Retorna el historial detallado de entradas y salidas de stock (Kardex / InventoryTransaction).
+- **Query Parameters:**
+
+| Parámetro | Tipo | Descripción |
+|-----------|------|-------------|
+| `branchId` | `uuid` | Filtrar por sucursal |
+| `productId` | `uuid` | Filtrar por producto específico |
+| `type` | `enum` | Tipo de movimiento (`SALE_EXIT`, `TRANSFER_IN`, `TRANSFER_OUT`, `ADJUSTMENT_ADD`, `ADJUSTMENT_SUB`, etc.) |
+| `startDate` | `string` | Fecha de inicio (YYYY-MM-DD) |
+| `endDate` | `string` | Fecha de fin |
+| `search` | `string` | Búsqueda por documento o nombre de producto |
+| `page`, `limit` | `number` | Paginación (Default: page=1, limit=20) |
+
+- **Respuesta:**
+  ```json
+  {
+    "data": [
+      {
+        "id": "uuid",
+        "date": "2024-03-14T12:00:00Z",
+        "type": "SALE_EXIT",
+        "quantity": -2,
+        "previousStock": 10,
+        "newStock": 8,
+        "unitCost": 15.50,
+        "totalCost": 31.00,
+        "documentNumber": "NV-001",
+        "product": { "name": "Producto A", "code": "P-001" },
+        "branchOffice": { "name": "Sede Principal" }
+      }
+    ],
+    "meta": { "total": 150, "page": 1, "limit": 20, "totalPages": 8 }
+  }
+  ```
+
+### 11.2 Ajuste Manual de Stock
+- **Endpoint:** `POST /api/inventory/adjustment`
+- **Descripción:** Permite corregir el stock de forma manual (sobrantes o faltantes).
+- **Body:**
+  ```json
+  {
+    "productId": "uuid",
+    "branchOfficeId": "uuid",
+    "type": "ADJUSTMENT_ADD", 
+    "quantity": 5,
+    "unitCost": 10.00,
+    "notes": "Corrección por inventario físico"
+  }
+  ```
+
+---
 *Nota: Estos endpoints se han diseñado para alimentar componentes de gráficos modernos como Recharts, Tremor o Chart.js en el frontend.*
 
- ## 10. API de Inventario por Sucursal (Branch Office Products)
- 
- Base URL: `/api/branch-office-products`
- 
- ### 10.1 Listar Inventario (Paginado)
- - **Endpoint:** `GET /api/branch-office-products`
- - **Descripción:** Obtiene el stock disponible y físico de productos por sucursal.
- - **Query Parameters:**
- 
- | Parámetro | Tipo | Descripción |
- |-----------|------|-------------|
- | `societyId` | `uuid` | Filtrar por ID de sociedad |
- | `societyCode` | `string` | Filtrar por código de sociedad |
- | `branchOfficeId` | `uuid` | Filtrar por sucursal específica |
- | `productId` | `uuid` | Filtrar por un producto específico |
- | `productName` | `string` | Buscar por nombre de producto (parcial) |
- | `location` | `string` | Filtrar por ubicación en almacén |
- | `lowStock` | `boolean` | Filtrar productos con stock bajo |
- | `isActive` | `boolean` | Filtrar por estado activo |
- | `stockFrom` | `number` | Stock físico mínimo |
- | `stockTo` | `number` | Stock físico máximo |
- | `page`, `limit` | `number` | Paginación |
- 
- - **Respuesta:**
-   ```json
-   {
-     "data": [
-       {
-         "id": "uuid",
-         "productId": "uuid",
-         "branchOfficeId": "uuid",
-         "availableStock": 45,
-         "physicalStock": 50,
-         "reservedStock": 5,
-         "location": "A-01-05",
-         "product": { "name": "Producto A", "code": "PROD-001", ... },
-         "branchOffice": { "name": "Sede Principal", ... }
-       }
-     ]
-   }
-   ```
- 
- ### 10.2 Detalle de Inventario
- - **Endpoint:** `GET /api/branch-office-products/:id`
- - **Respuesta:** Incluye el detalle del producto y la sucursal.
- 
- ### 10.3 Crear Registro de Stock
- - **Endpoint:** `POST /api/branch-office-products`
- - **Body:** `productId`, `branchOfficeId`, `physicalStock`, `availableStock`, etc.
- 
- ### 10.4 Actualizar Stock/Ubicación
- - **Endpoint:** `PUT /api/branch-office-products/:id`
- - **Body:** Campos opcionales para actualizar stock o ubicación.
- 
- ### 10.5 Eliminar Registro (Hard Delete)
- - **Endpoint:** `DELETE /api/branch-office-products/:id`
- 
- ---
- *Nota: Estos endpoints se han diseñado para alimentar componentes de gráficos modernos como Recharts, Tremor o Chart.js en el frontend.*
+## 9. API de Productos (Products)
+
+### 9.1 Selector de Productos (Select/Dropdown)
+- **Endpoint:** `GET /api/products/select`
+- **Descripción:** Retorna una lista ligera de productos activos para dropdowns/selects.
+- **Query Parameters:**
+
+| Parámetro | Tipo | Requerido | Descripción |
+|-----------|------|-----------|-------------|
+| `societyCode` | `string` | No | Filtrar por código de sociedad |
+| `societyId` | `uuid` | No | Filtrar por ID de sociedad (legacy) |
+| `categoryCode` | `string` | No | Filtrar por código de categoría |
+| `categoryId` | `uuid` | No | Filtrar por ID de categoría (legacy) |
+| `branchId` | `uuid` | No | ID de la sucursal para obtener stock específico (Default: Principal) |
+
+- **Respuesta:**
+  ```json
+  [
+    {
+      "id": "uuid",
+      "name": "Laptop HP",
+      "price": 1500.00,
+      "stock": 10,
+      "code": "PROD-001",
+      "category": {
+        "id": "uuid",
+        "name": "Electrónica",
+        "code": "CAT-001"
+      }
+    }
+  ]
+  ```
