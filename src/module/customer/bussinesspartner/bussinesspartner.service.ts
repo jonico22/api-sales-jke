@@ -39,17 +39,21 @@ export const BussinessPartnerService = {
         const sortBy = paginationQuery?.sortBy ?? 'createdAt';
         const sortOrder = paginationQuery?.sortOrder ?? 'desc';
 
-        // Resolve societyId from args or filters (Code takes precedence for resolution if arg not present)
+        // Resolve societyId from args or filters
         let resolvedSocietyId = societyId;
-        const societyCode = filters?.societyCode || filters?.societyId; // Handle like CategoryService
+        const societyCodeOrId = filters?.societyCode || filters?.societyId;
 
-        if (!resolvedSocietyId && societyCode) {
-            const society = await prisma.society.findUnique({ where: { code: societyCode } });
-            if (society) {
-                resolvedSocietyId = society.id;
+        if (!resolvedSocietyId && societyCodeOrId) {
+            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCodeOrId);
+            if (isUuid) {
+                resolvedSocietyId = societyCodeOrId;
             } else {
-                // If code provided but not found, return empty result matches CategoryService behavior
-                return buildPaginatedResult([], page, limit, 0);
+                const society = await prisma.society.findUnique({ where: { code: societyCodeOrId } });
+                if (society) {
+                    resolvedSocietyId = society.id;
+                } else {
+                    return buildPaginatedResult([], page, limit, 0);
+                }
             }
         }
 
@@ -298,12 +302,9 @@ export const BussinessPartnerService = {
         });
     },
 
-    /**
-     * Obtener lista simple para selectores (dropdowns)
-     */
-    async getForSelect(societyCode?: string, type?: PartnerType) {
-        // Cache Key including societyCode and Type
-        const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}:${type || 'all'}`;
+    async getForSelect(societyCodeOrId?: string, type?: PartnerType) {
+        // Cache Key including society identifier and Type
+        const cacheKey = `${CACHE_PREFIX}select:${societyCodeOrId || 'all'}:${type || 'all'}`;
         const cached = await redis.get<any[]>(cacheKey);
         if (cached) return cached;
 
@@ -312,15 +313,24 @@ export const BussinessPartnerService = {
             isActive: true,
         };
 
-        // Resolve Society Code
-        if (societyCode) {
-            const society = await prisma.society.findUnique({ where: { code: societyCode } });
-            if (society) {
-                whereClause.societyId = society.id;
+        // Resolve Society Code or ID
+        let resolvedSocietyId: string | undefined;
+        if (societyCodeOrId) {
+            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCodeOrId);
+            if (isUuid) {
+                resolvedSocietyId = societyCodeOrId;
             } else {
-                // If code provided but not found, return empty to avoid leak
-                return [];
+                const society = await prisma.society.findUnique({ where: { code: societyCodeOrId } });
+                if (society) {
+                    resolvedSocietyId = society.id;
+                } else {
+                    return [];
+                }
             }
+        }
+
+        if (resolvedSocietyId) {
+            whereClause.societyId = resolvedSocietyId;
         }
 
         if (type) {
