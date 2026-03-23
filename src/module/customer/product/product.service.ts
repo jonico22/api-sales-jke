@@ -457,22 +457,24 @@ export const ProductService = {
    * Obtener lista única de marcas (con cache)
    */
   getUniqueBrands: async (societyId?: string): Promise<{ id: string; brand: string }[]> => {
-    const whereClause: any = { isDeleted: false, brand: { not: null } };
+    // Sin sociedad no retornamos nada (evitar filtrar todas las marcas de todas las sociedades)
+    if (!societyId) return [];
+
+    // Solo productos activos y no eliminados para que los dropdowns coincidan con el catálogo visible
+    const whereClause: any = { isDeleted: false, isActive: true, brand: { not: null } };
     let resolvedSocietyId: string | undefined;
 
-    if (societyId) {
-      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
-      if (isUuid) {
-        resolvedSocietyId = societyId;
-        whereClause.societyId = societyId;
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
+    if (isUuid) {
+      resolvedSocietyId = societyId;
+      whereClause.societyId = societyId;
+    } else {
+      const society = await prisma.society.findUnique({ where: { code: societyId } });
+      if (society) {
+        resolvedSocietyId = society.id;
+        whereClause.societyId = society.id;
       } else {
-        const society = await prisma.society.findUnique({ where: { code: societyId } });
-        if (society) {
-          resolvedSocietyId = society.id;
-          whereClause.societyId = society.id;
-        } else {
-          return [];
-        }
+        return [];
       }
     }
 
@@ -500,22 +502,24 @@ export const ProductService = {
    * Obtener lista única de colores (con cache)
    */
   getUniqueColors: async (societyId?: string): Promise<{ id: string; color: string; colorCode: string | null }[]> => {
-    const whereClause: any = { isDeleted: false, color: { not: null } };
+    // Sin sociedad no retornamos nada (evitar filtrar todos los colores de todas las sociedades)
+    if (!societyId) return [];
+
+    // Solo productos activos y no eliminados para que los dropdowns coincidan con el catálogo visible
+    const whereClause: any = { isDeleted: false, isActive: true, color: { not: null } };
     let resolvedSocietyId: string | undefined;
 
-    if (societyId) {
-      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
-      if (isUuid) {
-        resolvedSocietyId = societyId;
-        whereClause.societyId = societyId;
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
+    if (isUuid) {
+      resolvedSocietyId = societyId;
+      whereClause.societyId = societyId;
+    } else {
+      const society = await prisma.society.findUnique({ where: { code: societyId } });
+      if (society) {
+        resolvedSocietyId = society.id;
+        whereClause.societyId = society.id;
       } else {
-        const society = await prisma.society.findUnique({ where: { code: societyId } });
-        if (society) {
-          resolvedSocietyId = society.id;
-          whereClause.societyId = society.id;
-        } else {
-          return [];
-        }
+        return [];
       }
     }
 
