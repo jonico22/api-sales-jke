@@ -36,8 +36,8 @@ export const BussinessPartnerService = {
     ): Promise<PaginatedResult<BussinessPartner>> {
         const page = paginationQuery?.page ?? 1;
         const limit = paginationQuery?.limit ?? 10;
-        const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-        const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+        const sortBy = paginationQuery?.sortBy || 'createdAt';
+        const sortOrder = paginationQuery?.sortOrder || 'desc';
 
         // Resolve societyId from args or filters
         let resolvedSocietyId = societyId;
@@ -125,7 +125,9 @@ export const BussinessPartnerService = {
                 where: whereClause,
                 skip: prismaParams.skip,
                 take: prismaParams.take,
-                orderBy: prismaParams.orderBy ?? { createdAt: sortOrder },
+                orderBy: sortBy === 'name'
+                  ? [{ companyName: sortOrder }, { firstName: sortOrder }]
+                  : (sortBy ? { [sortBy || 'createdAt']: sortOrder } : { createdAt: sortOrder }),
                 include: {
                     documentType: true,
                     ubigeo: true, // Include Ubigeo details
