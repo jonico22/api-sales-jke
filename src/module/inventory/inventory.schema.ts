@@ -34,8 +34,10 @@ export const inventoryFilterSchema = z.object({
         page: z.string().optional(),
         limit: z.string().optional(),
         search: z.string().optional(),
-        branchId: z.string().optional(),
-        productId: z.string().optional(),
+        branchId: z.string().optional().openapi({ example: 'uuid', description: 'ID de la sucursal' }),
+        productId: z.string().optional().openapi({ example: 'uuid', description: 'ID del producto' }),
+        societyId: z.string().optional().openapi({ example: 'uuid', description: 'ID de la sociedad' }),
+        societyCode: z.string().optional().openapi({ example: 'SOC01', description: 'Código de la sociedad' }),
         startDate: z.string().datetime().optional(), // ISO String
         endDate: z.string().datetime().optional(),   // ISO String
         type: z.nativeEnum(TransactionType).optional(),

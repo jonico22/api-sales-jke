@@ -167,11 +167,21 @@ export const CashShiftService = {
     getAll: async (paginationQuery?: PaginationQuery, filters?: CashShiftFilters) => {
         const page = paginationQuery?.page ?? 1;
         const limit = paginationQuery?.limit ?? 10;
-        const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-        const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+        const sortBy = paginationQuery?.sortBy || 'createdAt';
+        const sortOrder = paginationQuery?.sortOrder || 'desc';
 
+        // Resolve societyId from filters
+        let resolvedSocietyId = filters?.societyId;
+        if (!resolvedSocietyId && filters?.societyCode) {
+            const society = await prisma.society.findUnique({ where: { code: filters.societyCode } });
+            if (society) {
+                resolvedSocietyId = society.id;
+            } else {
+                return buildPaginatedResult([], page, limit, 0);
+            }
+        }
 
-        const prefix = filters?.societyCode || filters?.societyId || 'all';
+        const prefix = resolvedSocietyId || 'all';
         const cacheKey = `${CACHE_PREFIX}list:${prefix}:${JSON.stringify({ paginationQuery, filters })}`;
         const cached = await redis.get(cacheKey);
         if (cached) return cached;
@@ -179,16 +189,8 @@ export const CashShiftService = {
         const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
         const whereClause: any = {};
 
-        // Society filter (Priority to societyCode)
-        if (filters?.societyCode) {
-            const society = await prisma.society.findUnique({ where: { code: filters.societyCode } });
-            if (society) {
-                whereClause.societyId = society.id;
-            } else {
-                return buildPaginatedResult([], page, limit, 0);
-            }
-        } else if (filters?.societyId) {
-            whereClause.societyId = filters.societyId;
+        if (resolvedSocietyId) {
+            whereClause.societyId = resolvedSocietyId;
         }
 
         if (filters?.branchId) whereClause.branchId = filters.branchId;
@@ -235,15 +237,13 @@ export const CashShiftService = {
         };
 
         if (societyIdOrCode) {
-            // Try code first
-            const society = await prisma.society.findUnique({ where: { code: societyIdOrCode } });
-            if (society) {
-                where.societyId = society.id;
+            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyIdOrCode);
+            if (isUuid) {
+                where.societyId = societyIdOrCode;
             } else {
-                // Check if it's a UUID
-                const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyIdOrCode);
-                if (isUuid) {
-                    where.societyId = societyIdOrCode;
+                const society = await prisma.society.findUnique({ where: { code: societyIdOrCode } });
+                if (society) {
+                    where.societyId = society.id;
                 }
             }
         }
@@ -320,15 +320,13 @@ export const CashShiftService = {
         const whereClause: any = { userId: { not: null } };
 
         if (societyIdOrCode) {
-            // Try code first
-            const society = await prisma.society.findUnique({ where: { code: societyIdOrCode } });
-            if (society) {
-                whereClause.societyId = society.id;
+            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyIdOrCode);
+            if (isUuid) {
+                whereClause.societyId = societyIdOrCode;
             } else {
-                // Check if it's a UUID
-                const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyIdOrCode);
-                if (isUuid) {
-                    whereClause.societyId = societyIdOrCode;
+                const society = await prisma.society.findUnique({ where: { code: societyIdOrCode } });
+                if (society) {
+                    whereClause.societyId = society.id;
                 } else {
                     return [];
                 }
@@ -362,7 +360,7 @@ export const CashShiftService = {
 
         // Resolver sociedad por código o UUID
         if (societyIdOrCode) {
-            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyIdOrCode);
+            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyIdOrCode);
             if (isUuid) {
                 whereClause.societyId = societyIdOrCode;
             } else {
