@@ -117,6 +117,21 @@ export const bussinessPartnerIdSchema = z.object({
     })
 });
 
+// 5. Schema para FILTROS de consulta de socios de negocio
+export const bussinessPartnerFiltersSchema = z.object({
+    query: z.object({
+        societyCode: z.string().optional().openapi({ example: 'SOC-001', description: 'Código de sociedad' }),
+        societyId: z.string().optional().openapi({ example: 'UUID', description: 'ID de la sociedad' }),
+        search: z.string().optional().openapi({ example: 'Juan', description: 'Búsqueda por nombre o documento' }),
+        isActive: z.string().transform(val => val === 'true').optional().openapi({ example: 'true' }),
+        typeBP: BussinessPartnerPersonTypeEnum.optional().openapi({ example: 'PERSON' }),
+        type: PartnerTypeEnum.optional().openapi({ example: 'CUSTOMER' }),
+        createdAtFrom: z.string().optional().openapi({ example: '2024-01-01' }),
+        createdAtTo: z.string().optional().openapi({ example: '2024-12-31' }),
+    })
+});
+
 // Tipos inferidos para TypeScript
 export type CreateBussinessPartnerInput = z.infer<typeof createBussinessPartnerSchema>['body'];
 export type UpdateBussinessPartnerInput = z.infer<typeof updateBussinessPartnerSchema>['body'];
+export type BusinessPartnerQueryFilters = z.infer<typeof bussinessPartnerFiltersSchema>['query'];

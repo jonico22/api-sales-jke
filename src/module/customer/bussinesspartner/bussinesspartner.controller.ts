@@ -4,6 +4,7 @@ import {
     createBussinessPartnerSchema,
     updateBussinessPartnerSchema,
     bussinessPartnerIdSchema,
+    bussinessPartnerFiltersSchema,
 } from './bussinesspartner.schema';
 import { paginationQuerySchema } from '@/schemas/pagination.schema';
 
@@ -13,22 +14,21 @@ export const BussinessPartnerController = {
      * Obtener todos los socios de negocio con paginación
      */
     getAll: async (req: Request, res: Response) => {
-        const parse = paginationQuerySchema.safeParse({ query: req.query });
-        if (!parse.success) return res.status(400).json(parse.error.format());
+        const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
+        const filtersParse = bussinessPartnerFiltersSchema.safeParse({ query: req.query });
 
-        const societyId = req.query.societyId as string | undefined;
+        if (!paginationParse.success || !filtersParse.success) {
+            return res.status(400).json({
+                ...(paginationParse.error?.format?.() ?? {}),
+                ...(filtersParse.error?.format?.() ?? {}),
+            });
+        }
 
-        // Extract filters
-        const filters = {
-            search: req.query.search as string | undefined,
-            isActive: req.query.isActive as string | undefined,
-            typeBP: req.query.typeBP as string | undefined,
-            type: req.query.type as any, // Cast to any to pass to service, validation happens if needed or strict typing in service
-            createdAtFrom: req.query.createdAtFrom as string | undefined,
-            createdAtTo: req.query.createdAtTo as string | undefined,
-        };
-
-        const result = await BussinessPartnerService.getAll(parse.data.query, societyId, filters);
+        const result = await BussinessPartnerService.getAll(
+            paginationParse.data.query,
+            undefined, // societyId resolution happens inside the service from filters
+            filtersParse.data.query
+        );
         res.json(result);
     },
 
