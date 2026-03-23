@@ -31,6 +31,7 @@ export const outgoingConsignmentAgreementIdSchema = z.object({
 export const filterOutgoingConsignmentAgreementSchema = z.object({
   query: z.object({
     societyId: z.string().optional(),
+    societyCode: z.string().optional(),
     branchId: z.string().optional(),
     partnerId: z.string().optional(),
     status: z.nativeEnum(ConsignmentStatus).optional(),

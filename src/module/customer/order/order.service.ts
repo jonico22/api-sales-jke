@@ -26,17 +26,16 @@ const buildOrderWhereClause = async (filters?: OrderFilters) => {
 
   // Resolve Society Code/ID (Pattern from CategoryService)
   if (societyCode) {
-    const society = await prisma.society.findUnique({ where: { code: societyCode } });
-    if (society) {
-      whereClause.societyId = society.id;
-      subscriptionId = society.subscriptionId;
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
+    if (isUuid) {
+      whereClause.societyId = societyCode;
+      const soc = await prisma.society.findUnique({ where: { id: societyCode } });
+      if (soc) subscriptionId = soc.subscriptionId;
     } else {
-      // If code looks like UUID, try as ID as fallback (legacy behavior support)
-      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
-      if (isUuid) {
-        whereClause.societyId = societyCode;
-        const soc = await prisma.society.findUnique({ where: { id: societyCode } });
-        if (soc) subscriptionId = soc.subscriptionId;
+      const society = await prisma.society.findUnique({ where: { code: societyCode } });
+      if (society) {
+        whereClause.societyId = society.id;
+        subscriptionId = society.subscriptionId;
       } else {
         // Return guaranteed empty result if code invalid
         return { whereClause: { id: '00000000-0000-0000-0000-000000000000' }, subscriptionId: undefined };
@@ -85,8 +84,14 @@ const buildOrderWhereClause = async (filters?: OrderFilters) => {
 
 // ─── Helper: Resolve Entities in Parallel ─────────────────────────────
 const resolveSociety = async (idOrCode: string) => {
-  let society = await prisma.society.findUnique({ where: { id: idOrCode } });
-  if (!society) society = await prisma.society.findUnique({ where: { code: idOrCode } });
+  const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(idOrCode);
+  let society;
+  if (isUuid) {
+    society = await prisma.society.findUnique({ where: { id: idOrCode } });
+  } else {
+    society = await prisma.society.findUnique({ where: { code: idOrCode } });
+  }
+
   if (!society) throw new Error(`Sociedad no encontrada (ID/Code: ${idOrCode})`);
   return society;
 };
@@ -366,8 +371,8 @@ export const OrderService = {
   ): Promise<PaginatedResult<Order & { totalProducts: number }>> => {
     const page = paginationQuery?.page ?? 1;
     const limit = paginationQuery?.limit ?? 10;
-    const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-    const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+    const sortBy = paginationQuery?.sortBy || 'createdAt';
+    const sortOrder = paginationQuery?.sortOrder || 'desc';
 
     // Construir clave de cache única
     const societyCode = filters?.societyCode || filters?.societyId;

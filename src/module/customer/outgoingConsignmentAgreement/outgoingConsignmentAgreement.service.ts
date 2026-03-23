@@ -23,6 +23,14 @@ const CACHE_TTL_LIST = 300; // 5 minutos
 const CACHE_TTL_SINGLE = 600; // 10 minutos
 
 export const createAgreement = async (input: CreateAgreementInput) => {
+  // Resolve societyId if it's a code
+  const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(input.societyId);
+  if (!isUuid) {
+    const society = await prisma.society.findUnique({ where: { code: input.societyId } });
+    if (!society) throw new Error(`Sociedad con código ${input.societyId} no encontrada`);
+    input.societyId = society.id;
+  }
+
   const created = await prisma.outgoingConsignmentAgreement.create({ data: input });
 
   // Invalidate List Cache
@@ -32,6 +40,15 @@ export const createAgreement = async (input: CreateAgreementInput) => {
 };
 
 export const updateAgreement = async (id: string, input: UpdateAgreementInput) => {
+  if (input.societyId) {
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(input.societyId);
+    if (!isUuid) {
+      const society = await prisma.society.findUnique({ where: { code: input.societyId } });
+      if (!society) throw new Error(`Sociedad con código ${input.societyId} no encontrada`);
+      input.societyId = society.id;
+    }
+  }
+
   const updated = await prisma.outgoingConsignmentAgreement.update({ where: { id }, data: input });
 
   // Invalidate Cache
@@ -79,14 +96,32 @@ export const getAllAgreements = async (
 ): Promise<PaginatedResult<OutgoingConsignmentAgreement>> => {
   const page = paginationQuery?.page ?? 1;
   const limit = paginationQuery?.limit ?? 10;
-  const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-  const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+  const sortBy = paginationQuery?.sortBy || 'createdAt';
+  const sortOrder = paginationQuery?.sortOrder || 'desc';
+
+  // Resolve societyId from filters
+  let resolvedSocietyId = filters?.societyId;
+  const societyCode = filters?.societyCode || filters?.societyId;
+
+  if (!resolvedSocietyId && societyCode) {
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
+    if (isUuid) {
+      resolvedSocietyId = societyCode;
+    } else {
+      const society = await prisma.society.findUnique({ where: { code: societyCode } });
+      if (society) {
+        resolvedSocietyId = society.id;
+      } else {
+        return buildPaginatedResult([], page, limit, 0);
+      }
+    }
+  }
 
   // Cache Key
   const cacheKeyParts = [
     CACHE_PREFIX,
     'list',
-    filters?.societyId || 'all',
+    resolvedSocietyId || 'all',
     filters?.branchId || 'all',
     filters?.partnerId || 'all',
     filters?.status || 'all',
@@ -106,7 +141,7 @@ export const getAllAgreements = async (
   const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
 
   const where: any = {};
-  if (filters?.societyId) where.societyId = filters.societyId;
+  if (resolvedSocietyId) where.societyId = resolvedSocietyId;
   if (filters?.branchId) where.branchId = filters.branchId;
   if (filters?.partnerId) where.partnerId = filters.partnerId;
   if (filters?.status) where.status = filters.status;

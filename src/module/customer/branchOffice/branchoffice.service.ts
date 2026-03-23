@@ -28,19 +28,24 @@ export const BranchOfficeService = {
   ): Promise<PaginatedResult<any>> => {
     const page = paginationQuery?.page ?? 1;
     const limit = paginationQuery?.limit ?? 10;
-    const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-    const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+    const sortBy = paginationQuery?.sortBy || 'createdAt';
+    const sortOrder = paginationQuery?.sortOrder || 'desc';
 
-    // Resolve societyId
+    // Resolve societyId from filters
     let resolvedSocietyId = filters?.societyId;
-    const societyCode = filters?.societyCode || filters?.societyId;
+    const societyCodeOrId = filters?.societyCode || filters?.societyId;
 
-    if (!resolvedSocietyId && societyCode) {
-      const society = await prisma.society.findUnique({ where: { code: societyCode } });
-      if (society) {
-        resolvedSocietyId = society.id;
+    if (!resolvedSocietyId && societyCodeOrId) {
+      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCodeOrId);
+      if (isUuid) {
+        resolvedSocietyId = societyCodeOrId;
       } else {
-        return buildPaginatedResult([], page, limit, 0);
+        const society = await prisma.society.findUnique({ where: { code: societyCodeOrId } });
+        if (society) {
+          resolvedSocietyId = society.id;
+        } else {
+          return buildPaginatedResult([], page, limit, 0);
+        }
       }
     }
 
@@ -133,16 +138,31 @@ export const BranchOfficeService = {
     return result;
   },
 
-  getById: async (id: string) => {
+  getById: async (id: string, societyCodeOrId?: string) => {
     const cacheKey = `${CACHE_PREFIX}:${id}`;
 
     // 1. Cache
     const cached = await redis.get(cacheKey);
     if (cached) return cached;
 
+    let societyId: string | undefined = undefined;
+    if (societyCodeOrId) {
+      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCodeOrId);
+      if (isUuid) {
+        societyId = societyCodeOrId;
+      } else {
+        const society = await prisma.society.findUnique({ where: { code: societyCodeOrId } });
+        if (society) societyId = society.id;
+      }
+    }
+
     // 2. DB
-    const result = await prisma.branchOffice.findUnique({
-      where: { id },
+    const result = await prisma.branchOffice.findFirst({
+      where: {
+        id,
+        isDeleted: false,
+        ...(societyId && { societyId }),
+      },
       include: { society: true },
     });
 
@@ -159,25 +179,32 @@ export const BranchOfficeService = {
     return result;
   },
 
-  async getForSelect(societyCode?: string) {
-    const cacheKey = `${CACHE_PREFIX}:select:${societyCode || 'all'}`;
+  async getForSelect(societyCodeOrId?: string) {
+    let resolvedSocietyId: string | undefined = undefined;
+    if (societyCodeOrId) {
+      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCodeOrId);
+      if (isUuid) {
+        resolvedSocietyId = societyCodeOrId;
+      } else {
+        const society = await prisma.society.findUnique({ where: { code: societyCodeOrId } });
+        if (society) {
+          resolvedSocietyId = society.id;
+        } else {
+          // If societyCode provided but not found, return empty
+          return [];
+        }
+      }
+    }
+
+    const cacheKey = `${CACHE_PREFIX}:select:${resolvedSocietyId || 'all'}`;
     const cached = await redis.get<any[]>(cacheKey);
     if (cached) return cached;
 
     const whereClause: any = {
       isDeleted: false,
       isActive: true,
+      ...(resolvedSocietyId && { societyId: resolvedSocietyId }),
     };
-
-    if (societyCode) {
-      const society = await prisma.society.findUnique({ where: { code: societyCode } });
-      if (society) {
-        whereClause.societyId = society.id;
-      } else {
-        // If societyCode provided but not found, return empty or handle as per logic (Category returns empty)
-        return [];
-      }
-    }
 
     const data = await prisma.branchOffice.findMany({
       where: whereClause,
