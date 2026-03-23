@@ -63,13 +63,37 @@ export const ProductService = {
     const sortBy = paginationQuery?.sortBy ?? 'name';
     const sortOrder = paginationQuery?.sortOrder ?? 'asc';
 
-    // Construir clave de cache única para esta combinación de filtros
-    const societyCode = filters?.societyCode || filters?.societyId;
     const categoryCode = filters?.categoryCode; // keep code only
     const categoryId = filters?.categoryId;
+    const rawSocietyRef = filters?.societyCode || filters?.societyId;
+
+    // ─── Resolver sociedad ANTES de construir la clave de caché ───────
+    // Esto garantiza que `societyCode=SOC-001` y `societyId=<uuid>` generen
+    // la misma clave y que no haya mezcla de datos entre sociedades.
+    const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
+    const whereClause: any = { isDeleted: false };
+    let resolvedSocietyId: string | null = null;
+
+    if (rawSocietyRef) {
+      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(rawSocietyRef);
+      if (isUuid) {
+        resolvedSocietyId = rawSocietyRef;
+        whereClause.societyId = rawSocietyRef;
+      } else {
+        const society = await prisma.society.findUnique({ where: { code: rawSocietyRef } });
+        if (society) {
+          resolvedSocietyId = society.id;
+          whereClause.societyId = society.id;
+        } else {
+          return buildPaginatedResult([], page, limit, 0);
+        }
+      }
+    }
+
+    // Construir clave de cache usando el UUID resuelto (no el código crudo)
     const cacheKeyParts = [
       'list',
-      societyCode || 'all',
+      resolvedSocietyId || 'all',
       categoryCode || 'all',
       categoryId || 'all',
       filters?.branchId || 'all',
@@ -101,19 +125,6 @@ export const ProductService = {
     // 1. Intentar obtener del cache
     const cached = await redis.get<PaginatedResult<Product>>(cacheKey);
     if (cached) return cached;
-
-    const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
-    const whereClause: any = { isDeleted: false };
-
-    // Filtro por sociedad
-    if (societyCode) {
-      const society = await prisma.society.findUnique({ where: { code: societyCode } });
-      if (society) {
-        whereClause.societyId = society.id;
-      } else {
-        return buildPaginatedResult([], page, limit, 0);
-      }
-    }
 
     // Filtro por categoría ID directa
     if (filters?.categoryId) {
@@ -446,22 +457,29 @@ export const ProductService = {
    * Obtener lista única de marcas (con cache)
    */
   getUniqueBrands: async (societyId?: string): Promise<{ id: string; brand: string }[]> => {
-    const cacheKey = `${CACHE_PREFIX}brands:${societyId || 'all'}`;
-    const cached = await redis.get<{ id: string; brand: string }[]>(cacheKey);
-    if (cached) return cached;
-
     const whereClause: any = { isDeleted: false, brand: { not: null } };
+    let resolvedSocietyId: string | undefined;
 
     if (societyId) {
-      const society = await prisma.society.findUnique({ where: { code: societyId } });
-      if (society) {
-        whereClause.societyId = society.id;
+      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
+      if (isUuid) {
+        resolvedSocietyId = societyId;
+        whereClause.societyId = societyId;
       } else {
-        const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
-        if (isUuid) whereClause.societyId = societyId;
-        else return [];
+        const society = await prisma.society.findUnique({ where: { code: societyId } });
+        if (society) {
+          resolvedSocietyId = society.id;
+          whereClause.societyId = society.id;
+        } else {
+          return [];
+        }
       }
     }
+
+    // Usar el UUID resuelto en la clave de caché para evitar colisiones entre código y UUID
+    const cacheKey = `${CACHE_PREFIX}brands:${resolvedSocietyId || 'all'}`;
+    const cached = await redis.get<{ id: string; brand: string }[]>(cacheKey);
+    if (cached) return cached;
 
     const result = await prisma.product.findMany({
       where: whereClause,
@@ -482,22 +500,29 @@ export const ProductService = {
    * Obtener lista única de colores (con cache)
    */
   getUniqueColors: async (societyId?: string): Promise<{ id: string; color: string; colorCode: string | null }[]> => {
-    const cacheKey = `${CACHE_PREFIX}colors:${societyId || 'all'}`;
-    const cached = await redis.get<{ id: string; color: string; colorCode: string | null }[]>(cacheKey);
-    if (cached) return cached;
-
     const whereClause: any = { isDeleted: false, color: { not: null } };
+    let resolvedSocietyId: string | undefined;
 
     if (societyId) {
-      const society = await prisma.society.findUnique({ where: { code: societyId } });
-      if (society) {
-        whereClause.societyId = society.id;
+      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
+      if (isUuid) {
+        resolvedSocietyId = societyId;
+        whereClause.societyId = societyId;
       } else {
-        const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
-        if (isUuid) whereClause.societyId = societyId;
-        else return [];
+        const society = await prisma.society.findUnique({ where: { code: societyId } });
+        if (society) {
+          resolvedSocietyId = society.id;
+          whereClause.societyId = society.id;
+        } else {
+          return [];
+        }
       }
     }
+
+    // Usar el UUID resuelto en la clave de caché para evitar colisiones entre código y UUID
+    const cacheKey = `${CACHE_PREFIX}colors:${resolvedSocietyId || 'all'}`;
+    const cached = await redis.get<{ id: string; color: string; colorCode: string | null }[]>(cacheKey);
+    if (cached) return cached;
 
     const result = await prisma.product.findMany({
       where: whereClause,
