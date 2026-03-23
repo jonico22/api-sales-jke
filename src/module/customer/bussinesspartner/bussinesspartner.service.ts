@@ -57,24 +57,26 @@ export const BussinessPartnerService = {
             }
         }
 
-        // Cache Key Construction
+        // SI NO HAY SOCIEDAD, NO PROCESAMOS (Seguridad y consistencia de caché)
+        if (!resolvedSocietyId) {
+            return buildPaginatedResult([], page, limit, 0);
+        }
+
+        // Cache Key Construction (Scoped per Society)
         const cacheKeyParts = [
-            CACHE_PREFIX,
             'list',
-            resolvedSocietyId || 'all',
             filters?.search || 'all',
             filters?.isActive !== undefined ? String(filters.isActive) : 'all',
             filters?.typeBP || 'all',
             filters?.type || 'all',
             filters?.createdAtFrom || 'all',
             filters?.createdAtTo || 'all',
-            filters?.createdAtTo || 'all',
             page,
             limit,
             sortBy,
             sortOrder
         ];
-        const cacheKey = cacheKeyParts.join(':');
+        const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:${cacheKeyParts.join(':')}`;
 
         // 1. Try Cache
         const cached = await redis.get<PaginatedResult<BussinessPartner>>(cacheKey);
@@ -85,7 +87,7 @@ export const BussinessPartnerService = {
 
         const whereClause: any = {
             isDeleted: false,
-            ...(resolvedSocietyId && { societyId: resolvedSocietyId }),
+            societyId: resolvedSocietyId
         };
 
         // Apply Filters
@@ -130,7 +132,7 @@ export const BussinessPartnerService = {
                   : (sortBy ? { [sortBy || 'createdAt']: sortOrder } : { createdAt: sortOrder }),
                 include: {
                     documentType: true,
-                    ubigeo: true, // Include Ubigeo details
+                    ubigeo: true,
                     society: {
                         select: {
                             id: true,
@@ -208,9 +210,8 @@ export const BussinessPartnerService = {
             },
         });
 
-        // Invalidate Cache
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+        // Invalidate Cache for this society only
+        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}${created.societyId}:`);
 
         return created;
     },
@@ -235,10 +236,11 @@ export const BussinessPartnerService = {
             },
         });
 
-        // Invalidate Cache
-        await redis.del(`${CACHE_PREFIX}${id}`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+        // Invalidate Cache for this specific partner and its society's lists/selects
+        await Promise.all([
+            redis.del(`${CACHE_PREFIX}${id}`),
+            redis.deleteKeysByPrefix(`${CACHE_PREFIX}${updated.societyId}:`)
+        ]);
 
         return updated;
     },
@@ -254,12 +256,14 @@ export const BussinessPartnerService = {
                 isActive: false,
                 updatedBy,
             },
+            select: { societyId: true }
         });
 
-        // Invalidate Cache
-        await redis.del(`${CACHE_PREFIX}${id}`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+        // Invalidate Cache for this society
+        await Promise.all([
+            redis.del(`${CACHE_PREFIX}${id}`),
+            redis.deleteKeysByPrefix(`${CACHE_PREFIX}${deleted.societyId}:`)
+        ]);
 
         return deleted;
     },
@@ -270,12 +274,14 @@ export const BussinessPartnerService = {
     async hardDelete(id: string) {
         const deleted = await prisma.bussinessPartner.delete({
             where: { id },
+            select: { societyId: true }
         });
 
-        // Invalidate Cache
-        await redis.del(`${CACHE_PREFIX}${id}`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+        // Invalidate Cache for this society
+        await Promise.all([
+            redis.del(`${CACHE_PREFIX}${id}`),
+            redis.deleteKeysByPrefix(`${CACHE_PREFIX}${deleted.societyId}:`)
+        ]);
 
         return deleted;
     },
@@ -305,35 +311,30 @@ export const BussinessPartnerService = {
     },
 
     async getForSelect(societyCodeOrId?: string, type?: PartnerType) {
-        // Cache Key including society identifier and Type
-        const cacheKey = `${CACHE_PREFIX}select:${societyCodeOrId || 'all'}:${type || 'all'}`;
-        const cached = await redis.get<any[]>(cacheKey);
-        if (cached) return cached;
-
-        const whereClause: any = {
-            isDeleted: false,
-            isActive: true,
-        };
-
-        // Resolve Society Code or ID
+        // Resolve Society Context FIRST
         let resolvedSocietyId: string | undefined;
         if (societyCodeOrId) {
             const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCodeOrId);
             if (isUuid) {
                 resolvedSocietyId = societyCodeOrId;
             } else {
-                const society = await prisma.society.findUnique({ where: { code: societyCodeOrId } });
-                if (society) {
-                    resolvedSocietyId = society.id;
-                } else {
-                    return [];
-                }
+                const society = await prisma.society.findUnique({ where: { code: societyCodeOrId }, select: { id: true } });
+                if (society) resolvedSocietyId = society.id;
             }
         }
 
-        if (resolvedSocietyId) {
-            whereClause.societyId = resolvedSocietyId;
-        }
+        if (!resolvedSocietyId) return [];
+
+        // Cache Key including society ID scope
+        const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:select:${type || 'all'}`;
+        const cached = await redis.get<any[]>(cacheKey);
+        if (cached) return cached;
+
+        const whereClause: any = {
+            isDeleted: false,
+            isActive: true,
+            societyId: resolvedSocietyId
+        };
 
         if (type) {
             // If requesting CUSTOMER, allow CUSTOMER and BOTH
