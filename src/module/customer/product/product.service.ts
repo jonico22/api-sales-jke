@@ -122,7 +122,11 @@ export const ProductService = {
     // Filtro por categoría código (mantener compatibilidad)
     if (categoryCode) {
       const category = await prisma.category.findFirst({
-        where: { code: categoryCode, isDeleted: false }
+        where: { 
+          code: categoryCode, 
+          isDeleted: false,
+          ...(whereClause.societyId && { societyId: whereClause.societyId })
+        }
       });
       if (category) {
         whereClause.categoryId = category.id;
