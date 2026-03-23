@@ -90,10 +90,26 @@ export const ProductService = {
       }
     }
 
-    // Construir clave de cache usando el UUID resuelto (no el código crudo)
+    // Fallback: Si no hay sociedad pero hay sucursal, resolvemos la sociedad de la sucursal
+    if (!resolvedSocietyId && filters?.branchId) {
+      const branch = await prisma.branchOffice.findUnique({
+        where: { id: filters.branchId },
+        select: { societyId: true }
+      });
+      if (branch) {
+        resolvedSocietyId = branch.societyId;
+        whereClause.societyId = branch.societyId;
+      }
+    }
+
+    // SI NO HAY SOCIEDAD EN ESTE PUNTO, RETORNAMOS VACÍO (Seguridad multitenant)
+    if (!resolvedSocietyId) {
+      return buildPaginatedResult([], page, limit, 0);
+    }
+
+    // Construir clave de cache usando el UUID resuelto (Scope por sociedad)
     const cacheKeyParts = [
       'list',
-      resolvedSocietyId || 'all',
       categoryCode || 'all',
       categoryId || 'all',
       filters?.branchId || 'all',
@@ -120,7 +136,8 @@ export const ProductService = {
       sortBy,
       sortOrder
     ];
-    const cacheKey = `${CACHE_PREFIX}${cacheKeyParts.join(':')}`;
+    // La clave ahora es products:<societyId>:list:...
+    const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:${cacheKeyParts.join(':')}`;
 
     // 1. Intentar obtener del cache
     const cached = await redis.get<PaginatedResult<Product>>(cacheKey);
@@ -478,8 +495,8 @@ export const ProductService = {
       }
     }
 
-    // Usar el UUID resuelto en la clave de caché para evitar colisiones entre código y UUID
-    const cacheKey = `${CACHE_PREFIX}brands:${resolvedSocietyId || 'all'}`;
+    // Usar el UUID resuelto en la clave de caché para evitar colisiones (Scope por sociedad)
+    const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:brands:all`;
     const cached = await redis.get<{ id: string; brand: string }[]>(cacheKey);
     if (cached) return cached;
 
@@ -523,8 +540,8 @@ export const ProductService = {
       }
     }
 
-    // Usar el UUID resuelto en la clave de caché para evitar colisiones entre código y UUID
-    const cacheKey = `${CACHE_PREFIX}colors:${resolvedSocietyId || 'all'}`;
+    // Usar el UUID resuelto en la clave de caché para evitar colisiones (Scope por sociedad)
+    const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:colors:all`;
     const cached = await redis.get<{ id: string; color: string; colorCode: string | null }[]>(cacheKey);
     if (cached) return cached;
 
@@ -612,11 +629,12 @@ export const ProductService = {
 
     setImmediate(async () => {
       try {
-        await redis.deleteKeysByPrefix('products:');
-        await Promise.all(
-          ['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
+        await Promise.all([
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}${societyId}:`),
+          redis.deleteKeysByPrefix('branch_office_products:'),
+          ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
             .map(k => redis.del(`dashboard:${k}:${societyId}`))
-        );
+        ]);
 
         if (subscriptionId) {
           await Promise.all([
@@ -711,7 +729,8 @@ export const ProductService = {
     setImmediate(async () => {
       try {
         await Promise.all([
-          redis.deleteKeysByPrefix('products:'),
+          redis.del(`${CACHE_PREFIX}${updated.id}`), // Cache individual (sin societyId en el prefijo antiguo)
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}${updatedSocietyId}:`), // Cache de listas de esta sociedad
           redis.deleteKeysByPrefix('branch_office_products:'),
           ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
             .map(k => redis.del(`dashboard:${k}:${updatedSocietyId}`))
@@ -756,7 +775,8 @@ export const ProductService = {
     setImmediate(async () => {
       try {
         await Promise.all([
-          redis.deleteKeysByPrefix('products:'),
+          redis.del(`${CACHE_PREFIX}${id}`),
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}${deletedSocietyId}:`),
           redis.deleteKeysByPrefix('branch_office_products:'),
           ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
             .map(k => redis.del(`dashboard:${k}:${deletedSocietyId}`))
@@ -782,24 +802,36 @@ export const ProductService = {
    * Obtener productos para select/dropdown con cache largo
    */
     getForSelect: async (societyCode?: string, categoryCode?: string, branchId?: string) => {
-        const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}:${categoryCode || 'all'}:${branchId || 'all'}`;
+        // Resolvemos sociedad primero para la clave de caché
+        let resolvedSocietyId: string | undefined;
+        if (societyCode) {
+            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
+            if (isUuid) {
+                resolvedSocietyId = societyCode;
+            } else {
+                const society = await prisma.society.findUnique({ where: { code: societyCode }, select: { id: true } });
+                if (society) resolvedSocietyId = society.id;
+            }
+        }
 
+        // Si no hay sociedad pero hay sucursal, resolvemos sociedad de la sucursal
+        if (!resolvedSocietyId && branchId) {
+            const branch = await prisma.branchOffice.findUnique({ where: { id: branchId }, select: { societyId: true } });
+            if (branch) resolvedSocietyId = branch.societyId;
+        }
+
+        // Si no se puede resolver la sociedad, no cacheamos o retornamos vacío (Seguridad)
+        if (!resolvedSocietyId) return [];
+
+        const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:select:${categoryCode || 'all'}:${branchId || 'all'}`;
         const cached = await redis.get<any[]>(cacheKey);
         if (cached) return cached;
 
-        const whereClause: any = { isDeleted: false, isActive: true };
-
-        // 1. Resolve Society
-        let resolvedSocietyId: string | undefined;
-        if (societyCode) {
-            const society = await prisma.society.findUnique({ where: { code: societyCode } });
-            if (society) {
-                whereClause.societyId = society.id;
-                resolvedSocietyId = society.id;
-            } else {
-                return [];
-            }
-        }
+        const whereClause: any = { 
+            isDeleted: false, 
+            isActive: true,
+            societyId: resolvedSocietyId
+        };
 
         // 2. Resolve Category
         if (categoryCode) {
