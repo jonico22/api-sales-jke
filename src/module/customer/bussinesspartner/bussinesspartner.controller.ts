@@ -55,10 +55,12 @@ export const BussinessPartnerController = {
         const parse = createBussinessPartnerSchema.safeParse({ body: req.body });
         if (!parse.success) return res.status(400).json(parse.error.format());
 
-        // Verificar si el email ya existe
-        const existingByEmail = await BussinessPartnerService.findByEmail(parse.data.body.email);
-        if (existingByEmail) {
-            return res.status(409).json({ message: 'El email ya está registrado' });
+        // Verificar si el email ya existe (solo si se proporciona)
+        if (parse.data.body.email) {
+            const existingByEmail = await BussinessPartnerService.findByEmail(parse.data.body.email);
+            if (existingByEmail) {
+                return res.status(409).json({ message: 'El email ya está registrado' });
+            }
         }
 
         // Verificar si el documento ya existe (si se proporciona)

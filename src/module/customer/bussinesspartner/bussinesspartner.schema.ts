@@ -30,7 +30,7 @@ export const BussinessPartnerSchema = registry.register(
         tradeName: z.string().optional().openapi({ example: 'Comercial Name' }),
         website: z.string().optional().openapi({ example: 'https://site.com' }),
         contactEmail: z.string().email().optional().openapi({ example: 'contacto@empresa.com' }),
-        email: z.string().email('Email inválido').openapi({ example: 'juan.perez@email.com', description: 'Email principal (único)' }),
+        email: z.string().email('Email inválido').optional().openapi({ example: 'juan.perez@email.com', description: 'Email principal (único)' }),
         phone: z.string().optional().openapi({ example: '987654321', description: 'Teléfono móvil' }),
         telephone: z.string().optional().openapi({ example: '014567890', description: 'Teléfono fijo' }),
         address: z.string().optional().openapi({ example: 'Av. Principal 123, Lima' }),
@@ -71,7 +71,7 @@ export const createBussinessPartnerSchema = z.object({
         taxStatus: z.string().optional(),
 
         contactEmail: z.string().email().optional(),
-        email: z.string().email('Email inválido'),
+        email: z.string().email('Email inválido').optional(),
         phone: z.string().optional(),
         telephone: z.string().optional(),
         address: z.string().optional(),
