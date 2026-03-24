@@ -232,17 +232,26 @@ export const ProductService = {
       stockConditions.lte = 0;
     }
 
-    if (Object.keys(stockConditions).length > 0) {
-      whereClause.stock = stockConditions;
+    // Filtro de rango de stock
+    if (filters?.stockFrom !== undefined || filters?.stockTo !== undefined) {
+      if (filters.stockFrom !== undefined) stockConditions.gte = filters.stockFrom;
+      if (filters.stockTo !== undefined) stockConditions.lte = filters.stockTo;
     }
 
-    // Filtro de rango de stock (solo si no hay filtros específicos previos)
-    if (filters?.stockFrom !== undefined || filters?.stockTo !== undefined) {
-      if (Object.keys(stockConditions).length === 0) {
-        whereClause.stock = {};
-        if (filters.stockFrom !== undefined) whereClause.stock.gte = filters.stockFrom;
-        if (filters.stockTo !== undefined) whereClause.stock.lte = filters.stockTo;
-      }
+    const hasStockFilters = Object.keys(stockConditions).length > 0;
+
+    // APLICAR FILTROS DE STOCK Y SUCURSAL
+    if (filters?.branchId) {
+      // Si hay sucursal, el filtro de stock de la sucursal es lo principal
+      whereClause.BranchOfficeProduct = {
+        some: { 
+          branchOfficeId: filters.branchId,
+          ...(hasStockFilters && { physicalStock: stockConditions })
+        }
+      };
+    } else if (hasStockFilters) {
+      // Si no hay sucursal, filtramos por el stock global
+      whereClause.stock = stockConditions;
     }
 
     // Filtro por createdBy
@@ -313,23 +322,35 @@ export const ProductService = {
           color: true,
           colorCode: true,
           salesCount: true,
+          // Traer stock de sucursal si se filtra por una
+          ...(filters?.branchId && {
+            BranchOfficeProduct: {
+               where: { branchOfficeId: filters.branchId },
+               select: { physicalStock: true }
+            }
+          })
         },
       }),
       prisma.product.count({ where: whereClause }),
     ]);
 
-    // El filtro de stock bajo ya fue aplicado en la consulta principal
-    const filteredData = data;
-    const filteredTotal = total;
+    // 3. Transformar resultados para mostrar stock de sucursal si aplica y formatear fechas
+    const formattedData = data.map((p: any) => {
+      let finalStock = p.stock;
+      if (filters?.branchId && p.BranchOfficeProduct?.[0]) {
+        finalStock = p.BranchOfficeProduct[0].physicalStock;
+      }
 
-    // Formatear fechas
-    const formattedData = filteredData.map(item => ({
-      ...item,
-      createdAt: formatToLimaTime(item.createdAt) as any,
-      updatedAt: item.updatedAt ? formatToLimaTime(item.updatedAt) as any : item.updatedAt,
-    }));
+      const { BranchOfficeProduct, ...rest } = p;
+      return {
+        ...rest,
+        stock: finalStock,
+        createdAt: formatToLimaTime(p.createdAt) as any,
+        updatedAt: p.updatedAt ? formatToLimaTime(p.updatedAt) as any : p.updatedAt,
+      };
+    });
 
-    const result = buildPaginatedResult(formattedData, page, limit, filteredTotal);
+    const result = buildPaginatedResult(formattedData, page, limit, total);
 
     // 3. Guardar en cache
     await redis.set(cacheKey, result, CACHE_TTL_LIST);
@@ -374,10 +395,10 @@ export const ProductService = {
   /**
    * Obtener producto por ID con cache
    */
-  getById: async (id: string) => {
-    const cacheKey = `${CACHE_PREFIX}${id}`;
+  getById: async (id: string, branchId?: string) => {
+    const cacheKey = branchId ? `${CACHE_PREFIX}${id}:${branchId}` : `${CACHE_PREFIX}${id}`;
 
-    const cached = await redis.get<Product>(cacheKey);
+    const cached = await redis.get<any>(cacheKey);
     if (cached) return cached;
 
     // 2. Buscar en DB
@@ -392,10 +413,22 @@ export const ProductService = {
 
     if (!product) return null;
 
-    // 3. Guardar en cache
-    await redis.set(cacheKey, product, CACHE_TTL_SINGLE);
+    // Si se especifica sucursal, buscar el stock específico
+    let finalProduct: any = { ...product };
+    if (branchId) {
+        const branchStock = await prisma.branchOfficeProduct.findUnique({
+            where: { productId_branchOfficeId: { productId: id, branchOfficeId: branchId } },
+            select: { physicalStock: true }
+        });
+        if (branchStock) {
+            finalProduct.stock = branchStock.physicalStock;
+        }
+    }
 
-    return product;
+    // 3. Guardar en cache
+    await redis.set(cacheKey, finalProduct, CACHE_TTL_SINGLE);
+
+    return finalProduct;
   },
 
   /**
