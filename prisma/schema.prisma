@@ -43,7 +43,7 @@ model BussinessPartner {
   surname        String?
   companyName    String?
   contactEmail   String?
-  email          String        @unique
+  email          String?       @unique
   phone          String?
   telephone      String?
   address        String?
