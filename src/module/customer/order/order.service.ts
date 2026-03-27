@@ -782,8 +782,10 @@ export const OrderService = {
 
       const baseInfo = {
         'Código Orden': order.orderCode,
-        'Fecha Orden': formatToLimaTime(order.orderDate),
-        'Fecha Pago': resolvedPaymentDate ? formatToLimaTime(resolvedPaymentDate) : 'Pendiente',
+        'Fecha Orden': formatToLimaTime(order.orderDate, 'dd/MM/yyyy'),
+        'Hora Orden': formatToLimaTime(order.orderDate, 'HH:mm:ss'),
+        'Fecha Pago': resolvedPaymentDate ? formatToLimaTime(resolvedPaymentDate, 'dd/MM/yyyy') : 'Pendiente',
+        'Hora Pago': resolvedPaymentDate ? formatToLimaTime(resolvedPaymentDate, 'HH:mm:ss') : 'N/A',
         'Estado': statusEsp,
         'Cliente': partnerName,
         'Doc. Cliente': order.partner.documentNumber,
