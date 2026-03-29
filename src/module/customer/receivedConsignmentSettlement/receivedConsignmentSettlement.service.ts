@@ -79,14 +79,32 @@ export const getAllReceivedConsignmentSettlements = async (
 ): Promise<PaginatedResult<ReceivedConsignmentSettlement>> => {
   const page = paginationQuery?.page ?? 1;
   const limit = paginationQuery?.limit ?? 10;
-  const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-  const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+  const sortBy = paginationQuery?.sortBy || 'createdAt';
+  const sortOrder = paginationQuery?.sortOrder || 'desc';
+
+  // Resolve societyId from filters
+  let resolvedSocietyId = filters?.societyId;
+  const societyCode = filters?.societyCode || filters?.societyId;
+
+  if (!resolvedSocietyId && societyCode) {
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
+    if (isUuid) {
+      resolvedSocietyId = societyCode;
+    } else {
+      const society = await prisma.society.findUnique({ where: { code: societyCode } });
+      if (society) {
+        resolvedSocietyId = society.id;
+      } else {
+        return buildPaginatedResult([], page, limit, 0);
+      }
+    }
+  }
 
   // Cache Key
   const cacheKeyParts = [
     CACHE_PREFIX,
     'list',
-    filters?.outgoingAgreementId || 'all',
+    resolvedSocietyId || 'all',
     filters?.status || 'all',
     filters?.settlementDateFrom?.toISOString() || 'all',
     filters?.settlementDateTo?.toISOString() || 'all',
@@ -105,6 +123,7 @@ export const getAllReceivedConsignmentSettlements = async (
   const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
 
   const where: any = {};
+  if (resolvedSocietyId) where.outgoingAgreement = { societyId: resolvedSocietyId };
   if (filters?.outgoingAgreementId) where.outgoingAgreementId = filters.outgoingAgreementId;
   if (filters?.status) where.status = filters.status;
 

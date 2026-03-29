@@ -28,7 +28,7 @@ export interface LogTransactionInput {
     date?: Date;
 }
 
-const CACHE_PREFIX = 'inventory:';
+const CACHE_PREFIX = 'inventory';
 const CACHE_TTL_LIST = 60; // 1 minuto (Kardex changes frequently)
 
 export const InventoryService = {
@@ -80,7 +80,7 @@ export const InventoryService = {
         // Invalidate Cache in background
         setImmediate(async () => {
             try {
-                await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+                await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
             } catch (e) {
                 console.error('[InventoryService] Error invalidating cache:', e);
             }
@@ -98,13 +98,25 @@ export const InventoryService = {
     ) => {
         const page = paginationQuery?.page ?? 1;
         const limit = paginationQuery?.limit ?? 20;
-        const sortBy = paginationQuery?.sortBy ?? 'date';
-        const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+        const sortBy = paginationQuery?.sortBy || 'date';
+        const sortOrder = paginationQuery?.sortOrder || 'desc';
+
+        // Resolve societyId from filters
+        let resolvedSocietyId: string | undefined = filters?.societyId;
+        if (!resolvedSocietyId && filters?.societyCode) {
+            const society = await prisma.society.findUnique({ where: { code: filters.societyCode } });
+            if (society) {
+                resolvedSocietyId = society.id;
+            } else {
+                return buildPaginatedResult([], page, limit, 0);
+            }
+        }
 
         // Cache Key
         const cacheKeyParts = [
             CACHE_PREFIX,
             'list',
+            resolvedSocietyId || 'all',
             filters?.branchId || 'all',
             filters?.productId || 'all',
             filters?.type || 'all',
@@ -122,6 +134,9 @@ export const InventoryService = {
         const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
         const whereClause: any = {};
 
+        if (resolvedSocietyId) {
+            whereClause.product = { societyId: resolvedSocietyId };
+        }
         if (filters?.branchId) whereClause.branchOfficeId = filters.branchId;
         if (filters?.productId) whereClause.productId = filters.productId;
         if (filters?.type) whereClause.type = filters.type;
@@ -134,9 +149,10 @@ export const InventoryService = {
 
         if (filters?.search) {
             // Optional: Search by document number or product name
+            const searchObj = { contains: filters.search, mode: 'insensitive' as const };
             whereClause.OR = [
-                { documentNumber: { contains: filters.search, mode: 'insensitive' } },
-                { product: { name: { contains: filters.search, mode: 'insensitive' } } }
+                { documentNumber: searchObj },
+                { product: { name: searchObj } }
             ];
         }
 
@@ -232,7 +248,7 @@ export const InventoryService = {
                     redis.deleteKeysByPrefix('products:'),
                     redis.deleteKeysByPrefix('products:select:'),
                     redis.deleteKeysByPrefix('branch_office_products:'),
-                    redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`)
+                    redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`)
                 ]);
             } catch (e) {
                 console.error('[InventoryService] Error invalidating caches (adjustment):', e);

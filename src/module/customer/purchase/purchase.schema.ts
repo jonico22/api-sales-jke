@@ -62,6 +62,7 @@ export const purchaseIdSchema = z.object({
 export const purchaseFiltersSchema = z.object({
     query: z.object({
         societyId: z.string().uuid().optional().openapi({ example: 'uuid' }),
+        societyCode: z.string().optional().openapi({ example: 'SOC01' }),
         providerId: z.string().uuid().optional().openapi({ example: 'uuid' }),
         status: z.nativeEnum(PurchaseStatus).optional().openapi({ example: 'COMPLETED' }),
         purchaseDateFrom: z.coerce.date().optional().openapi({ example: '2024-01-01' }),

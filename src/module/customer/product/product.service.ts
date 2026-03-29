@@ -28,6 +28,7 @@ export interface ProductFilters {
   societyId?: string;
   categoryCode?: string;
   categoryId?: string;
+  branchId?: string;       // Filtrar por sucursal (BranchOfficeProduct)
   search?: string;
   isActive?: boolean;
   priceFrom?: number;
@@ -59,18 +60,59 @@ export const ProductService = {
   ): Promise<PaginatedResult<Product>> => {
     const page = paginationQuery?.page ?? 1;
     const limit = paginationQuery?.limit ?? 10;
-    const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-    const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+    const sortBy = paginationQuery?.sortBy ?? 'name';
+    const sortOrder = paginationQuery?.sortOrder ?? 'asc';
 
-    // Construir clave de cache única para esta combinación de filtros
-    const societyCode = filters?.societyCode || filters?.societyId;
     const categoryCode = filters?.categoryCode; // keep code only
     const categoryId = filters?.categoryId;
+    const rawSocietyRef = filters?.societyCode || filters?.societyId;
+
+    // ─── Resolver sociedad ANTES de construir la clave de caché ───────
+    // Esto garantiza que `societyCode=SOC-001` y `societyId=<uuid>` generen
+    // la misma clave y que no haya mezcla de datos entre sociedades.
+    const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
+    const whereClause: any = { isDeleted: false };
+    let resolvedSocietyId: string | null = null;
+
+    if (rawSocietyRef) {
+      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(rawSocietyRef);
+      if (isUuid) {
+        resolvedSocietyId = rawSocietyRef;
+        whereClause.societyId = rawSocietyRef;
+      } else {
+        const society = await prisma.society.findUnique({ where: { code: rawSocietyRef } });
+        if (society) {
+          resolvedSocietyId = society.id;
+          whereClause.societyId = society.id;
+        } else {
+          return buildPaginatedResult([], page, limit, 0);
+        }
+      }
+    }
+
+    // Fallback: Si no hay sociedad pero hay sucursal, resolvemos la sociedad de la sucursal
+    if (!resolvedSocietyId && filters?.branchId) {
+      const branch = await prisma.branchOffice.findUnique({
+        where: { id: filters.branchId },
+        select: { societyId: true }
+      });
+      if (branch) {
+        resolvedSocietyId = branch.societyId;
+        whereClause.societyId = branch.societyId;
+      }
+    }
+
+    // SI NO HAY SOCIEDAD EN ESTE PUNTO, RETORNAMOS VACÍO (Seguridad multitenant)
+    if (!resolvedSocietyId) {
+      return buildPaginatedResult([], page, limit, 0);
+    }
+
+    // Construir clave de cache usando el UUID resuelto (Scope por sociedad)
     const cacheKeyParts = [
       'list',
-      societyCode || 'all',
       categoryCode || 'all',
       categoryId || 'all',
+      filters?.branchId || 'all',
       filters?.search || 'all',
       filters?.isActive !== undefined ? filters.isActive : 'all',
       filters?.priceFrom || 'all',
@@ -94,24 +136,12 @@ export const ProductService = {
       sortBy,
       sortOrder
     ];
-    const cacheKey = `${CACHE_PREFIX}${cacheKeyParts.join(':')}`;
+    // La clave ahora es products:<societyId>:list:...
+    const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:${cacheKeyParts.join(':')}`;
 
     // 1. Intentar obtener del cache
     const cached = await redis.get<PaginatedResult<Product>>(cacheKey);
     if (cached) return cached;
-
-    const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
-    const whereClause: any = { isDeleted: false };
-
-    // Filtro por sociedad
-    if (societyCode) {
-      const society = await prisma.society.findUnique({ where: { code: societyCode } });
-      if (society) {
-        whereClause.societyId = society.id;
-      } else {
-        return buildPaginatedResult([], page, limit, 0);
-      }
-    }
 
     // Filtro por categoría ID directa
     if (filters?.categoryId) {
@@ -120,13 +150,24 @@ export const ProductService = {
     // Filtro por categoría código (mantener compatibilidad)
     if (categoryCode) {
       const category = await prisma.category.findFirst({
-        where: { code: categoryCode, isDeleted: false }
+        where: { 
+          code: categoryCode, 
+          isDeleted: false,
+          ...(whereClause.societyId && { societyId: whereClause.societyId })
+        }
       });
       if (category) {
         whereClause.categoryId = category.id;
       } else {
         return buildPaginatedResult([], page, limit, 0);
       }
+    }
+
+    // Filtro por sucursal (BranchOfficeProduct)
+    if (filters?.branchId) {
+      whereClause.BranchOfficeProduct = {
+        some: { branchOfficeId: filters.branchId }
+      };
     }
 
     // Búsqueda por nombre o código (case-insensitive)
@@ -177,29 +218,40 @@ export const ProductService = {
       }
     }
 
-    // Filtro de stock bajo (stock <= minStock)
-    // Nota: Prisma no permite comparar campos directamente, así que lo haremos manualmente después
+    // Filtro de stock (combinable)
+    const stockConditions: any = {};
     const applyLowStockFilter = filters?.lowStock === true || filters?.stockStatus === 'low';
 
-    // Filtro stockStatus: Disponible (stock > 0) | Agotado (stock <= 0) | Bajo Stock (post-process)
+    if (applyLowStockFilter) {
+      stockConditions.lte = (prisma.product as any).fields.minStock;
+    }
+
     if (filters?.stockStatus === 'available') {
-      whereClause.stock = { gt: 0 };
+      stockConditions.gt = 0;
     } else if (filters?.stockStatus === 'out') {
-      whereClause.stock = { lte: 0 }; // lte:0 es más compatible con Prisma que equals:0
+      stockConditions.lte = 0;
     }
 
     // Filtro de rango de stock
     if (filters?.stockFrom !== undefined || filters?.stockTo !== undefined) {
-      // No aplicar si ya hay filtro de stockStatus o lowStock
-      if (!applyLowStockFilter && !filters?.stockStatus) {
-        whereClause.stock = {};
-        if (filters.stockFrom !== undefined) {
-          whereClause.stock.gte = filters.stockFrom;
+      if (filters.stockFrom !== undefined) stockConditions.gte = filters.stockFrom;
+      if (filters.stockTo !== undefined) stockConditions.lte = filters.stockTo;
+    }
+
+    const hasStockFilters = Object.keys(stockConditions).length > 0;
+
+    // APLICAR FILTROS DE STOCK Y SUCURSAL
+    if (filters?.branchId) {
+      // Si hay sucursal, el filtro de stock de la sucursal es lo principal
+      whereClause.BranchOfficeProduct = {
+        some: { 
+          branchOfficeId: filters.branchId,
+          ...(hasStockFilters && { physicalStock: stockConditions })
         }
-        if (filters.stockTo !== undefined) {
-          whereClause.stock.lte = filters.stockTo;
-        }
-      }
+      };
+    } else if (hasStockFilters) {
+      // Si no hay sucursal, filtramos por el stock global
+      whereClause.stock = stockConditions;
     }
 
     // Filtro por createdBy
@@ -270,27 +322,35 @@ export const ProductService = {
           color: true,
           colorCode: true,
           salesCount: true,
+          // Traer stock de sucursal si se filtra por una
+          ...(filters?.branchId && {
+            BranchOfficeProduct: {
+               where: { branchOfficeId: filters.branchId },
+               select: { physicalStock: true }
+            }
+          })
         },
       }),
       prisma.product.count({ where: whereClause }),
     ]);
 
-    // Aplicar filtro de stock bajo si es necesario (post-procesamiento)
-    let filteredData = data;
-    let filteredTotal = total;
-    if (applyLowStockFilter) {
-      filteredData = data.filter(item => item.stock <= item.minStock);
-      filteredTotal = filteredData.length;
-    }
+    // 3. Transformar resultados para mostrar stock de sucursal si aplica y formatear fechas
+    const formattedData = data.map((p: any) => {
+      let finalStock = p.stock;
+      if (filters?.branchId && p.BranchOfficeProduct?.[0]) {
+        finalStock = p.BranchOfficeProduct[0].physicalStock;
+      }
 
-    // Formatear fechas
-    const formattedData = filteredData.map(item => ({
-      ...item,
-      createdAt: formatToLimaTime(item.createdAt) as any,
-      updatedAt: item.updatedAt ? formatToLimaTime(item.updatedAt) as any : item.updatedAt,
-    }));
+      const { BranchOfficeProduct, ...rest } = p;
+      return {
+        ...rest,
+        stock: finalStock,
+        createdAt: formatToLimaTime(p.createdAt) as any,
+        updatedAt: p.updatedAt ? formatToLimaTime(p.updatedAt) as any : p.updatedAt,
+      };
+    });
 
-    const result = buildPaginatedResult(formattedData, page, limit, filteredTotal);
+    const result = buildPaginatedResult(formattedData, page, limit, total);
 
     // 3. Guardar en cache
     await redis.set(cacheKey, result, CACHE_TTL_LIST);
@@ -335,10 +395,10 @@ export const ProductService = {
   /**
    * Obtener producto por ID con cache
    */
-  getById: async (id: string) => {
-    const cacheKey = `${CACHE_PREFIX}${id}`;
+  getById: async (id: string, branchId?: string) => {
+    const cacheKey = branchId ? `${CACHE_PREFIX}${id}:${branchId}` : `${CACHE_PREFIX}${id}`;
 
-    const cached = await redis.get<Product>(cacheKey);
+    const cached = await redis.get<any>(cacheKey);
     if (cached) return cached;
 
     // 2. Buscar en DB
@@ -353,10 +413,22 @@ export const ProductService = {
 
     if (!product) return null;
 
-    // 3. Guardar en cache
-    await redis.set(cacheKey, product, CACHE_TTL_SINGLE);
+    // Si se especifica sucursal, buscar el stock específico
+    let finalProduct: any = { ...product };
+    if (branchId) {
+        const branchStock = await prisma.branchOfficeProduct.findUnique({
+            where: { productId_branchOfficeId: { productId: id, branchOfficeId: branchId } },
+            select: { physicalStock: true }
+        });
+        if (branchStock) {
+            finalProduct.stock = branchStock.physicalStock;
+        }
+    }
 
-    return product;
+    // 3. Guardar en cache
+    await redis.set(cacheKey, finalProduct, CACHE_TTL_SINGLE);
+
+    return finalProduct;
   },
 
   /**
@@ -435,22 +507,31 @@ export const ProductService = {
    * Obtener lista única de marcas (con cache)
    */
   getUniqueBrands: async (societyId?: string): Promise<{ id: string; brand: string }[]> => {
-    const cacheKey = `${CACHE_PREFIX}brands:${societyId || 'all'}`;
-    const cached = await redis.get<{ id: string; brand: string }[]>(cacheKey);
-    if (cached) return cached;
+    // Sin sociedad no retornamos nada (evitar filtrar todas las marcas de todas las sociedades)
+    if (!societyId) return [];
 
-    const whereClause: any = { isDeleted: false, brand: { not: null } };
+    // Solo productos activos y no eliminados para que los dropdowns coincidan con el catálogo visible
+    const whereClause: any = { isDeleted: false, isActive: true, brand: { not: null } };
+    let resolvedSocietyId: string | undefined;
 
-    if (societyId) {
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
+    if (isUuid) {
+      resolvedSocietyId = societyId;
+      whereClause.societyId = societyId;
+    } else {
       const society = await prisma.society.findUnique({ where: { code: societyId } });
       if (society) {
+        resolvedSocietyId = society.id;
         whereClause.societyId = society.id;
       } else {
-        const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
-        if (isUuid) whereClause.societyId = societyId;
-        else return [];
+        return [];
       }
     }
+
+    // Usar el UUID resuelto en la clave de caché para evitar colisiones (Scope por sociedad)
+    const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:brands:all`;
+    const cached = await redis.get<{ id: string; brand: string }[]>(cacheKey);
+    if (cached) return cached;
 
     const result = await prisma.product.findMany({
       where: whereClause,
@@ -471,22 +552,31 @@ export const ProductService = {
    * Obtener lista única de colores (con cache)
    */
   getUniqueColors: async (societyId?: string): Promise<{ id: string; color: string; colorCode: string | null }[]> => {
-    const cacheKey = `${CACHE_PREFIX}colors:${societyId || 'all'}`;
-    const cached = await redis.get<{ id: string; color: string; colorCode: string | null }[]>(cacheKey);
-    if (cached) return cached;
+    // Sin sociedad no retornamos nada (evitar filtrar todos los colores de todas las sociedades)
+    if (!societyId) return [];
 
-    const whereClause: any = { isDeleted: false, color: { not: null } };
+    // Solo productos activos y no eliminados para que los dropdowns coincidan con el catálogo visible
+    const whereClause: any = { isDeleted: false, isActive: true, color: { not: null } };
+    let resolvedSocietyId: string | undefined;
 
-    if (societyId) {
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
+    if (isUuid) {
+      resolvedSocietyId = societyId;
+      whereClause.societyId = societyId;
+    } else {
       const society = await prisma.society.findUnique({ where: { code: societyId } });
       if (society) {
+        resolvedSocietyId = society.id;
         whereClause.societyId = society.id;
       } else {
-        const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
-        if (isUuid) whereClause.societyId = societyId;
-        else return [];
+        return [];
       }
     }
+
+    // Usar el UUID resuelto en la clave de caché para evitar colisiones (Scope por sociedad)
+    const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:colors:all`;
+    const cached = await redis.get<{ id: string; color: string; colorCode: string | null }[]>(cacheKey);
+    if (cached) return cached;
 
     const result = await prisma.product.findMany({
       where: whereClause,
@@ -572,11 +662,12 @@ export const ProductService = {
 
     setImmediate(async () => {
       try {
-        await redis.deleteKeysByPrefix('products:');
-        await Promise.all(
-          ['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
+        await Promise.all([
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}${societyId}:`),
+          redis.deleteKeysByPrefix('branch_office_products:'),
+          ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
             .map(k => redis.del(`dashboard:${k}:${societyId}`))
-        );
+        ]);
 
         if (subscriptionId) {
           await Promise.all([
@@ -671,7 +762,8 @@ export const ProductService = {
     setImmediate(async () => {
       try {
         await Promise.all([
-          redis.deleteKeysByPrefix('products:'),
+          redis.del(`${CACHE_PREFIX}${updated.id}`), // Cache individual (sin societyId en el prefijo antiguo)
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}${updatedSocietyId}:`), // Cache de listas de esta sociedad
           redis.deleteKeysByPrefix('branch_office_products:'),
           ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
             .map(k => redis.del(`dashboard:${k}:${updatedSocietyId}`))
@@ -716,7 +808,8 @@ export const ProductService = {
     setImmediate(async () => {
       try {
         await Promise.all([
-          redis.deleteKeysByPrefix('products:'),
+          redis.del(`${CACHE_PREFIX}${id}`),
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}${deletedSocietyId}:`),
           redis.deleteKeysByPrefix('branch_office_products:'),
           ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
             .map(k => redis.del(`dashboard:${k}:${deletedSocietyId}`))
@@ -741,60 +834,110 @@ export const ProductService = {
   /**
    * Obtener productos para select/dropdown con cache largo
    */
-  getForSelect: async (societyCode?: string, categoryCode?: string) => {
-    const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}:${categoryCode || 'all'}`;
+    getForSelect: async (societyCode?: string, categoryCode?: string, branchId?: string) => {
+        // Resolvemos sociedad primero para la clave de caché
+        let resolvedSocietyId: string | undefined;
+        if (societyCode) {
+            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
+            if (isUuid) {
+                resolvedSocietyId = societyCode;
+            } else {
+                const society = await prisma.society.findUnique({ where: { code: societyCode }, select: { id: true } });
+                if (society) resolvedSocietyId = society.id;
+            }
+        }
 
-    const cached = await redis.get<any[]>(cacheKey);
-    if (cached) return cached;
+        // Si no hay sociedad pero hay sucursal, resolvemos sociedad de la sucursal
+        if (!resolvedSocietyId && branchId) {
+            const branch = await prisma.branchOffice.findUnique({ where: { id: branchId }, select: { societyId: true } });
+            if (branch) resolvedSocietyId = branch.societyId;
+        }
 
-    const whereClause: any = { isDeleted: false, isActive: true };
+        // Si no se puede resolver la sociedad, no cacheamos o retornamos vacío (Seguridad)
+        if (!resolvedSocietyId) return [];
 
-    // Si se envía código de sociedad, buscar su ID
-    if (societyCode) {
-      const society = await prisma.society.findUnique({ where: { code: societyCode } });
-      if (society) {
-        whereClause.societyId = society.id;
-      } else {
-        return [];
-      }
-    }
+        const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:select:${categoryCode || 'all'}:${branchId || 'all'}`;
+        const cached = await redis.get<any[]>(cacheKey);
+        if (cached) return cached;
 
-    // Si se envía código de categoría, buscar su ID
-    if (categoryCode) {
-      const category = await prisma.category.findFirst({
-        where: { code: categoryCode, isDeleted: false }
-      });
-      if (category) {
-        whereClause.categoryId = category.id;
-      } else {
-        return [];
-      }
-    }
+        const whereClause: any = { 
+            isDeleted: false, 
+            isActive: true,
+            societyId: resolvedSocietyId
+        };
 
-    const products = await prisma.product.findMany({
-      where: whereClause,
-      select: {
-        id: true,
-        name: true,
-        price: true,
-        stock: true,
-        code: true,
-        category: {
-          select: {
-            id: true,
-            name: true,
-            code: true,
-          },
-        },
-      },
-      orderBy: { name: 'asc' },
-    });
+        // 2. Resolve Category
+        if (categoryCode) {
+            const category = await prisma.category.findFirst({
+                where: { code: categoryCode, isDeleted: false }
+            });
+            if (category) {
+                whereClause.categoryId = category.id;
+            } else {
+                return [];
+            }
+        }
 
-    // Guardar en cache con TTL largo
-    await redis.set(cacheKey, products, CACHE_TTL_SELECT);
+        // 3. Resolve Branch Stock
+        let targetBranchId = branchId;
 
-    return products;
-  },
+        // If no branchId provided, default to main branch of society
+        if (!targetBranchId && resolvedSocietyId) {
+            const mainBranch = await prisma.branchOffice.findFirst({
+                where: { societyId: resolvedSocietyId, isMain: true }
+            });
+            if (mainBranch) {
+                targetBranchId = mainBranch.id;
+            }
+        }
+
+        // 4. Apply branch stock filter to whereClause
+        if (targetBranchId) {
+            whereClause.BranchOfficeProduct = {
+                some: {
+                    branchOfficeId: targetBranchId,
+                    availableStock: { gt: 0 }
+                }
+            };
+        }
+
+        const products = await prisma.product.findMany({
+            where: whereClause,
+            select: {
+                id: true,
+                name: true,
+                price: true,
+                code: true,
+                category: {
+                    select: {
+                        id: true,
+                        name: true,
+                        code: true,
+                    },
+                },
+                BranchOfficeProduct: targetBranchId ? {
+                    where: { branchOfficeId: targetBranchId },
+                    select: { availableStock: true }
+                } : undefined
+            },
+            orderBy: { name: 'asc' },
+        });
+
+        // Map stock to maintain a flat structure
+        const formattedProducts = products.map(p => {
+            const stock = (p as any).BranchOfficeProduct?.[0]?.availableStock ?? 0;
+            const { BranchOfficeProduct, ...rest } = p as any;
+            return {
+                ...rest,
+                stock
+            };
+        });
+
+        // Guardar en cache con TTL largo
+        await redis.set(cacheKey, formattedProducts, CACHE_TTL_SELECT);
+
+        return formattedProducts;
+    },
 
   /**
    * Invalidar todo el cache de productos (para uso manual si es necesario)

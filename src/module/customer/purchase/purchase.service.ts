@@ -25,14 +25,30 @@ export const getAllPurchases = async (
 ): Promise<PaginatedResult<Purchase>> => {
   const page = paginationQuery?.page ?? 1;
   const limit = paginationQuery?.limit ?? 10;
-  const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-  const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+  const sortBy = paginationQuery?.sortBy || 'createdAt';
+  const sortOrder = paginationQuery?.sortOrder || 'desc';
+
+  // Resolve societyId from filters
+  let resolvedSocietyId = filters?.societyId;
+  if (!resolvedSocietyId && filters?.societyCode) {
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(filters.societyCode);
+    if (isUuid) {
+      resolvedSocietyId = filters.societyCode;
+    } else {
+      const society = await prisma.society.findUnique({ where: { code: filters.societyCode } });
+      if (society) {
+        resolvedSocietyId = society.id;
+      } else {
+        return buildPaginatedResult([], page, limit, 0);
+      }
+    }
+  }
 
   // Cache Key
   const cacheKeyParts = [
     CACHE_PREFIX,
     'list',
-    filters?.societyId || 'all',
+    resolvedSocietyId || 'all',
     filters?.providerId || 'all',
     filters?.status || 'all',
     filters?.purchaseDateFrom?.toISOString() || 'all',
@@ -54,7 +70,7 @@ export const getAllPurchases = async (
 
   const whereClause: any = {
     isDeleted: false,
-    ...(filters?.societyId && { societyId: filters.societyId }),
+    ...(resolvedSocietyId && { societyId: resolvedSocietyId }),
     ...(filters?.providerId && { providerId: filters.providerId }),
     ...(filters?.status && { status: filters.status }),
   };
@@ -131,9 +147,13 @@ export const getPurchaseById = async (id: string) => {
 }
 
 export const createPurchase = async (data: CreatePurchaseInput) => {
-  // Extract and remove fields that are not part of the Purchase model inputs if necessary
-  // Assuming strict validation ensures cleanliness, we might need to handle dates or relations specifically if they were passed incorrectly, 
-  // but Zod handles coercion.
+  // Resolve societyId if it's a code
+  const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(data.societyId);
+  if (!isUuid) {
+    const society = await prisma.society.findUnique({ where: { code: data.societyId } });
+    if (!society) throw new Error(`Sociedad con código ${data.societyId} no encontrada`);
+    data.societyId = society.id;
+  }
 
   // Validate Provider Type
   const provider = await prisma.bussinessPartner.findUnique({

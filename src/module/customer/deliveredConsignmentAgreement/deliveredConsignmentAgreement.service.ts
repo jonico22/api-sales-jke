@@ -94,14 +94,32 @@ export const getAll = async (
 ): Promise<PaginatedResult<DeliveredConsignmentAgreement>> => {
   const page = paginationQuery?.page ?? 1;
   const limit = paginationQuery?.limit ?? 10;
-  const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-  const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+  const sortBy = paginationQuery?.sortBy || 'createdAt';
+  const sortOrder = paginationQuery?.sortOrder || 'desc';
+
+  // Resolve societyId from filters
+  let resolvedSocietyId = filters?.societyId;
+  const societyCode = filters?.societyCode || filters?.societyId;
+
+  if (!resolvedSocietyId && societyCode) {
+    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
+    if (isUuid) {
+      resolvedSocietyId = societyCode;
+    } else {
+      const society = await prisma.society.findUnique({ where: { code: societyCode } });
+      if (society) {
+        resolvedSocietyId = society.id;
+      } else {
+        return buildPaginatedResult([], page, limit, 0);
+      }
+    }
+  }
 
   // Cache Key
   const cacheKeyParts = [
     CACHE_PREFIX,
     'list',
-    filters?.consignmentAgreementId || 'all',
+    resolvedSocietyId || 'all',
     filters?.productId || 'all',
     filters?.branchId || 'all',
     filters?.status || 'all',
@@ -122,6 +140,7 @@ export const getAll = async (
   const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
 
   const where: any = {};
+  if (resolvedSocietyId) where.consignmentAgreement = { societyId: resolvedSocietyId };
   if (filters?.consignmentAgreementId) where.consignmentAgreementId = filters.consignmentAgreementId;
   if (filters?.productId) where.productId = filters.productId;
   if (filters?.branchId) where.branchId = filters.branchId;

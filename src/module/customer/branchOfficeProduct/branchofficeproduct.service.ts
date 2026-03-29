@@ -15,7 +15,7 @@ import { redis } from '@/config/redis';
 
 export type BranchOfficeProductFilters = z.infer<typeof branchOfficeProductFiltersSchema>['query'];
 
-const CACHE_PREFIX = 'branch_office_products:';
+const CACHE_PREFIX = 'branch_office_products';
 const CACHE_TTL_LIST = 300; // 5 minutos
 const CACHE_TTL_SINGLE = 600; // 10 minutos
 
@@ -25,7 +25,6 @@ export const BranchOfficeProductService = {
    */
   getAll: async (
     paginationQuery?: PaginationQuery,
-    societyId?: string,
     filters?: BranchOfficeProductFilters
   ): Promise<PaginatedResult<any>> => {
     const page = paginationQuery?.page ?? 1;
@@ -33,12 +32,14 @@ export const BranchOfficeProductService = {
     const sortBy = paginationQuery?.sortBy ?? 'createdAt';
     const sortOrder = paginationQuery?.sortOrder ?? 'desc';
 
-    // Resolve societyId
-    let resolvedSocietyId = societyId;
-    const societyCode = filters?.societyCode || filters?.societyId;
+    // Resolve societyId from filters
+    let resolvedSocietyId: string | undefined;
+    const societyValue = filters?.societyCode || filters?.societyId;
 
-    if (!resolvedSocietyId && societyCode) {
-      const society = await prisma.society.findUnique({ where: { code: societyCode } });
+    if (societyValue) {
+      const society = await prisma.society.findUnique({
+        where: filters?.societyCode ? { code: societyValue } : { id: societyValue },
+      });
       if (society) {
         resolvedSocietyId = society.id;
       } else {
@@ -72,7 +73,7 @@ export const BranchOfficeProductService = {
     console.log(`[Cache MISS] ${cacheKey}`);
 
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
-    const whereClause: any = {};
+    const whereClause: any = { isDeleted: false };
 
     if (resolvedSocietyId) {
       whereClause.branchOffice = {
@@ -133,15 +134,15 @@ export const BranchOfficeProductService = {
   },
 
   getById: async (id: string) => {
-    const cacheKey = `${CACHE_PREFIX}${id}`;
+    const cacheKey = `${CACHE_PREFIX}:${id}`;
 
     // 1. Cache
     const cached = await redis.get(cacheKey);
     if (cached) return cached;
 
     // 2. DB
-    const result = await prisma.branchOfficeProduct.findUnique({
-      where: { id },
+    const result = await prisma.branchOfficeProduct.findFirst({
+      where: { id, isDeleted: false },
       include: {
         product: true,
         branchOffice: true,
@@ -156,17 +157,44 @@ export const BranchOfficeProductService = {
 
   create: async (data: unknown) => {
     const parsed = createBranchOfficeProductSchema.parse(data);
-    const created = await prisma.branchOfficeProduct.create({
-      data: parsed,
+
+    // Check if record already exists (even if isDeleted)
+    const existing = await prisma.branchOfficeProduct.findUnique({
+      where: {
+        productId_branchOfficeId: {
+          productId: parsed.productId,
+          branchOfficeId: parsed.branchOfficeId,
+        },
+      },
     });
 
+    let result;
+    if (existing) {
+      // If it exists, reactivate and update stocks
+      result = await prisma.branchOfficeProduct.update({
+        where: { id: existing.id },
+        data: {
+          ...parsed,
+          isDeleted: false,
+          isActive: true,
+          updatedAt: new Date(),
+        },
+      });
+    } else {
+      // If it doesn't exist, create it
+      result = await prisma.branchOfficeProduct.create({
+        data: parsed,
+      });
+    }
+
     // Invalidate list cache
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:select:`);
     // Invalidate Product Cache (Linked Stock)
     await redis.deleteKeysByPrefix('products:');
     await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
 
-    return created;
+    return result;
   },
 
   update: async (id: string, data: unknown) => {
@@ -180,8 +208,9 @@ export const BranchOfficeProductService = {
     });
 
     // Invalidate caches
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await redis.del(`${CACHE_PREFIX}:${id}`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:select:`);
     // Invalidate Product Cache (Linked Stock)
     await redis.deleteKeysByPrefix('products:');
     await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
@@ -190,13 +219,18 @@ export const BranchOfficeProductService = {
   },
 
   delete: async (id: string) => {
-    const deleted = await prisma.branchOfficeProduct.delete({
+    const deleted = await prisma.branchOfficeProduct.update({
       where: { id },
+      data: {
+        isDeleted: true,
+        isActive: false,
+        updatedAt: new Date(),
+      },
     });
 
     // Invalidate caches
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await redis.del(`${CACHE_PREFIX}:${id}`);
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
     // Invalidate Product Cache (Linked Stock)
     await redis.deleteKeysByPrefix('products:');
     await redis.deleteKeysByPrefix('products:select:'); // Explicitly clear select cache
@@ -216,6 +250,7 @@ export const BranchOfficeProductService = {
       select: {
         productId: true,
         availableStock: true,
+        isDeleted: true,
         product: {
           select: {
             id: true,
@@ -227,5 +262,79 @@ export const BranchOfficeProductService = {
     });
 
     return result;
+  },
+
+  /**
+   * Obtener lista ligera de productos por sucursal para selects/dropdowns (Paginado)
+   * Retorna solo: productId, name (del producto) y availableStock
+   */
+  getForSelect: async (
+    branchOfficeId: string,
+    societyCode?: string,
+    paginationQuery?: PaginationQuery,
+    search?: string
+  ): Promise<PaginatedResult<any>> => {
+    const page = paginationQuery?.page ?? 1;
+    const limit = paginationQuery?.limit ?? 100; // Un poco más alto por defecto para selects
+    const sortBy = paginationQuery?.sortBy ?? 'product.name';
+    const sortOrder = paginationQuery?.sortOrder ?? 'asc';
+
+    const whereClause: any = { branchOfficeId, isDeleted: false };
+
+    if (societyCode) {
+      const society = await prisma.society.findUnique({ where: { code: societyCode } });
+      if (society) {
+        whereClause.branchOffice = { societyId: society.id };
+      }
+    }
+
+    if (search) {
+      whereClause.product = {
+        OR: [
+          { name: { contains: search, mode: 'insensitive' } },
+          { code: { contains: search, mode: 'insensitive' } },
+          { brand: { contains: search, mode: 'insensitive' } },
+          { barcode: { contains: search, mode: 'insensitive' } },
+        ],
+      };
+    }
+
+    const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
+
+    const [data, total] = await prisma.$transaction([
+      prisma.branchOfficeProduct.findMany({
+        where: whereClause,
+        skip: prismaParams.skip,
+        take: prismaParams.take,
+        orderBy: {
+          product: {
+            name: sortOrder
+          }
+        },
+        select: {
+          productId: true,
+          availableStock: true,
+          product: {
+            select: {
+              name: true,
+              code: true,
+              brand: true
+            }
+          }
+        }
+      }),
+      prisma.branchOfficeProduct.count({ where: whereClause })
+    ]);
+
+    // Aplanar la respuesta
+    const formattedData = data.map(item => ({
+      id: item.productId,
+      name: item.product.name,
+      code: item.product.code,
+      brand: item.product.brand,
+      stock: item.availableStock
+    }));
+
+    return buildPaginatedResult(formattedData, page, limit, total);
   },
 };

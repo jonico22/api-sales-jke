@@ -28,27 +28,35 @@ export const BranchOfficeService = {
   ): Promise<PaginatedResult<any>> => {
     const page = paginationQuery?.page ?? 1;
     const limit = paginationQuery?.limit ?? 10;
-    const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-    const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+    const sortBy = paginationQuery?.sortBy || 'createdAt';
+    const sortOrder = paginationQuery?.sortOrder || 'desc';
 
-    // Resolve societyId
+    // ─── Resolver sociedad ANTES de construir la clave de caché ───────
     let resolvedSocietyId = filters?.societyId;
-    const societyCode = filters?.societyCode || filters?.societyId;
+    const societyCodeOrId = filters?.societyCode || filters?.societyId;
 
-    if (!resolvedSocietyId && societyCode) {
-      const society = await prisma.society.findUnique({ where: { code: societyCode } });
-      if (society) {
-        resolvedSocietyId = society.id;
+    if (!resolvedSocietyId && societyCodeOrId) {
+      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCodeOrId);
+      if (isUuid) {
+        resolvedSocietyId = societyCodeOrId;
       } else {
-        return buildPaginatedResult([], page, limit, 0);
+        const society = await prisma.society.findUnique({ where: { code: societyCodeOrId } });
+        if (society) {
+          resolvedSocietyId = society.id;
+        } else {
+          return buildPaginatedResult([], page, limit, 0);
+        }
       }
     }
 
-    // Construir clave de cache
+    // SI NO HAY SOCIEDAD, NO PROCESAMOS (Seguridad multitenant)
+    if (!resolvedSocietyId) {
+        return buildPaginatedResult([], page, limit, 0);
+    }
+
+    // Construir clave de cache scoped por sociedad
     const cacheKeyParts = [
-      CACHE_PREFIX,
       'list',
-      resolvedSocietyId || 'all',
       filters?.search || 'all',
       filters?.isMain !== undefined ? filters.isMain : 'all',
       filters?.isActive !== undefined ? filters.isActive : 'all',
@@ -63,22 +71,19 @@ export const BranchOfficeService = {
       sortBy,
       sortOrder
     ];
-    const cacheKey = cacheKeyParts.join(':');
+    const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:${cacheKeyParts.join(':')}`;
 
     // 1. Intentar obtener del cache
     const cached = await redis.get<PaginatedResult<any>>(cacheKey);
-    if (cached) {
-      console.log(`[Cache HIT] ${cacheKey}`);
-      return cached;
-    }
-
-    console.log(`[Cache MISS] ${cacheKey}`);
+    if (cached) return cached;
 
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
-    const whereClause: any = { isDeleted: false };
+    const whereClause: any = { 
+        isDeleted: false,
+        societyId: resolvedSocietyId
+    };
 
     // Filtros
-    if (resolvedSocietyId) whereClause.societyId = resolvedSocietyId;
     if (filters?.isActive !== undefined) whereClause.isActive = filters.isActive;
     if (filters?.isMain !== undefined) whereClause.isMain = filters.isMain;
     if (filters?.code) whereClause.code = { contains: filters.code, mode: 'insensitive' };
@@ -133,16 +138,31 @@ export const BranchOfficeService = {
     return result;
   },
 
-  getById: async (id: string) => {
-    const cacheKey = `${CACHE_PREFIX}${id}`;
+  getById: async (id: string, societyCodeOrId?: string) => {
+    // 1. Resolve societyId context
+    let resolvedSocietyId: string | undefined = undefined;
+    if (societyCodeOrId) {
+      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCodeOrId);
+      if (isUuid) {
+        resolvedSocietyId = societyCodeOrId;
+      } else {
+        const society = await prisma.society.findUnique({ where: { code: societyCodeOrId } });
+        if (society) resolvedSocietyId = society.id;
+      }
+    }
 
-    // 1. Cache
+    // We use a simplified key for single object, but we could scope it if needed
+    const cacheKey = `${CACHE_PREFIX}${id}`;
     const cached = await redis.get(cacheKey);
     if (cached) return cached;
 
     // 2. DB
-    const result = await prisma.branchOffice.findUnique({
-      where: { id },
+    const result = await prisma.branchOffice.findFirst({
+      where: {
+        id,
+        isDeleted: false,
+        ...(resolvedSocietyId && { societyId: resolvedSocietyId }),
+      },
       include: { society: true },
     });
 
@@ -159,25 +179,29 @@ export const BranchOfficeService = {
     return result;
   },
 
-  async getForSelect(societyCode?: string) {
-    const cacheKey = `${CACHE_PREFIX}select:${societyCode || 'all'}`;
+  async getForSelect(societyCodeOrId?: string) {
+    let resolvedSocietyId: string | undefined = undefined;
+    if (societyCodeOrId) {
+      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCodeOrId);
+      if (isUuid) {
+        resolvedSocietyId = societyCodeOrId;
+      } else {
+        const society = await prisma.society.findUnique({ where: { code: societyCodeOrId }, select: { id: true } });
+        if (society) resolvedSocietyId = society.id;
+      }
+    }
+
+    if (!resolvedSocietyId) return [];
+
+    const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:select`;
     const cached = await redis.get<any[]>(cacheKey);
     if (cached) return cached;
 
     const whereClause: any = {
       isDeleted: false,
       isActive: true,
+      societyId: resolvedSocietyId
     };
-
-    if (societyCode) {
-      const society = await prisma.society.findUnique({ where: { code: societyCode } });
-      if (society) {
-        whereClause.societyId = society.id;
-      } else {
-        // If societyCode provided but not found, return empty or handle as per logic (Category returns empty)
-        return [];
-      }
-    }
 
     const data = await prisma.branchOffice.findMany({
       where: whereClause,
@@ -206,9 +230,8 @@ export const BranchOfficeService = {
 
     const created = await prisma.branchOffice.create({ data: parsed });
 
-    // Invalidar cache
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    // Invalidar cache de forma quirúrgica por sociedad
+    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}${created.societyId}:`);
 
     return created;
   },
@@ -233,10 +256,11 @@ export const BranchOfficeService = {
       },
     });
 
-    // Invalidar cache
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    // Invalidar cache del objeto único y las listas de su sociedad
+    await Promise.all([
+        redis.del(`${CACHE_PREFIX}${id}`),
+        redis.deleteKeysByPrefix(`${CACHE_PREFIX}${updated.societyId}:`)
+    ]);
 
     return updated;
   },
@@ -249,12 +273,14 @@ export const BranchOfficeService = {
         isActive: false,
         updatedAt: new Date(),
       },
+      select: { id: true, societyId: true }
     });
 
-    // Invalidar cache
-    await redis.del(`${CACHE_PREFIX}${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}select:`);
+    // Invalidar cache del objeto único y las listas de su sociedad
+    await Promise.all([
+        redis.del(`${CACHE_PREFIX}${id}`),
+        redis.deleteKeysByPrefix(`${CACHE_PREFIX}${deleted.societyId}:`)
+    ]);
 
     return deleted;
   },
