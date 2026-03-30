@@ -732,7 +732,7 @@ export const OrderService = {
         OrderPayment: { select: { paymentMethod: true, amount: true, paymentDate: true } },
         orderItems: {
           include: {
-            product: { select: { name: true, code: true } }
+            product: { select: { name: true, code: true, category: { select: { name: true } } } }
           }
         }
       }
@@ -802,6 +802,7 @@ export const OrderService = {
       if (order.orderItems.length === 0) {
         data.push({
           ...baseInfo,
+          'Categoría': 'N/A',
           'Producto': 'N/A',
           'Código Producto': 'N/A',
           'Cantidad': 0,
@@ -816,6 +817,7 @@ export const OrderService = {
           data.push({
             ...baseInfo,
             // Detalle del Item
+            'Categoría': (item.product as any).category?.name ?? 'N/A',
             'Producto': item.product.name,
             'Código Producto': item.product.code,
             'Cantidad': item.quantity,
