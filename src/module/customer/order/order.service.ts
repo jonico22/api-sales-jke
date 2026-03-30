@@ -792,6 +792,9 @@ export const OrderService = {
         'Sucursal': order.branch.name,
         'Moneda': order.currency.code,
         'Método Pago': paymentMethods,
+        'Subtotal Orden': Number(order.subtotal),
+        'Impuesto Orden': Number(order.taxAmount),
+        'Descuento Global': Number(order.discount),
         'Total Orden': Number(order.totalAmount),
       };
 
@@ -803,7 +806,7 @@ export const OrderService = {
           'Código Producto': 'N/A',
           'Cantidad': 0,
           'Precio Unit.': 0,
-          'Descuento': 0,
+          'Descuento Item': 0,
           'Subtotal Item': 0,
           'Total Item': 0
         });
@@ -817,7 +820,7 @@ export const OrderService = {
             'Código Producto': item.product.code,
             'Cantidad': item.quantity,
             'Precio Unit.': Number(item.unitPrice),
-            'Descuento': Number(item.discount),
+            'Descuento Item': Number(item.discount),
             'Subtotal Item': Number(item.subtotal),
             'Total Item': Number(item.total)
           });
