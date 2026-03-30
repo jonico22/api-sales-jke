@@ -211,6 +211,8 @@ export class ProductBranchMovementService {
     setImmediate(async () => {
       try {
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
+        await redis.deleteKeysByPrefix('products:');
+        await redis.deleteKeysByPrefix('branch_office_products:');
       } catch (e) {
         console.error('[MovementService] Cache error:', e);
       }
@@ -456,6 +458,10 @@ export class ProductBranchMovementService {
       try {
         await redis.del(`${CACHE_PREFIX}:${id}`);
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
+        if (current.status === 'PENDING') {
+           await redis.deleteKeysByPrefix('products:');
+           await redis.deleteKeysByPrefix('branch_office_products:');
+        }
       } catch (e) {
         console.error('[MovementService] Delete background error:', e);
       }
