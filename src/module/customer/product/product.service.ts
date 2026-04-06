@@ -326,7 +326,7 @@ export const ProductService = {
           ...(filters?.branchId && {
             BranchOfficeProduct: {
                where: { branchOfficeId: filters.branchId },
-               select: { physicalStock: true }
+               select: { availableStock: true }
             }
           })
         },
@@ -338,7 +338,7 @@ export const ProductService = {
     const formattedData = data.map((p: any) => {
       let finalStock = p.stock;
       if (filters?.branchId && p.BranchOfficeProduct?.[0]) {
-        finalStock = p.BranchOfficeProduct[0].physicalStock;
+        finalStock = p.BranchOfficeProduct[0].availableStock;
       }
 
       const { BranchOfficeProduct, ...rest } = p;
@@ -418,10 +418,10 @@ export const ProductService = {
     if (branchId) {
         const branchStock = await prisma.branchOfficeProduct.findUnique({
             where: { productId_branchOfficeId: { productId: id, branchOfficeId: branchId } },
-            select: { physicalStock: true }
+            select: { availableStock: true }
         });
         if (branchStock) {
-            finalProduct.stock = branchStock.physicalStock;
+            finalProduct.stock = branchStock.availableStock;
         }
     }
 

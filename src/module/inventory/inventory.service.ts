@@ -350,6 +350,7 @@ export const InventoryService = {
                 await Promise.all([
                     redis.deleteKeysByPrefix('products:'),
                     redis.deleteKeysByPrefix('products:select:'),
+                    redis.deleteKeysByPrefix('branch_office_products:'),
                 ]);
             } catch (e) {
                 console.error('[InventoryService] Error invalidating caches (cancelReservation):', e);

@@ -732,7 +732,7 @@ export const OrderService = {
         OrderPayment: { select: { paymentMethod: true, amount: true, paymentDate: true } },
         orderItems: {
           include: {
-            product: { select: { name: true, code: true } }
+            product: { select: { name: true, code: true, category: { select: { name: true } } } }
           }
         }
       }
@@ -792,6 +792,9 @@ export const OrderService = {
         'Sucursal': order.branch.name,
         'Moneda': order.currency.code,
         'Método Pago': paymentMethods,
+        'Subtotal Orden': Number(order.subtotal),
+        'Impuesto Orden': Number(order.taxAmount),
+        'Descuento Global': Number(order.discount),
         'Total Orden': Number(order.totalAmount),
       };
 
@@ -799,11 +802,12 @@ export const OrderService = {
       if (order.orderItems.length === 0) {
         data.push({
           ...baseInfo,
+          'Categoría': 'N/A',
           'Producto': 'N/A',
           'Código Producto': 'N/A',
           'Cantidad': 0,
           'Precio Unit.': 0,
-          'Descuento': 0,
+          'Descuento Item': 0,
           'Subtotal Item': 0,
           'Total Item': 0
         });
@@ -813,11 +817,12 @@ export const OrderService = {
           data.push({
             ...baseInfo,
             // Detalle del Item
+            'Categoría': (item.product as any).category?.name ?? 'N/A',
             'Producto': item.product.name,
             'Código Producto': item.product.code,
             'Cantidad': item.quantity,
             'Precio Unit.': Number(item.unitPrice),
-            'Descuento': Number(item.discount),
+            'Descuento Item': Number(item.discount),
             'Subtotal Item': Number(item.subtotal),
             'Total Item': Number(item.total)
           });
