@@ -11,6 +11,7 @@ import {
 import { convertLimaDateRangeToUTC, formatToLimaTime, toLimaTimezone } from '@/utils/dateFormatter';
 import { CashShiftService } from '../cashShift/cashShift.service';
 import { CreateOrderPaymentInput, PaymentFilters } from './orderPayment.schema';
+import { NotFoundAppError } from '@/utils/domain-errors';
 
 const CACHE_PREFIX = 'order_payments:';
 const CACHE_TTL_LIST = 300; // 5 min
@@ -23,14 +24,22 @@ export const OrderPaymentService = {
       (async () => {
         let society = await prisma.society.findUnique({ where: { id: data.societyId } });
         if (!society) society = await prisma.society.findUnique({ where: { code: data.societyId } });
-        if (!society) throw new Error(`Sociedad no encontrada (ID/Code: ${data.societyId})`);
+        if (!society) {
+          throw new NotFoundAppError(`Sociedad no encontrada (ID/Code: ${data.societyId})`, {
+            societyIdOrCode: data.societyId,
+          });
+        }
         return society;
       })(),
       // Currency (ID or Code)
       (async () => {
         let currency = await prisma.currency.findUnique({ where: { id: data.currencyId } });
         if (!currency) currency = await prisma.currency.findUnique({ where: { code: data.currencyId } });
-        if (!currency) throw new Error(`Moneda no encontrada (ID/Code: ${data.currencyId})`);
+        if (!currency) {
+          throw new NotFoundAppError(`Moneda no encontrada (ID/Code: ${data.currencyId})`, {
+            currencyIdOrCode: data.currencyId,
+          });
+        }
         return currency;
       })(),
       // Order (Optional, ID or Code)
@@ -38,7 +47,11 @@ export const OrderPaymentService = {
         if (!data.orderId) return null;
         let order = await prisma.order.findUnique({ where: { id: data.orderId } });
         if (!order) order = await prisma.order.findUnique({ where: { orderCode: data.orderId } });
-        if (!order) throw new Error(`Pedido no encontrado (ID/Code: ${data.orderId})`);
+        if (!order) {
+          throw new NotFoundAppError(`Pedido no encontrado (ID/Code: ${data.orderId})`, {
+            orderIdOrCode: data.orderId,
+          });
+        }
         return order;
       })()
     ]);

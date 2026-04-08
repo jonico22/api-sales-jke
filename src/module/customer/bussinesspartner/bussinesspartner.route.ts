@@ -5,7 +5,7 @@ const router = Router();
 
 /**
  * @openapi
- * /bussinesspartners:
+ * /business-partners:
  *   get:
  *     summary: Obtener todos los socios de negocio
  *     tags: [BussinessPartner]
@@ -30,7 +30,7 @@ router.get('/', BussinessPartnerController.getAll);
 
 /**
  * @openapi
- * /bussinesspartners/select:
+ * /business-partners/select:
  *   get:
  *     summary: Obtener lista simplificada para selectores
  *     tags: [BussinessPartner]
@@ -49,7 +49,7 @@ router.get('/select', BussinessPartnerController.getForSelect);
 
 /**
  * @openapi
- * /bussinesspartners/{id}:
+ * /business-partners/{id}:
  *   get:
  *     summary: Obtener un socio de negocio por ID
  *     tags: [BussinessPartner]
@@ -74,7 +74,7 @@ router.get('/:id', BussinessPartnerController.getById);
 
 /**
  * @openapi
- * /bussinesspartners:
+ * /business-partners:
  *   post:
  *     summary: Crear un nuevo socio de negocio
  *     tags: [BussinessPartner]
@@ -100,7 +100,7 @@ router.post('/', BussinessPartnerController.create);
 
 /**
  * @openapi
- * /bussinesspartners/{id}:
+ * /business-partners/{id}:
  *   put:
  *     summary: Actualizar un socio de negocio
  *     tags: [BussinessPartner]
@@ -133,7 +133,7 @@ router.put('/:id', BussinessPartnerController.update);
 
 /**
  * @openapi
- * /bussinesspartners/{id}:
+ * /business-partners/{id}:
  *   delete:
  *     summary: Eliminar un socio de negocio (soft delete)
  *     tags: [BussinessPartner]

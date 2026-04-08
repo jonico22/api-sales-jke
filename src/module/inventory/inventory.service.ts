@@ -3,6 +3,25 @@ import { prisma } from '@/config/prisma';
 import { TransactionType } from '@prisma/client';
 import { redis } from '@/config/redis';
 import {
+    buildInventoryCacheKey,
+    buildInventoryWhereClause,
+    getSignedAdjustmentQuantity,
+    INVENTORY_CACHE_TTL_LIST,
+    resolveInventorySocietyId,
+} from './inventory.helpers';
+import {
+    applyCancelReservation,
+    applyConfirmStockOutput,
+    applyManualAdjustmentStock,
+    applyReserveStock,
+    buildSaleExitLogInput,
+    createInventoryTransactionRecord,
+    invalidateConfirmedStockCaches,
+    resolveAdjustmentUnitCost,
+    scheduleInventoryDomainInvalidation,
+    scheduleInventoryListInvalidation,
+} from './inventory.service.support';
+import {
     PaginatedResult,
     getPrismaPaginationParams,
     buildPaginatedResult,
@@ -28,9 +47,6 @@ export interface LogTransactionInput {
     date?: Date;
 }
 
-const CACHE_PREFIX = 'inventory';
-const CACHE_TTL_LIST = 60; // 1 minuto (Kardex changes frequently)
-
 export const InventoryService = {
     /**
      * Logs a stock movement in the Kardex (InventoryTransaction).
@@ -38,53 +54,8 @@ export const InventoryService = {
      */
     logTransaction: async (data: LogTransactionInput, tx?: any) => {
         const db = tx || prisma;
-
-        // We assume the Caller has already updated the Stock in BranchOfficeProduct.
-        // So we fetch the Current Stock to record the snapshot.
-        const branchProduct = await db.branchOfficeProduct.findUnique({
-            where: {
-                productId_branchOfficeId: {
-                    productId: data.productId,
-                    branchOfficeId: data.branchOfficeId,
-                },
-            },
-        });
-
-        if (!branchProduct) {
-            // Fallback if product branch relation doesn't exist (should involve creation logic upstream)
-            throw new Error(`Product ${data.productId} not found in branch ${data.branchOfficeId} during Kardex Log`);
-        }
-
-        const currentStock = branchProduct.physicalStock;
-        // Reverse engineer previous stock based on the transaction quantity
-        // new = old + quantity  => old = new - quantity
-        const previousStock = currentStock - data.quantity;
-
-        const record = await db.inventoryTransaction.create({
-            data: {
-                date: data.date || new Date(),
-                productId: data.productId,
-                branchOfficeId: data.branchOfficeId,
-                type: data.type,
-                quantity: data.quantity,
-                previousStock: previousStock,
-                newStock: currentStock,
-                unitCost: data.unitCost,
-                totalCost: data.totalCost,
-                referenceId: data.referenceId,
-                referenceType: data.referenceType,
-                documentNumber: data.documentNumber,
-            },
-        });
-
-        // Invalidate Cache in background
-        setImmediate(async () => {
-            try {
-                await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
-            } catch (e) {
-                console.error('[InventoryService] Error invalidating cache:', e);
-            }
-        });
+        const record = await createInventoryTransactionRecord(db, data);
+        scheduleInventoryListInvalidation();
 
         return record;
     },
@@ -101,30 +72,19 @@ export const InventoryService = {
         const sortBy = paginationQuery?.sortBy || 'date';
         const sortOrder = paginationQuery?.sortOrder || 'desc';
 
-        // Resolve societyId from filters
-        let resolvedSocietyId: string | undefined = filters?.societyId;
+        const resolvedSocietyId = await resolveInventorySocietyId(filters);
         if (!resolvedSocietyId && filters?.societyCode) {
-            const society = await prisma.society.findUnique({ where: { code: filters.societyCode } });
-            if (society) {
-                resolvedSocietyId = society.id;
-            } else {
-                return buildPaginatedResult([], page, limit, 0);
-            }
+            return buildPaginatedResult([], page, limit, 0);
         }
 
-        // Cache Key
-        const cacheKeyParts = [
-            CACHE_PREFIX,
-            'list',
-            resolvedSocietyId || 'all',
-            filters?.branchId || 'all',
-            filters?.productId || 'all',
-            filters?.type || 'all',
-            filters?.startDate || 'all',
-            filters?.endDate || 'all',
-            page, limit, sortBy, sortOrder
-        ];
-        const cacheKey = cacheKeyParts.join(':');
+        const cacheKey = buildInventoryCacheKey(
+            resolvedSocietyId,
+            page,
+            limit,
+            sortBy,
+            sortOrder,
+            filters
+        );
 
         // 1. Try Cache
         const cached = await redis.get(cacheKey);
@@ -132,29 +92,7 @@ export const InventoryService = {
 
         // 2. Query
         const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
-        const whereClause: any = {};
-
-        if (resolvedSocietyId) {
-            whereClause.product = { societyId: resolvedSocietyId };
-        }
-        if (filters?.branchId) whereClause.branchOfficeId = filters.branchId;
-        if (filters?.productId) whereClause.productId = filters.productId;
-        if (filters?.type) whereClause.type = filters.type;
-
-        if (filters?.startDate || filters?.endDate) {
-            whereClause.date = {};
-            if (filters.startDate) whereClause.date.gte = new Date(filters.startDate);
-            if (filters.endDate) whereClause.date.lte = new Date(filters.endDate);
-        }
-
-        if (filters?.search) {
-            // Optional: Search by document number or product name
-            const searchObj = { contains: filters.search, mode: 'insensitive' as const };
-            whereClause.OR = [
-                { documentNumber: searchObj },
-                { product: { name: searchObj } }
-            ];
-        }
+        const whereClause = buildInventoryWhereClause(resolvedSocietyId, filters);
 
         const [data, total] = await prisma.$transaction([
             prisma.inventoryTransaction.findMany({
@@ -173,7 +111,7 @@ export const InventoryService = {
         const result = buildPaginatedResult(data, page, limit, total);
 
         // 3. Set Cache
-        await redis.set(cacheKey, result, CACHE_TTL_LIST);
+        await redis.set(cacheKey, result, INVENTORY_CACHE_TTL_LIST);
 
         return result;
     },
@@ -184,48 +122,15 @@ export const InventoryService = {
     createAdjustment: async (data: CreateAdjustmentInput, userId?: string) => {
         // Transactional Update
         const result = await prisma.$transaction(async (tx) => {
-            // 1. Get current product cost if not provided
-            let unitCost = data.unitCost;
-            if (unitCost === undefined) {
-                const product = await tx.product.findUnique({ where: { id: data.productId } });
-                if (!product) throw new Error("Producto no encontrado");
-                unitCost = Number(product.priceCost);
-            }
+            const unitCost = await resolveAdjustmentUnitCost(tx, data.productId, data.unitCost);
+            const signedQuantity = getSignedAdjustmentQuantity(data.type, data.quantity);
 
-            // 2. Determine quantity sign (ADD or SUB)
-            const signedQuantity = data.type === TransactionType.ADJUSTMENT_SUB
-                ? -Math.abs(data.quantity)
-                : Math.abs(data.quantity);
-
-            // 3. Update Branch Stock
-            const branchProduct = await tx.branchOfficeProduct.upsert({
-                where: {
-                    productId_branchOfficeId: {
-                        productId: data.productId,
-                        branchOfficeId: data.branchOfficeId
-                    }
-                },
-                update: {
-                    physicalStock: { increment: signedQuantity },
-                    availableStock: { increment: signedQuantity },
-                    ...(signedQuantity > 0 ? { lastRestockedAt: new Date() } : {})
-                },
-                create: {
-                    productId: data.productId,
-                    branchOfficeId: data.branchOfficeId,
-                    physicalStock: signedQuantity,
-                    availableStock: signedQuantity,
-                    lastRestockedAt: new Date()
-                }
+            await applyManualAdjustmentStock(tx, {
+                productId: data.productId,
+                branchOfficeId: data.branchOfficeId,
+                signedQuantity,
             });
 
-            // 3.1 [NEW] Sync Global Product Stock (Physical)
-            await tx.product.update({
-                where: { id: data.productId },
-                data: { stock: { increment: signedQuantity } }
-            });
-
-            // 4. Log Transaction
             return InventoryService.logTransaction({
                 date: new Date(),
                 productId: data.productId,
@@ -241,82 +146,24 @@ export const InventoryService = {
             timeout: 15000
         });
 
-        // Invalidate Caches in background
-        setImmediate(async () => {
-            try {
-                await Promise.all([
-                    redis.deleteKeysByPrefix('products:'),
-                    redis.deleteKeysByPrefix('products:select:'),
-                    redis.deleteKeysByPrefix('branch_office_products:'),
-                    redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`)
-                ]);
-            } catch (e) {
-                console.error('[InventoryService] Error invalidating caches (adjustment):', e);
-            }
-        });
+        scheduleInventoryDomainInvalidation('adjustment');
 
         return result;
     },
 
     reserveStock: async (productId: string, branchId: string, quantity: number, tx: any) => {
-        // Reserve Stock: affects Available and Reserved.
-        // Also decrements Global Product Stock (Available) to reflect immediate reduction.
-
-        // 1. Update Branch Stock
-        const result = await tx.branchOfficeProduct.upsert({
-            where: {
-                productId_branchOfficeId: { productId, branchOfficeId: branchId }
-            },
-            update: {
-                availableStock: { decrement: quantity },
-                reservedStock: { increment: quantity }
-            },
-            create: {
-                productId,
-                branchOfficeId: branchId,
-                physicalStock: 0,
-                availableStock: -quantity,
-                reservedStock: quantity
-            }
-        });
-
-        // 2. Update Global Product Stock (Available)
-        await tx.product.update({
-            where: { id: productId },
-            data: { stock: { decrement: quantity } }
-        });
-
-        return result;
+        return applyReserveStock(tx, { productId, branchId, quantity });
     },
 
     confirmStockOutput: async (input: LogTransactionInput, tx: any) => {
-        // 1. Update Branch Stock
-        await tx.branchOfficeProduct.update({
-            where: {
-                productId_branchOfficeId: {
-                    productId: input.productId,
-                    branchOfficeId: input.branchOfficeId
-                }
-            },
-            data: {
-                physicalStock: { decrement: input.quantity },
-                reservedStock: { decrement: input.quantity }
-            }
+        await applyConfirmStockOutput(tx, {
+            productId: input.productId,
+            branchOfficeId: input.branchOfficeId,
+            quantity: input.quantity,
         });
 
-        // Global Stock (Available) was already decremented during reservation.
-        // Physical exit confirms it, but doesn't change availability again.
-
-        // 2. Log Transaction (SALE_EXIT)
-        const log = await InventoryService.logTransaction({
-            ...input,
-            quantity: -Math.abs(input.quantity), // Ensure negative for EXIT
-            type: TransactionType.SALE_EXIT
-        }, tx);
-
-        // 3. Invalidate Caches
-        await redis.deleteKeysByPrefix('products:');
-        await redis.deleteKeysByPrefix('products:select:');
+        const log = await InventoryService.logTransaction(buildSaleExitLogInput(input), tx);
+        await invalidateConfirmedStockCaches();
 
         return log;
     },
@@ -327,34 +174,7 @@ export const InventoryService = {
      * Also increments Global Product Stock (Available) to return stock.
      */
     cancelReservation: async (productId: string, branchId: string, quantity: number, tx: any) => {
-        // 1. Update Branch Stock
-        await tx.branchOfficeProduct.update({
-            where: {
-                productId_branchOfficeId: { productId, branchOfficeId: branchId }
-            },
-            data: {
-                availableStock: { increment: quantity },
-                reservedStock: { decrement: quantity }
-            }
-        });
-
-        // 2. Update Global Product Stock (Return to Available)
-        await tx.product.update({
-            where: { id: productId },
-            data: { stock: { increment: quantity } }
-        });
-
-        // 3. Invalidate Caches in background
-        setImmediate(async () => {
-            try {
-                await Promise.all([
-                    redis.deleteKeysByPrefix('products:'),
-                    redis.deleteKeysByPrefix('products:select:'),
-                    redis.deleteKeysByPrefix('branch_office_products:'),
-                ]);
-            } catch (e) {
-                console.error('[InventoryService] Error invalidating caches (cancelReservation):', e);
-            }
-        });
+        await applyCancelReservation(tx, { productId, branchId, quantity });
+        scheduleInventoryDomainInvalidation('cancelReservation');
     }
 };

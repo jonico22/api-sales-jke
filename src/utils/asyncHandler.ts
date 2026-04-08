@@ -1,5 +1,15 @@
-import { Request, Response, NextFunction } from 'express';
+import { NextFunction, Request, RequestHandler, Response } from 'express';
 
-export const asyncHandler = (fn: Function) => (req: Request, res: Response, next: NextFunction) => {
-  Promise.resolve(fn(req, res, next)).catch(next);
+type AsyncRequestHandler = (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => unknown | Promise<unknown>;
+
+export const asyncHandler = (fn: AsyncRequestHandler): RequestHandler => {
+  return (req: Request, res: Response, next: NextFunction) => {
+    Promise.resolve()
+      .then(() => fn(req, res, next))
+      .catch(next);
+  };
 };

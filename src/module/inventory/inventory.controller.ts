@@ -1,10 +1,10 @@
 
-import { Request, Response } from 'express';
+import { NextFunction, Request, Response } from 'express';
 import { InventoryService } from './inventory.service';
 import { inventoryFilterSchema, createAdjustmentSchema } from './inventory.schema';
 
 export const InventoryController = {
-    getAll: async (req: Request, res: Response) => {
+    getAll: async (req: Request, res: Response, next: NextFunction) => {
         try {
             // Validate/Parse Query
             const validation = inventoryFilterSchema.safeParse({ query: req.query });
@@ -30,11 +30,11 @@ export const InventoryController = {
             const result = await InventoryService.getAll(paginationQuery, query);
             res.json(result);
         } catch (error: any) {
-            res.status(500).json({ message: 'Error fetching Kardex', error: error.message });
+            next(error);
         }
     },
 
-    createAdjustment: async (req: Request, res: Response) => {
+    createAdjustment: async (req: Request, res: Response, next: NextFunction) => {
         try {
             const validation = createAdjustmentSchema.safeParse({ body: req.body });
             if (!validation.success) {
@@ -47,7 +47,7 @@ export const InventoryController = {
             const result = await InventoryService.createAdjustment(validation.data.body);
             res.status(201).json(result);
         } catch (error: any) {
-            res.status(500).json({ message: 'Error creating adjustment', error: error.message });
+            next(error);
         }
     }
 };

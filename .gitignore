@@ -20,6 +20,8 @@ yarn-debug.log*
 yarn-error.log*
 logs/
 *.log
+coverage/
+.vitest/
 
 # IDE and Editor files
 .vscode/

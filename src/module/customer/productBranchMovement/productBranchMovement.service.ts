@@ -11,6 +11,7 @@ import {
 } from '@/utils/pagination';
 import { formatToLimaTime, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
 import { createProductBranchMovementSchema, bulkCreateProductBranchMovementSchema, transferAllSchema } from './productBranchMovement.validation';
+import { ConflictAppError, NotFoundAppError } from '@/utils/domain-errors';
 
 const CACHE_PREFIX = 'branch_movements';
 const CACHE_TTL_LIST = 300;
@@ -152,7 +153,7 @@ export class ProductBranchMovementService {
 
     // 1. Resolve product info for error messages
     const product = await prisma.product.findUnique({ where: { id: validated.productId } });
-    if (!product) throw new Error('Producto no encontrado');
+    if (!product) throw new NotFoundAppError('Producto no encontrado', { productId: validated.productId });
 
     // 2. Check Stock
     const originStock = await prisma.branchOfficeProduct.findUnique({
@@ -164,9 +165,17 @@ export class ProductBranchMovementService {
       }
     });
 
-    if (!originStock || originStock.isDeleted) throw new Error(`El producto "${product.name}" no está registrado o está inactivo en la sucursal de origen`);
+    if (!originStock || originStock.isDeleted) {
+      throw new NotFoundAppError(
+        `El producto "${product.name}" no está registrado o está inactivo en la sucursal de origen`,
+        { productId: validated.productId, branchOfficeId: validated.originBranchId }
+      );
+    }
     if (originStock.availableStock < validated.quantityMoved) {
-      throw new Error(`Stock insuficiente para "${product.name}". Disponible: ${originStock.availableStock}, Solicitado: ${validated.quantityMoved}`);
+      throw new ConflictAppError(
+        `Stock insuficiente para "${product.name}". Disponible: ${originStock.availableStock}, Solicitado: ${validated.quantityMoved}`,
+        { productId: validated.productId, availableStock: originStock.availableStock, requested: validated.quantityMoved }
+      );
     }
 
     // 3. Transaction
@@ -236,7 +245,9 @@ export class ProductBranchMovementService {
       productIds
     );
 
-    const stockMap = new Map(combinedStocks.map(s => [s.productId, s]));
+    type BulkStockEntry = Awaited<ReturnType<typeof BranchOfficeProductService.getProductsStockForBulk>>[number];
+
+    const stockMap = new Map<string, BulkStockEntry>(combinedStocks.map(stock => [stock.productId, stock]));
 
     // 2. Validate all items before starting transaction
     const errors: string[] = [];
@@ -258,7 +269,11 @@ export class ProductBranchMovementService {
     }
 
     if (errors.length > 0) {
-      throw new Error(`No se pudo procesar el traslado en bloque:\n${errors.join('\n')}`);
+      throw new ConflictAppError(`No se pudo procesar el traslado en bloque:\n${errors.join('\n')}`, {
+        originBranchId: validated.originBranchId,
+        destinationBranchId: validated.destinationBranchId,
+        errors,
+      });
     }
 
     // 3. atomic Transaction
@@ -328,11 +343,15 @@ export class ProductBranchMovementService {
       where: { id },
       include: { product: true }
     });
-    if (!current) throw new Error('Movimiento no encontrado');
+    if (!current) throw new NotFoundAppError('Movimiento no encontrado', { movementId: id });
 
     if (current.status !== 'PENDING' && data.status) {
       if (data.status !== current.status) {
-        throw new Error(`No se puede cambiar el estado de un movimiento que ya está ${current.status}.`);
+        throw new ConflictAppError(`No se puede cambiar el estado de un movimiento que ya está ${current.status}.`, {
+          movementId: id,
+          currentStatus: current.status,
+          nextStatus: data.status,
+        });
       }
     }
 
@@ -493,7 +512,9 @@ export class ProductBranchMovementService {
     });
 
     if (originProducts.length === 0) {
-      throw new Error('No hay productos con stock disponible en la sucursal de origen para transferir');
+      throw new ConflictAppError('No hay productos con stock disponible en la sucursal de origen para transferir', {
+        originBranchId: validated.originBranchId,
+      });
     }
 
     // 2. atomic Transaction

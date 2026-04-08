@@ -1,5 +1,6 @@
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
+import logger from '@/config/logger';
 import { CashShift, CashMovement, ShiftStatus, MovementType, PaymentMethodOrder } from '@prisma/client';
 import {
     PaginatedResult,
@@ -10,6 +11,8 @@ import {
 import { z } from 'zod';
 import { formatToLimaTime, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
 import { openShiftSchema, closeShiftSchema, addManualMovementSchema, cashShiftFiltersSchema } from './cashShift.schema'; // [UPDATED] from .validation
+import { ConflictAppError, NotFoundAppError } from '@/utils/domain-errors';
+import { runInBackground } from '@/utils/background-task';
 
 type OpenShiftInput = z.infer<typeof openShiftSchema>['body']; // [UPDATED] schema has body wrapper
 type CloseShiftInput = z.infer<typeof closeShiftSchema>['body'] & { id: string }; // [UPDATED] body + params logic in service
@@ -19,6 +22,18 @@ type CashShiftFilters = z.infer<typeof cashShiftFiltersSchema>['query']; // [UPD
 const CACHE_PREFIX = 'cashShifts:';
 const CACHE_TTL_LIST = 300;
 const CACHE_TTL_SINGLE = 600;
+
+const invalidateCashShiftCaches = async (input?: { shiftId?: string }) => {
+    const operations = [redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`)];
+
+    if (input?.shiftId) {
+        operations.push(redis.del(`${CACHE_PREFIX}${input.shiftId}`));
+    } else {
+        operations.push(redis.deleteKeysByPrefix(`${CACHE_PREFIX}`));
+    }
+
+    await Promise.all(operations);
+};
 
 export const CashShiftService = {
 
@@ -34,7 +49,10 @@ export const CashShiftService = {
         });
 
         if (existingOpen) {
-            throw new Error(`El usuario ya tiene una caja abierta (ID: ${existingOpen.id}) en esta sucursal.`);
+            throw new ConflictAppError(
+                `El usuario ya tiene una caja abierta (ID: ${existingOpen.id}) en esta sucursal.`,
+                { shiftId: existingOpen.id, branchId: data.branchId, userId: data.userId }
+            );
         }
 
         const shift = await prisma.cashShift.create({
@@ -49,26 +67,29 @@ export const CashShiftService = {
         });
 
         // BACKGROUND: Invalidate cache
-        setImmediate(async () => {
-            try {
-                await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
-            } catch (e) {
-                console.error('[CashShiftService] Error background (openShift):', e);
+        runInBackground(
+            {
+                taskName: 'cashShift.open.side-effects',
+                context: { shiftId: shift.id, branchId: shift.branchId, userId: shift.userId },
+            },
+            async () => {
+                await invalidateCashShiftCaches();
             }
-        });
+        );
 
         return shift;
     },
 
     closeShift: async (data: CloseShiftInput) => {
         const shift = await prisma.cashShift.findUnique({ where: { id: data.id } });
-        if (!shift) throw new Error('Caja no encontrada.');
-        if (shift.status === ShiftStatus.CLOSED) throw new Error('Esta caja ya está cerrada.');
+        if (!shift) throw new NotFoundAppError('Caja no encontrada.', { shiftId: data.id });
+        if (shift.status === ShiftStatus.CLOSED) {
+            throw new ConflictAppError('Esta caja ya está cerrada.', { shiftId: data.id });
+        }
 
         // Validate Closing User (Optional/Strict mode)
         if (data.userId && shift.userId !== data.userId) {
-            // Allow Admin override? For now, warn or throw.
-            // console.warn('Different user closing shift');
+            // Allow Admin override for now; this remains a business-policy decision.
         }
 
         // 1. Calculate Aggregates from Database (Source of Truth)
@@ -132,14 +153,15 @@ export const CashShiftService = {
         });
 
         // BACKGROUND: Invalidate cache
-        setImmediate(async () => {
-            try {
-                await redis.del(`${CACHE_PREFIX}${shift.id}`);
-                await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-            } catch (e) {
-                console.error('[CashShiftService] Error background (closeShift):', e);
+        runInBackground(
+            {
+                taskName: 'cashShift.close.side-effects',
+                context: { shiftId: shift.id },
+            },
+            async () => {
+                await invalidateCashShiftCaches({ shiftId: shift.id });
             }
-        });
+        );
 
         return closedShift;
     },
@@ -260,7 +282,10 @@ export const CashShiftService = {
 
     addManualMovement: async (data: AddManualMovementInput & { userId: string }) => {
         const shift = await prisma.cashShift.findUnique({ where: { id: data.shiftId } });
-        if (!shift || shift.status === ShiftStatus.CLOSED) throw new Error('Caja cerrada o no encontrada.');
+        if (!shift) throw new NotFoundAppError('Caja no encontrada.', { shiftId: data.shiftId });
+        if (shift.status === ShiftStatus.CLOSED) {
+            throw new ConflictAppError('Caja cerrada o no encontrada.', { shiftId: data.shiftId });
+        }
 
         // 1. Map payment method to the corresponding shift field
         let fieldToUpdate: string | null = null;
@@ -301,14 +326,15 @@ export const CashShiftService = {
         ]);
 
         // BACKGROUND: Invalidate Cache
-        setImmediate(async () => {
-            try {
-                await redis.del(`${CACHE_PREFIX}${shift.id}`);
-                await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-            } catch (e) {
-                console.error('[CashShiftService] Error background (addManualMovement):', e);
+        runInBackground(
+            {
+                taskName: 'cashShift.manual-movement.side-effects',
+                context: { shiftId: shift.id, movementType: data.type, paymentMethod: data.paymentMethod },
+            },
+            async () => {
+                await invalidateCashShiftCaches({ shiftId: shift.id });
             }
-        });
+        );
 
         return movement;
     },
@@ -398,7 +424,13 @@ export const CashShiftService = {
     },
 
     registerPaymentMovement: async (paymentData: any, userId: string, branchId: string, societyId: string) => {
-        console.log(`[CashShift] 🔍 registerPaymentMovement: userId=${userId}, branchId=${branchId}, societyId=${societyId}, paymentId=${paymentData?.id}`);
+        logger.debug({
+            msg: 'Registering cash shift payment movement',
+            userId,
+            branchId,
+            societyId,
+            paymentId: paymentData?.id,
+        });
 
         // Find OPEN shift for this user/branch
         const shift = await prisma.cashShift.findFirst({
@@ -411,12 +443,15 @@ export const CashShiftService = {
         });
 
         if (!shift) {
-            // Log a visible warning to diagnose No-shift cases
-            console.warn(`[CashShift] ⚠️ No se encontró turno ABIERTO para userId=${userId}, branchId=${branchId}, societyId=${societyId}. El movimiento NO se registró.`);
+            logger.warn({
+                msg: 'Open cash shift not found for payment movement',
+                userId,
+                branchId,
+                societyId,
+                paymentId: paymentData?.id,
+            });
             return null;
         }
-
-        console.log(`[CashShift] ✅ Turno encontrado: shiftId=${shift.id}. Registrando movimiento...`);
 
         try {
             // Map payment method to the corresponding shift income field
@@ -455,9 +490,15 @@ export const CashShiftService = {
             // Invalidate shift cache so the movement appears immediately on next query
             await redis.del(`${CACHE_PREFIX}${shift.id}`);
             return movement;
-        } catch (err: any) {
-            console.error(`[CashShift] ❌ Error creando CashMovement: ${err.message}`, { paymentData, userId, shiftId: shift.id });
-            throw err;
+        } catch (error) {
+            logger.error({
+                msg: 'Failed to create cash movement from payment',
+                paymentData,
+                userId,
+                shiftId: shift.id,
+                err: error,
+            });
+            throw error;
         }
     }
 };

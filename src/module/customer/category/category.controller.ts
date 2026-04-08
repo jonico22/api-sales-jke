@@ -2,6 +2,7 @@ import { Request, Response } from 'express';
 import { CategoryService } from './category.service';
 import { categoryIdSchema, createCategorySchema, updateCategorySchema, categoryFiltersSchema } from './category.schema';
 import { paginationQuerySchema } from '@/schemas/pagination.schema';
+import { formatSafeParseErrors, getQueryString } from '@/utils/controller-helpers';
 
 export const CategoryController = {
   getAll: async (req: Request, res: Response) => {
@@ -9,10 +10,7 @@ export const CategoryController = {
     const filtersParse = categoryFiltersSchema.safeParse({ query: req.query });
 
     if (!paginationParse.success || !filtersParse.success) {
-      return res.status(400).json({
-        ...(paginationParse.error?.format?.() ?? {}),
-        ...(filtersParse.error?.format?.() ?? {}),
-      });
+      return res.status(400).json(formatSafeParseErrors(paginationParse, filtersParse));
     }
 
     const result = await CategoryService.getAll(
@@ -56,10 +54,7 @@ export const CategoryController = {
     const bodyParse = updateCategorySchema.safeParse({ body: req.body });
 
     if (!idParse.success || !bodyParse.success) {
-      return res.status(400).json({
-        ...(idParse.error?.format?.() ?? {}),
-        ...(bodyParse.error?.format?.() ?? {}),
-      });
+      return res.status(400).json(formatSafeParseErrors(idParse, bodyParse));
     }
 
     const result = await CategoryService.update(idParse.data.params.id, bodyParse.data.body);
@@ -77,7 +72,7 @@ export const CategoryController = {
    * Obtener categorías para select/dropdown (sin paginación)
    */
   getForSelect: async (req: Request, res: Response) => {
-    const societyCode = req.query.societyCode as string | undefined;
+    const societyCode = getQueryString(req, 'societyCode', 'societyId');
     const result = await CategoryService.getForSelect(societyCode);
     res.json(result);
   },

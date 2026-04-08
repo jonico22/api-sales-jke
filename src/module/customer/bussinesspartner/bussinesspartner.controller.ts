@@ -7,21 +7,20 @@ import {
     bussinessPartnerFiltersSchema,
 } from './bussinesspartner.schema';
 import { paginationQuerySchema } from '@/schemas/pagination.schema';
+import { asyncHandler } from '@/utils/asyncHandler';
+import { formatSafeParseErrors, getQueryString } from '@/utils/controller-helpers';
 
 export const BussinessPartnerController = {
     /**
-     * GET /api/bussinesspartners
+     * GET /api/business-partners
      * Obtener todos los socios de negocio con paginación
      */
-    getAll: async (req: Request, res: Response) => {
+    getAll: asyncHandler(async (req: Request, res: Response) => {
         const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
         const filtersParse = bussinessPartnerFiltersSchema.safeParse({ query: req.query });
 
         if (!paginationParse.success || !filtersParse.success) {
-            return res.status(400).json({
-                ...(paginationParse.error?.format?.() ?? {}),
-                ...(filtersParse.error?.format?.() ?? {}),
-            });
+            return res.status(400).json(formatSafeParseErrors(paginationParse, filtersParse));
         }
 
         const result = await BussinessPartnerService.getAll(
@@ -30,13 +29,13 @@ export const BussinessPartnerController = {
             filtersParse.data.query
         );
         res.json(result);
-    },
+    }),
 
     /**
-     * GET /api/bussinesspartners/:id
+     * GET /api/business-partners/:id
      * Obtener un socio de negocio por ID
      */
-    getById: async (req: Request, res: Response) => {
+    getById: asyncHandler(async (req: Request, res: Response) => {
         const parse = bussinessPartnerIdSchema.safeParse({ params: req.params });
         if (!parse.success) return res.status(400).json(parse.error.format());
 
@@ -45,13 +44,13 @@ export const BussinessPartnerController = {
             return res.status(404).json({ message: 'Socio de negocio no encontrado' });
         }
         res.json(result);
-    },
+    }),
 
     /**
-     * POST /api/bussinesspartners
+     * POST /api/business-partners
      * Crear un nuevo socio de negocio
      */
-    create: async (req: Request, res: Response) => {
+    create: asyncHandler(async (req: Request, res: Response) => {
         const parse = createBussinessPartnerSchema.safeParse({ body: req.body });
         if (!parse.success) return res.status(400).json(parse.error.format());
 
@@ -75,21 +74,18 @@ export const BussinessPartnerController = {
 
         const result = await BussinessPartnerService.create(parse.data.body);
         res.status(201).json(result);
-    },
+    }),
 
     /**
-     * PUT /api/bussinesspartners/:id
+     * PUT /api/business-partners/:id
      * Actualizar un socio de negocio
      */
-    update: async (req: Request, res: Response) => {
+    update: asyncHandler(async (req: Request, res: Response) => {
         const idParse = bussinessPartnerIdSchema.safeParse({ params: req.params });
         const bodyParse = updateBussinessPartnerSchema.safeParse({ body: req.body });
 
         if (!idParse.success || !bodyParse.success) {
-            return res.status(400).json({
-                ...(idParse.error?.format?.() ?? {}),
-                ...(bodyParse.error?.format?.() ?? {}),
-            });
+            return res.status(400).json(formatSafeParseErrors(idParse, bodyParse));
         }
 
         // Verificar si el socio existe
@@ -111,29 +107,25 @@ export const BussinessPartnerController = {
             bodyParse.data.body
         );
         res.json(result);
-    },
+    }),
 
     /**
-     * GET /api/bussinesspartners/select
+     * GET /api/business-partners/select
      * Lista ligera para dropdowns
      */
-    getForSelect: async (req: Request, res: Response) => {
-        try {
-            const societyCode = (req.query.societyCode || req.query.societyId) as string | undefined;
-            const type = req.query.type as any;
+    getForSelect: asyncHandler(async (req: Request, res: Response) => {
+        const societyCode = getQueryString(req, 'societyCode', 'societyId');
+        const type = req.query.type as any;
 
-            const result = await BussinessPartnerService.getForSelect(societyCode, type);
-            res.json(result);
-        } catch (error: any) {
-            res.status(500).json({ message: 'Error obteniendo lista de selección', error: error.message });
-        }
-    },
+        const result = await BussinessPartnerService.getForSelect(societyCode, type);
+        res.json(result);
+    }),
 
     /**
-     * DELETE /api/bussinesspartners/:id
+     * DELETE /api/business-partners/:id
      * Eliminar (soft delete) un socio de negocio
      */
-    delete: async (req: Request, res: Response) => {
+    delete: asyncHandler(async (req: Request, res: Response) => {
         const parse = bussinessPartnerIdSchema.safeParse({ params: req.params });
         if (!parse.success) return res.status(400).json(parse.error.format());
 
@@ -144,5 +136,5 @@ export const BussinessPartnerController = {
 
         await BussinessPartnerService.softDelete(parse.data.params.id, req.body?.updatedBy);
         res.status(204).send();
-    },
+    }),
 };

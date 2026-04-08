@@ -5,6 +5,9 @@ import { paginationQuerySchema } from '@/schemas/pagination.schema';
 import { StorageService } from './storage.service';
 import multer from 'multer';
 import prisma from '@/config/prisma';
+import { asyncHandler } from '@/utils/asyncHandler';
+import { NotFoundAppError, ValidationAppError } from '@/utils/domain-errors';
+import { formatSafeParseErrors } from '@/utils/controller-helpers';
 
 // Multer Memory Storage for R2 Upload
 const storage = multer.memoryStorage();
@@ -20,7 +23,7 @@ export const FileController = {
     /**
      * Subir nuevo archivo (Físico + Metadata)
      */
-    upload: async (req: Request, res: Response) => {
+    upload: asyncHandler(async (req: Request, res: Response) => {
         if (!req.file) {
             return res.status(400).json({ message: 'No se ha proporcionado ningún archivo' });
         }
@@ -31,96 +34,82 @@ export const FileController = {
         }
 
         const category = (req.query.category as string) || 'GENERAL';
-        try {
-            // 0. Resolver Sociedad (por ID o Código)
-            let society = await prisma.society.findUnique({ where: { code: societyId } });
-            if (!society) {
-                const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
-                if (isUuid) {
-                    society = await prisma.society.findUnique({ where: { id: societyId } });
-                }
+        // 0. Resolver Sociedad (por ID o Código)
+        let society = await prisma.society.findUnique({ where: { code: societyId } });
+        if (!society) {
+            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
+            if (isUuid) {
+                society = await prisma.society.findUnique({ where: { id: societyId } });
             }
-
-            if (!society) {
-                return res.status(404).json({ message: 'Sociedad no encontrada' });
-            }
-
-            const targetSocietyId = society.id;
-
-            // Folder logic: 
-            // GENERAL -> societies/{id}/files/
-            // REPORT  -> societies/{id}/reports/ (so R2 lifecycle can delete it later)
-            const folder = category === 'REPORT'
-                ? `societies/${targetSocietyId}/reports`
-                : `societies/${targetSocietyId}/files`;
-
-            // Validar Límite de Almacenamiento (Solo para GENERAL)
-            if (category !== 'REPORT') {
-                const currentUsage = await prisma.file.aggregate({
-                    where: {
-                        societyId: targetSocietyId,
-                        category: 'GENERAL' // Solo contamos archivos que NO son reportes
-                    },
-                    _sum: { size: true }
-                });
-                const totalSize = (currentUsage._sum.size || 0) + req.file.size;
-                // Fallback to 150MB (157286400) if limit is 0 (due to older records without default)
-                let limit = Number(society.storageLimit);
-                if (!limit || limit === 0) {
-                    limit = 157286400;
-                }
-
-                if (totalSize > limit) {
-                    const limitMB = (limit / (1024 * 1024)).toFixed(2);
-                    return res.status(400).json({
-                        message: `Espacio insuficiente. Has excedido tu límite de ${limitMB} MB.`
-                    });
-                }
-            }
-
-            // 1. Subir a R2
-            const uploadResult = await StorageService.uploadFile(
-                req.file.buffer,
-                req.file.originalname,
-                folder,
-                req.file.mimetype
-            );
-
-            // 2. Guardar Metadata en BD
-            const expiresAt = category === 'REPORT'
-                ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // +7 días
-                : null;
-
-            const fileData = await FileService.create({
-                name: uploadResult.originalName,
-                path: uploadResult.url,
-                key: uploadResult.key,
-                mimeType: req.file.mimetype,
-                size: req.file.size,
-                storageType: 'EXTERNAL',
-                societyId: targetSocietyId,
-                category: category as any,
-                expiresAt: expiresAt
-            });
-
-            res.status(201).json(fileData);
-        } catch (error: any) {
-            console.error(error);
-            res.status(500).json({ message: error.message || 'Error al procesar la subida' });
         }
-    },
+
+        if (!society) {
+            throw new NotFoundAppError('Sociedad no encontrada', { societyIdOrCode: societyId });
+        }
+
+        const targetSocietyId = society.id;
+
+        const folder = category === 'REPORT'
+            ? `societies/${targetSocietyId}/reports`
+            : `societies/${targetSocietyId}/files`;
+
+        if (category !== 'REPORT') {
+            const currentUsage = await prisma.file.aggregate({
+                where: {
+                    societyId: targetSocietyId,
+                    category: 'GENERAL'
+                },
+                _sum: { size: true }
+            });
+            const totalSize = (currentUsage._sum.size || 0) + req.file.size;
+            let limit = Number(society.storageLimit);
+            if (!limit || limit === 0) {
+                limit = 157286400;
+            }
+
+            if (totalSize > limit) {
+                const limitMB = (limit / (1024 * 1024)).toFixed(2);
+                throw new ValidationAppError(
+                    `Espacio insuficiente. Has excedido tu límite de ${limitMB} MB.`,
+                    { limitBytes: limit, attemptedSize: totalSize }
+                );
+            }
+        }
+
+        const uploadResult = await StorageService.uploadFile(
+            req.file.buffer,
+            req.file.originalname,
+            folder,
+            req.file.mimetype
+        );
+
+        const expiresAt = category === 'REPORT'
+            ? new Date(Date.now() + 7 * 24 * 60 * 60 * 1000)
+            : null;
+
+        const fileData = await FileService.create({
+            name: uploadResult.originalName,
+            path: uploadResult.url,
+            key: uploadResult.key,
+            mimeType: req.file.mimetype,
+            size: req.file.size,
+            storageType: 'EXTERNAL',
+            societyId: targetSocietyId,
+            category: category as any,
+            expiresAt: expiresAt
+        });
+
+        res.status(201).json(fileData);
+    }),
     /**
      * Obtener todos los archivos con paginación
      */
-    getAll: async (req: Request, res: Response) => {
+    getAll: asyncHandler(async (req: Request, res: Response) => {
         const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
         const filtersParse = fileFiltersSchema.safeParse({ query: req.query });
 
         if (!paginationParse.success || !filtersParse.success) {
-            return res.status(400).json({
-                ...(paginationParse.error?.format?.() ?? {}),
-                ...(filtersParse.error?.format?.() ?? {}),
-            });
+            return res.status(400).json(formatSafeParseErrors(paginationParse, filtersParse));
         }
 
         const result = await FileService.getAll(
@@ -128,12 +117,12 @@ export const FileController = {
             filtersParse.data.query
         );
         res.json(result);
-    },
+    }),
 
     /**
      * Obtener archivo por ID
      */
-    getById: async (req: Request, res: Response) => {
+    getById: asyncHandler(async (req: Request, res: Response) => {
         const parse = fileIdSchema.safeParse({ params: req.params });
         if (!parse.success) {
             return res.status(400).json(parse.error.format());
@@ -144,12 +133,12 @@ export const FileController = {
             return res.status(404).json({ message: 'Archivo no encontrado' });
         }
         res.json(file);
-    },
+    }),
 
     /**
      * Crear un nuevo archivo (Metadata)
      */
-    create: async (req: Request, res: Response) => {
+    create: asyncHandler(async (req: Request, res: Response) => {
         const parse = createFileSchema.safeParse({ body: req.body });
         if (!parse.success) {
             return res.status(400).json(parse.error.format());
@@ -157,30 +146,27 @@ export const FileController = {
 
         const result = await FileService.create(parse.data.body);
         res.status(201).json(result);
-    },
+    }),
 
     /**
      * Actualizar un archivo (Metadata)
      */
-    update: async (req: Request, res: Response) => {
+    update: asyncHandler(async (req: Request, res: Response) => {
         const idParse = fileIdSchema.safeParse({ params: req.params });
         const bodyParse = updateFileSchema.safeParse({ body: req.body });
 
         if (!idParse.success || !bodyParse.success) {
-            return res.status(400).json({
-                ...(idParse.error?.format?.() ?? {}),
-                ...(bodyParse.error?.format?.() ?? {}),
-            });
+            return res.status(400).json(formatSafeParseErrors(idParse, bodyParse));
         }
 
         const result = await FileService.update(idParse.data.params.id, bodyParse.data.body);
         res.json(result);
-    },
+    }),
 
     /**
      * Eliminar un archivo (Hard Delete)
      */
-    delete: async (req: Request, res: Response) => {
+    delete: asyncHandler(async (req: Request, res: Response) => {
         const parse = fileIdSchema.safeParse({ params: req.params });
         if (!parse.success) {
             return res.status(400).json(parse.error.format());
@@ -188,5 +174,5 @@ export const FileController = {
 
         const result = await FileService.delete(parse.data.params.id);
         res.json({ message: 'Archivo eliminado permanentemente', data: result });
-    },
+    }),
 };

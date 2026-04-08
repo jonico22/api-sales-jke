@@ -9,6 +9,7 @@ import {
   PaginationQuery,
 } from '@/utils/pagination';
 import { OrderItem } from '@prisma/client';
+import { NotFoundAppError } from '@/utils/domain-errors';
 
 const CACHE_PREFIX = 'orderItems:';
 const CACHE_TTL_LIST = 300;
@@ -24,7 +25,11 @@ export const OrderItemService = {
       where: { id: data.productId }
     });
 
-    if (!product) throw new Error(`Producto no encontrado: ${data.productId}`);
+    if (!product) {
+      throw new NotFoundAppError(`Producto no encontrado: ${data.productId}`, {
+        productId: data.productId,
+      });
+    }
 
     const costPrice = Number(product.priceCost);
     const quantity = data.quantity;

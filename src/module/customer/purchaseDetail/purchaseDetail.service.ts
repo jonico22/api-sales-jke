@@ -1,5 +1,5 @@
 import prisma from '@/config/prisma';
-import { createPurchaseDetailSchema, updatePurchaseDetailSchema, purchaseDetailFiltersSchema } from './purchaseDetail.validation';
+import { createPurchaseDetailSchema, updatePurchaseDetailSchema, purchaseDetailFiltersSchema } from './purchaseDetail.schema';
 import { z } from 'zod';
 import { redis } from '@/config/redis';
 import {

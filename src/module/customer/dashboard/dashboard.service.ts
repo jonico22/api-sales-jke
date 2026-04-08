@@ -3,17 +3,18 @@ import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
 import { getFirstDayOfCurrentMonthLima, getLastDayOfCurrentMonthLima } from '@/utils/dateFormatter';
 import { OrderStatus } from '@prisma/client';
+import { NotFoundAppError, ValidationAppError } from '@/utils/domain-errors';
 
 // ─── Helper: Resolve Society ID from Code or UUID ─────────────────────
 const resolveSocietyId = async (societyId: string | undefined): Promise<string> => {
-    if (!societyId) throw new Error('Society ID is required');
+    if (!societyId) throw new ValidationAppError('Society ID is required');
 
     const isUuid = /^[0-9a-fA-F-]{36}$/.test(societyId);
     if (isUuid) return societyId;
 
     const society = await prisma.society.findUnique({ where: { code: societyId } });
     if (society) return society.id;
-    throw new Error('Invalid Society Code');
+    throw new NotFoundAppError('Invalid Society Code', { societyCode: societyId });
 };
 
 export const DashboardService = {

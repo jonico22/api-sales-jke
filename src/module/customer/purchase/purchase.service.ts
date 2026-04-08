@@ -10,6 +10,7 @@ import {
 } from '@/utils/pagination';
 import { InventoryService } from '@/module/inventory/inventory.service';
 import { Purchase, PartnerType, TransactionType, PurchaseStatus } from '@prisma/client';
+import { DomainRuleAppError, NotFoundAppError } from '@/utils/domain-errors';
 
 type CreatePurchaseInput = z.infer<typeof createPurchaseSchema>['body']; // [UPDATED]
 type UpdatePurchaseInput = z.infer<typeof updatePurchaseSchema>['body']; // [UPDATED]
@@ -151,7 +152,11 @@ export const createPurchase = async (data: CreatePurchaseInput) => {
   const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(data.societyId);
   if (!isUuid) {
     const society = await prisma.society.findUnique({ where: { code: data.societyId } });
-    if (!society) throw new Error(`Sociedad con código ${data.societyId} no encontrada`);
+    if (!society) {
+      throw new NotFoundAppError(`Sociedad con código ${data.societyId} no encontrada`, {
+        societyCode: data.societyId,
+      });
+    }
     data.societyId = society.id;
   }
 
@@ -161,11 +166,14 @@ export const createPurchase = async (data: CreatePurchaseInput) => {
   });
 
   if (!provider) {
-    throw new Error('Proveedor no encontrado');
+    throw new NotFoundAppError('Proveedor no encontrado', { providerId: data.providerId });
   }
 
   if (provider.type !== PartnerType.SUPPLIER && provider.type !== PartnerType.BOTH) {
-    throw new Error(`El socio de negocio '${provider.companyName || provider.firstName}' no está registrado como PROVEEDOR.`);
+    throw new DomainRuleAppError(
+      `El socio de negocio '${provider.companyName || provider.firstName}' no está registrado como PROVEEDOR.`,
+      { providerId: data.providerId, providerType: provider.type }
+    );
   }
 
   const created = await prisma.purchase.create({
@@ -189,11 +197,14 @@ export const updatePurchase = async (id: string, data: UpdatePurchaseInput) => {
     });
 
     if (!provider) {
-      throw new Error('Proveedor no encontrado');
+      throw new NotFoundAppError('Proveedor no encontrado', { providerId: data.providerId });
     }
 
     if (provider.type !== PartnerType.SUPPLIER && provider.type !== PartnerType.BOTH) {
-      throw new Error(`El socio de negocio '${provider.companyName || provider.firstName}' no está registrado como PROVEEDOR.`);
+      throw new DomainRuleAppError(
+        `El socio de negocio '${provider.companyName || provider.firstName}' no está registrado como PROVEEDOR.`,
+        { providerId: data.providerId, providerType: provider.type }
+      );
     }
   }
 
@@ -203,7 +214,7 @@ export const updatePurchase = async (id: string, data: UpdatePurchaseInput) => {
     include: { purchaseDetails: true }
   });
 
-  if (!currentPurchase) throw new Error('Compra no encontrada');
+  if (!currentPurchase) throw new NotFoundAppError('Compra no encontrada', { purchaseId: id });
 
   const isCompleting = data.status === PurchaseStatus.COMPLETED && currentPurchase.status !== PurchaseStatus.COMPLETED;
 

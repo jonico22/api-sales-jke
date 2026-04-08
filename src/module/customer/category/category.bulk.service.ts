@@ -2,6 +2,7 @@ import fs from 'fs';
 import csv from 'csv-parser';
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
+import { NotFoundAppError, ValidationAppError } from '@/utils/domain-errors';
 
 interface CategoryCsvRow {
     NombreCategoria: string;
@@ -26,7 +27,7 @@ export class CategoryBulkService {
         fs.unlink(filePath, () => { });
 
         if (results.length === 0) {
-            throw new Error('El archivo CSV está vacío.');
+            throw new ValidationAppError('El archivo CSV está vacío.');
         }
 
         // ─── 2. PARALLEL: Pre-fetch society + current count ──────────────
@@ -40,11 +41,11 @@ export class CategoryBulkService {
             })
         ]);
 
-        if (!society) throw new Error('Sociedad no encontrada.');
+        if (!society) throw new NotFoundAppError('Sociedad no encontrada.', { societyId });
 
         const newCategoriesCount = results.length;
         if (currentCategoriesCount + newCategoriesCount > society.maxProducts) {
-            throw new Error(`Límite de categorías excedido. Actualmente tienes ${currentCategoriesCount} categorías y estás intentando subir ${newCategoriesCount}. El límite permitido (basado en el plan de productos) es de ${society.maxProducts}.`);
+            throw new ValidationAppError(`Límite de categorías excedido. Actualmente tienes ${currentCategoriesCount} categorías y estás intentando subir ${newCategoriesCount}. El límite permitido (basado en el plan de productos) es de ${society.maxProducts}.`);
         }
 
         let processedCount = 0;

@@ -1,24 +1,35 @@
-// No importamos dotenv aquí. Node o Docker se encargan.
+import { z } from 'zod';
+
+const envSchema = z.object({
+  PORT: z.coerce.number().int().positive().default(3000),
+  NODE_ENV: z.enum(['development', 'test', 'production']).default('development'),
+  DATABASE_URL: z.string().min(1, 'DATABASE_URL es obligatoria'),
+  DIRECT_URL: z.string().optional(),
+  REDIS_URL: z.string().default('redis://localhost:6379'),
+  REDIS_ENABLED: z
+    .enum(['true', 'false'])
+    .optional()
+    .transform(value => value ?? 'false'),
+  CORS_ORIGIN: z.string().default('*'),
+  R2_ACCESS_KEY_ID: z.string().optional().default(''),
+  R2_SECRET_ACCESS_KEY: z.string().optional().default(''),
+  R2_ENDPOINT: z.string().optional().default(''),
+  R2_BUCKET_NAME: z.string().optional().default(''),
+  R2_PUBLIC_URL: z.string().optional().default(''),
+});
+
+const parsedEnv = envSchema.safeParse(process.env);
+
+if (!parsedEnv.success) {
+  const message = parsedEnv.error.issues
+    .map(issue => `${issue.path.join('.') || 'env'}: ${issue.message}`)
+    .join('; ');
+
+  throw new Error(`Configuración de entorno inválida: ${message}`);
+}
 
 export const envs = {
-  PORT: parseInt(process.env.PORT || '3000', 10),
-  NODE_ENV: process.env.NODE_ENV || 'development',
-
-  DATABASE_URL: process.env.DATABASE_URL || '',
-  REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
-  CORS_ORIGIN: process.env.CORS_ORIGIN || '*',
-  // Agrega aquí una validación simple
-  isProd: process.env.NODE_ENV === 'production',
-
-  // Cloudflare R2 / AWS S3
-  R2_ACCESS_KEY_ID: process.env.R2_ACCESS_KEY_ID || '',
-  R2_SECRET_ACCESS_KEY: process.env.R2_SECRET_ACCESS_KEY || '',
-  R2_ENDPOINT: process.env.R2_ENDPOINT || '',
-  R2_BUCKET_NAME: process.env.R2_BUCKET_NAME || '',
-  R2_PUBLIC_URL: process.env.R2_PUBLIC_URL || '',
+  ...parsedEnv.data,
+  isProd: parsedEnv.data.NODE_ENV === 'production',
+  REDIS_ENABLED: parsedEnv.data.REDIS_ENABLED === 'true',
 };
-
-// Validación: Si no hay DATABASE_URL, lanzamos error antes de que la app falle después
-if (!envs.DATABASE_URL) {
-  throw new Error('❌ Error: DATABASE_URL es obligatoria en las variables de entorno');
-}
