@@ -70,8 +70,15 @@ vi.mock('@/module/inventory/inventory.service', () => ({
 }));
 
 vi.mock('@/utils/dateFormatter', () => dateFormatterMock);
+vi.mock('@/services/excel.service', () => ({
+  ExcelService: {
+    generateExcelBuffer: vi.fn().mockResolvedValue(Buffer.from('excel')),
+    generateExcelBufferFromBatches: vi.fn().mockResolvedValue(Buffer.from('excel')),
+  },
+}));
 
 import { OrderService } from '@/module/customer/order/order.service';
+import { ExcelService } from '@/services/excel.service';
 
 const flushImmediate = () => new Promise(resolve => setImmediate(resolve));
 
@@ -326,10 +333,12 @@ describe('OrderService', () => {
   });
 
   it('updates an order to completed and confirms stock output', async () => {
+    prismaMock.product.findMany.mockResolvedValueOnce([{ id: 'prod-1' }]);
     prismaMock.order.findUnique
       .mockResolvedValueOnce({
         id: 'order-1',
         status: OrderStatus.PENDING,
+        branchId: 'branch-1',
         orderItems: [{ productId: 'prod-1', quantity: 2, costPrice: 50, unitPrice: 100 }],
       })
       .mockResolvedValueOnce({
@@ -360,6 +369,12 @@ describe('OrderService', () => {
 
     await OrderService.update('order-1', { status: OrderStatus.COMPLETED } as any);
 
+    expect(orderHelpersMock.validateBranchStockAvailability).toHaveBeenCalledWith(
+      'branch-1',
+      ['prod-1'],
+      expect.any(Array),
+      expect.any(Map)
+    );
     expect(inventoryServiceMock.reserveStock).toHaveBeenCalledWith('prod-1', 'branch-1', 2, tx);
     expect(inventoryServiceMock.confirmStockOutput).toHaveBeenCalledWith(expect.objectContaining({
       productId: 'prod-1',
@@ -376,6 +391,37 @@ describe('OrderService', () => {
     expect(publisherMock.publishRealtimeUpdate).toHaveBeenCalledTimes(2);
     expect(publisherMock.publishNotification).toHaveBeenCalledTimes(1);
     expect(orderHelpersMock.invalidateOrderCaches).toHaveBeenCalledWith('soc-1', 'order-1');
+  });
+
+  it('revalidates stock before completing a pending order', async () => {
+    prismaMock.product.findMany.mockResolvedValueOnce([{ id: 'prod-1' }]);
+    prismaMock.order.findUnique.mockResolvedValueOnce({
+      id: 'order-1',
+      status: OrderStatus.PENDING,
+      branchId: 'branch-1',
+      orderItems: [{
+        productId: 'prod-1',
+        quantity: 2,
+        costPrice: 50,
+        unitPrice: 100,
+        discount: 0,
+        subtotal: 169.49,
+        taxAmount: 30.51,
+        total: 200,
+      }],
+    });
+    orderHelpersMock.validateBranchStockAvailability.mockRejectedValueOnce(new Error('Stock insuficiente'));
+
+    await expect(
+      OrderService.update('order-1', { status: OrderStatus.COMPLETED } as any)
+    ).rejects.toThrow('Stock insuficiente');
+
+    expect(orderHelpersMock.validateBranchStockAvailability).toHaveBeenCalledWith(
+      'branch-1',
+      ['prod-1'],
+      expect.any(Array),
+      expect.any(Map)
+    );
   });
 
   it('cancels a pending-payment order and releases reservation', async () => {
@@ -420,5 +466,58 @@ describe('OrderService', () => {
     });
 
     await expect(OrderService.delete('order-1')).rejects.toThrow('No se puede cancelar una orden completada');
+  });
+
+  it('builds the order report in batches with a minimal query shape', async () => {
+    vi.mocked(ExcelService.generateExcelBufferFromBatches).mockImplementationOnce(async (batches) => {
+      for await (const _batch of batches as AsyncIterable<any[]>) {
+        break;
+      }
+      return Buffer.from('excel');
+    });
+
+    prismaMock.order.findMany
+      .mockResolvedValueOnce([{
+        orderCode: 'ORD-1',
+        orderDate: new Date('2026-01-01T10:00:00.000Z'),
+        paymentDate: null,
+        status: OrderStatus.COMPLETED,
+        subtotal: 100,
+        taxAmount: 18,
+        discount: 0,
+        totalAmount: 118,
+        partner: { companyName: 'Cliente SAC', firstName: null, lastName: null, documentNumber: '123' },
+        currency: { code: 'PEN' },
+        branch: { name: 'Principal' },
+        OrderPayment: [{ paymentMethod: 'CASH', paymentDate: new Date('2026-01-01T10:05:00.000Z') }],
+        orderItems: [{
+          quantity: 1,
+          unitPrice: 118,
+          discount: 0,
+          subtotal: 100,
+          total: 118,
+          product: {
+            name: 'Producto',
+            code: 'PROD-1',
+            category: { name: 'General' },
+          },
+        }],
+      }]);
+
+    const result = await OrderService.getReport({ societyId: 'soc-1' } as any);
+
+    expect(prismaMock.order.findMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      take: 500,
+      skip: 0,
+      orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+      select: expect.objectContaining({
+        orderCode: true,
+        orderDate: true,
+        OrderPayment: { select: { paymentMethod: true, paymentDate: true } },
+      }),
+    }));
+    expect(prismaMock.order.findMany).toHaveBeenCalledTimes(1);
+    expect(result.buffer).toEqual(Buffer.from('excel'));
+    expect(result.subscriptionId).toBeUndefined();
   });
 });

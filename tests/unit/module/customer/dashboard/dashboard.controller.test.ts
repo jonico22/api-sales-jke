@@ -54,7 +54,7 @@ describe('DashboardController', () => {
     await DashboardController.getStats(req, res as any, next);
     await flushAsyncHandler();
 
-    expect(dashboardServiceMock.getStats).toHaveBeenCalledWith('SOC1');
+    expect(dashboardServiceMock.getStats).toHaveBeenCalledWith('SOC1', {});
     expect(res.json).toHaveBeenCalledWith({ totalStockValue: 10 });
   });
 
@@ -68,8 +68,32 @@ describe('DashboardController', () => {
     await flushAsyncHandler();
 
     expect(dashboardServiceMock.getPaymentMethods).toHaveBeenCalledWith(
-      '550e8400-e29b-41d4-a716-446655440000'
+      '550e8400-e29b-41d4-a716-446655440000',
+      {}
     );
     expect(res.json).toHaveBeenCalledWith([{ method: 'CASH', value: 10 }]);
+  });
+
+  it('passes month, year and branch filters to the service', async () => {
+    dashboardServiceMock.getSalesPerformance.mockResolvedValueOnce([]);
+    const req: any = {
+      query: {
+        societyCode: 'SOC1',
+        month: '3',
+        year: '2026',
+        branchId: 'branch-1',
+      },
+    };
+    const res = createResponse();
+    const next = vi.fn();
+
+    await DashboardController.getSalesPerformance(req, res as any, next);
+    await flushAsyncHandler();
+
+    expect(dashboardServiceMock.getSalesPerformance).toHaveBeenCalledWith('SOC1', {
+      month: 3,
+      year: 2026,
+      branchId: 'branch-1',
+    });
   });
 });

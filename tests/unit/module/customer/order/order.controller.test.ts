@@ -134,7 +134,7 @@ describe('OrderController', () => {
 
   it('queues report generation', async () => {
     const req: any = {
-      query: {},
+      query: { societyId: 'soc-1' },
       user: { id: 'user-1' },
     };
     const res = createResponse();
@@ -145,8 +145,42 @@ describe('OrderController', () => {
 
     expect(queueMock.add).toHaveBeenCalledWith('generate-excel', expect.objectContaining({
       userId: 'user-1',
-      filters: {},
+      filters: expect.objectContaining({
+        societyId: 'soc-1',
+        dateFrom: expect.any(String),
+        dateTo: expect.any(String),
+      }),
     }));
     expect(res.status).toHaveBeenCalledWith(202);
+  });
+
+  it('rejects report generation when society filter is missing', async () => {
+    const req: any = { query: {}, user: { id: 'user-1' } };
+    const res = createResponse();
+    const next = vi.fn();
+
+    await OrderController.getReport(req, res as any, next);
+
+    expect(res.status).toHaveBeenCalledWith(400);
+    expect(queueMock.add).not.toHaveBeenCalled();
+  });
+
+  it('rejects detailed reports with a date range larger than 31 days', async () => {
+    const req: any = {
+      query: {
+        societyId: 'soc-1',
+        reportMode: 'detailed',
+        dateFrom: '2026-01-01',
+        dateTo: '2026-02-15',
+      },
+      user: { id: 'user-1' },
+    };
+    const res = createResponse();
+    const next = vi.fn();
+
+    await OrderController.getReport(req, res as any, next);
+
+    expect(res.status).toHaveBeenCalledWith(422);
+    expect(queueMock.add).not.toHaveBeenCalled();
   });
 });

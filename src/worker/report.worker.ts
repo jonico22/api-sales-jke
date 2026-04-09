@@ -7,8 +7,12 @@ import { FileCategory } from '@prisma/client';
 
 import { connection } from '@/config/queue';
 import prisma from '@/config/prisma';
+import { DomainRuleAppError } from '@/utils/domain-errors';
+
+const REPORT_MAX_ROWS = 100000;
 
 export const reportWorker = new Worker('reports', async job => {
+    const startedAt = Date.now();
     console.log(`[ReportWorker] Procesando trabajo ${job.id}: ${job.name} `);
 
     try {
@@ -58,11 +62,21 @@ export const reportWorker = new Worker('reports', async job => {
 
         // 1. Generar Buffer y obtener subscriptionId
         console.log(`[ReportWorker] Generando Excel para filtros: `, filters);
+        const { rowCount, subscriptionId: countSubscriptionId } = await OrderService.getReportRowCount(filters);
+        if (rowCount > REPORT_MAX_ROWS) {
+            throw new DomainRuleAppError(
+                `El reporte supera el limite permitido de ${REPORT_MAX_ROWS} filas. Refine los filtros para generar el archivo.`,
+                { rowCount, maxRows: REPORT_MAX_ROWS }
+            );
+        }
+
         const { buffer, subscriptionId: serviceSubscriptionId } = await OrderService.getReport(filters);
-        console.log(`[ReportWorker] Excel generado. Bytes: ${buffer.length}`);
+        const generationDurationMs = Date.now() - startedAt;
+
+        console.log(`[ReportWorker] Excel generado. Filas: ${rowCount}. Bytes: ${buffer.length}. Tiempo: ${generationDurationMs}ms`);
 
         // Prioridad de subscriptionId: Service > Resolved > passed
-        const finalSubscriptionId = serviceSubscriptionId || targetSubscriptionId || societyId;
+        const finalSubscriptionId = serviceSubscriptionId || countSubscriptionId || targetSubscriptionId || societyId;
 
         // 2. Subir a R2 (Storage)
         // El usuario requiere guardar en temp/ para la política de borrado de 7 días
@@ -97,7 +111,7 @@ export const reportWorker = new Worker('reports', async job => {
                 uploadedById: userId,
                 expiresAt: expiresAt
             });
-            console.log(`[ReportWorker] Archivo registrado con ID: ${fileRecord.id} `);
+            console.log(`[ReportWorker] Archivo registrado con ID: ${fileRecord.id}. Filas exportadas: ${rowCount}`);
 
             // 4. Notificar al Usuario
             console.log(`[ReportWorker] Intentando notificar. SubscriptionId: ${finalSubscriptionId}`);
@@ -112,7 +126,8 @@ export const reportWorker = new Worker('reports', async job => {
                         link: uploadResult.url,
                         metadata: {
                             fileId: fileRecord.id,
-                            type: 'report_download'
+                            type: 'report_download',
+                            rowCount
                         }
                     });
                 } catch (notifyError) {
@@ -120,7 +135,7 @@ export const reportWorker = new Worker('reports', async job => {
                 }
             }
 
-            return { fileId: fileRecord.id, url: uploadResult.url };
+            return { fileId: fileRecord.id, url: uploadResult.url, rowCount };
 
         } catch (fileError) {
             console.error('[ReportWorker] ❌ Error CRITICO al crear registro de archivo:', fileError);

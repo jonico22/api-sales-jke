@@ -1,6 +1,6 @@
 import { redis } from '@/config/redis';
 import { getSaleExitQuantity, invalidateInventoryDomainCaches, invalidateInventoryListCache } from './inventory.helpers';
-import { NotFoundAppError } from '@/utils/domain-errors';
+import { ConflictAppError, NotFoundAppError } from '@/utils/domain-errors';
 import { runInBackground } from '@/utils/background-task';
 import {
   getCancellationStockDelta,
@@ -140,29 +140,66 @@ export const applyReserveStock = async (
 ) => {
   const stockDelta = getReservationStockDelta(input.quantity);
 
-  const result = await tx.branchOfficeProduct.upsert({
+  const reserveResult = await tx.branchOfficeProduct.updateMany({
     where: {
-      productId_branchOfficeId: { productId: input.productId, branchOfficeId: input.branchId },
+      productId: input.productId,
+      branchOfficeId: input.branchId,
+      availableStock: { gte: stockDelta.quantity },
     },
-    update: {
+    data: {
       availableStock: { decrement: stockDelta.quantity },
       reservedStock: { increment: stockDelta.branchReservedStock },
     },
-    create: {
-      productId: input.productId,
-      branchOfficeId: input.branchId,
-      physicalStock: 0,
-      availableStock: -stockDelta.quantity,
-      reservedStock: stockDelta.branchReservedStock,
-    },
   });
 
-  await tx.product.update({
-    where: { id: input.productId },
+  if (reserveResult.count === 0) {
+    const branchProduct = await tx.branchOfficeProduct.findUnique({
+      where: {
+        productId_branchOfficeId: {
+          productId: input.productId,
+          branchOfficeId: input.branchId,
+        },
+      },
+    });
+
+    if (!branchProduct) {
+      throw new NotFoundAppError('Stock por sucursal no encontrado para reservar', {
+        productId: input.productId,
+        branchId: input.branchId,
+      });
+    }
+
+    throw new ConflictAppError('Stock disponible insuficiente para reservar', {
+      productId: input.productId,
+      branchId: input.branchId,
+      requestedQuantity: input.quantity,
+      availableStock: branchProduct.availableStock,
+    });
+  }
+
+  const productUpdate = await tx.product.updateMany({
+    where: {
+      id: input.productId,
+      stock: { gte: stockDelta.quantity },
+    },
     data: { stock: { decrement: stockDelta.quantity } },
   });
 
-  return result;
+  if (productUpdate.count === 0) {
+    throw new ConflictAppError('Stock global insuficiente para reservar', {
+      productId: input.productId,
+      requestedQuantity: input.quantity,
+    });
+  }
+
+  return tx.branchOfficeProduct.findUnique({
+    where: {
+      productId_branchOfficeId: {
+        productId: input.productId,
+        branchOfficeId: input.branchId,
+      },
+    },
+  });
 };
 
 export const applyConfirmStockOutput = async (
@@ -171,18 +208,26 @@ export const applyConfirmStockOutput = async (
 ) => {
   const stockDelta = getConfirmationStockDelta(input.quantity);
 
-  await tx.branchOfficeProduct.update({
+  const result = await tx.branchOfficeProduct.updateMany({
     where: {
-      productId_branchOfficeId: {
-        productId: input.productId,
-        branchOfficeId: input.branchOfficeId,
-      },
+      productId: input.productId,
+      branchOfficeId: input.branchOfficeId,
+      physicalStock: { gte: stockDelta.quantity },
+      reservedStock: { gte: stockDelta.quantity },
     },
     data: {
       physicalStock: { decrement: stockDelta.quantity },
       reservedStock: { decrement: stockDelta.quantity },
     },
   });
+
+  if (result.count === 0) {
+    throw new ConflictAppError('Stock reservado insuficiente para confirmar salida', {
+      productId: input.productId,
+      branchOfficeId: input.branchOfficeId,
+      requestedQuantity: input.quantity,
+    });
+  }
 };
 
 export const applyCancelReservation = async (
@@ -191,15 +236,25 @@ export const applyCancelReservation = async (
 ) => {
   const stockDelta = getCancellationStockDelta(input.quantity);
 
-  await tx.branchOfficeProduct.update({
+  const result = await tx.branchOfficeProduct.updateMany({
     where: {
-      productId_branchOfficeId: { productId: input.productId, branchOfficeId: input.branchId },
+      productId: input.productId,
+      branchOfficeId: input.branchId,
+      reservedStock: { gte: stockDelta.quantity },
     },
     data: {
       availableStock: { increment: stockDelta.quantity },
       reservedStock: { decrement: stockDelta.quantity },
     },
   });
+
+  if (result.count === 0) {
+    throw new ConflictAppError('Stock reservado insuficiente para cancelar la reserva', {
+      productId: input.productId,
+      branchId: input.branchId,
+      requestedQuantity: input.quantity,
+    });
+  }
 
   await tx.product.update({
     where: { id: input.productId },

@@ -20,5 +20,36 @@ export const ExcelService = {
         const buffer = XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
 
         return buffer;
+    },
+
+    /**
+     * Genera un buffer de Excel agregando filas JSON por lotes para reducir
+     * el pico de memoria cuando el dataset es grande.
+     */
+    generateExcelBufferFromBatches: async (
+        batches: AsyncIterable<any[]> | Iterable<any[]>,
+        sheetName: string = 'Sheet1'
+    ): Promise<Buffer> => {
+        const workbook = XLSX.utils.book_new();
+        let worksheet = XLSX.utils.aoa_to_sheet([]);
+        let hasRows = false;
+
+        for await (const batch of batches) {
+            if (!batch || batch.length === 0) continue;
+
+            if (!hasRows) {
+                worksheet = XLSX.utils.json_to_sheet(batch);
+                hasRows = true;
+                continue;
+            }
+
+            XLSX.utils.sheet_add_json(worksheet, batch, {
+                skipHeader: true,
+                origin: -1,
+            });
+        }
+
+        XLSX.utils.book_append_sheet(workbook, worksheet, sheetName);
+        return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' });
     }
 };

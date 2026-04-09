@@ -90,6 +90,10 @@ export const orderFiltersSchema = z.object({
         // Date Range (Creation / Order Date)
         dateFrom: z.string().optional().openapi({ example: '2024-01-01' }),
         dateTo: z.string().optional().openapi({ example: '2024-12-31' }),
+        reportMode: z.enum(['summary', 'detailed']).optional().openapi({
+            example: 'detailed',
+            description: 'Modo de reporte. detailed aplica filtros mas estrictos para evitar archivos demasiado grandes'
+        }),
 
         // Amount Range
         totalAmountFrom: z.string().transform(val => parseFloat(val)).optional(),

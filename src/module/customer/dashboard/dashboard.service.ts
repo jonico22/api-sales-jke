@@ -1,9 +1,16 @@
 
+import { Prisma, OrderStatus } from '@prisma/client';
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
-import { getFirstDayOfCurrentMonthLima, getLastDayOfCurrentMonthLima } from '@/utils/dateFormatter';
-import { OrderStatus } from '@prisma/client';
 import { NotFoundAppError, ValidationAppError } from '@/utils/domain-errors';
+import {
+    buildBranchFilterSql,
+    buildDashboardCacheKey,
+    DashboardFilters,
+    getDashboardMonthRange,
+    getDashboardYearRange,
+    normalizeDashboardFilters,
+} from './dashboard.helpers';
 
 // ─── Helper: Resolve Society ID from Code or UUID ─────────────────────
 const resolveSocietyId = async (societyId: string | undefined): Promise<string> => {
@@ -22,46 +29,65 @@ export const DashboardService = {
      * Get dashboard statistics for a specific society
      * OPTIMIZADO: 4 queries en paralelo con Promise.all
      */
-    getStats: async (societyId: string | undefined) => {
+    getStats: async (societyId: string | undefined, filters?: DashboardFilters) => {
         const targetSocietyId = await resolveSocietyId(societyId);
+        const normalizedFilters = normalizeDashboardFilters(filters);
 
-        const cacheKey = `dashboard:stats:${targetSocietyId}`;
+        const cacheKey = buildDashboardCacheKey('stats', targetSocietyId, normalizedFilters);
         const cachedStats = await redis.get(cacheKey);
         if (cachedStats) return cachedStats;
 
-        // Dates for "Current Month"
-        const startOfMonth = getFirstDayOfCurrentMonthLima();
-        const endOfMonth = getLastDayOfCurrentMonthLima();
+        const { start: startOfMonth, end: endOfMonth } = getDashboardMonthRange(normalizedFilters);
+        const branchOrderFilter = normalizedFilters.branchId ? { branchId: normalizedFilters.branchId } : {};
 
-        // ─── PARALLEL: All 4 stats queries at once ────────────────────
         const [stockValueResult, lowStockResult, salesResult, newProducts] = await Promise.all([
-            // 1. Total Stock Value
-            prisma.$queryRaw<any[]>`
-                SELECT COALESCE(SUM(price * stock), 0) as total 
-                FROM "Product" 
-                WHERE "societyId" = ${targetSocietyId} 
-                AND "isActive" = true 
-                AND "isDeleted" = false
-            `,
-            // 2. Low Stock Items
-            prisma.$queryRaw<any[]>`
-                SELECT COUNT(*)::int as count
-                FROM "Product"
-                WHERE "societyId" = ${targetSocietyId}
-                AND "isActive" = true
-                AND "isDeleted" = false
-                AND stock <= "minStock"
-            `,
-            // 3. Net Sales (Current Month)
+            normalizedFilters.branchId
+                ? prisma.$queryRaw<any[]>`
+                    SELECT COALESCE(SUM(p.price * bop."physicalStock"), 0) as total
+                    FROM "BranchOfficeProduct" bop
+                    JOIN "Product" p ON p.id = bop."productId"
+                    WHERE p."societyId" = ${targetSocietyId}
+                    AND bop."branchOfficeId" = ${normalizedFilters.branchId}
+                    AND bop."isDeleted" = false
+                    AND p."isActive" = true
+                    AND p."isDeleted" = false
+                `
+                : prisma.$queryRaw<any[]>`
+                    SELECT COALESCE(SUM(price * stock), 0) as total
+                    FROM "Product"
+                    WHERE "societyId" = ${targetSocietyId}
+                    AND "isActive" = true
+                    AND "isDeleted" = false
+                `,
+            normalizedFilters.branchId
+                ? prisma.$queryRaw<any[]>`
+                    SELECT COUNT(*)::int as count
+                    FROM "BranchOfficeProduct" bop
+                    JOIN "Product" p ON p.id = bop."productId"
+                    WHERE p."societyId" = ${targetSocietyId}
+                    AND bop."branchOfficeId" = ${normalizedFilters.branchId}
+                    AND bop."isDeleted" = false
+                    AND p."isActive" = true
+                    AND p."isDeleted" = false
+                    AND bop."availableStock" <= COALESCE(bop."minStock", p."minStock")
+                `
+                : prisma.$queryRaw<any[]>`
+                    SELECT COUNT(*)::int as count
+                    FROM "Product"
+                    WHERE "societyId" = ${targetSocietyId}
+                    AND "isActive" = true
+                    AND "isDeleted" = false
+                    AND stock <= "minStock"
+                `,
             prisma.order.aggregate({
                 _sum: { totalAmount: true },
                 where: {
                     societyId: targetSocietyId,
+                    ...branchOrderFilter,
                     status: OrderStatus.COMPLETED,
                     orderDate: { gte: startOfMonth, lte: endOfMonth }
                 }
             }),
-            // 4. New Products (Current Month)
             prisma.product.count({
                 where: {
                     societyId: targetSocietyId,
@@ -87,18 +113,21 @@ export const DashboardService = {
      * Get sales performance (monthly revenue) for the current year
      * OPTIMIZADO: Usa SQL GROUP BY en vez de cargar todas las órdenes en memoria
      */
-    getSalesPerformance: async (societyId: string | undefined) => {
+    getSalesPerformance: async (societyId: string | undefined, filters?: DashboardFilters) => {
         const targetSocietyId = await resolveSocietyId(societyId);
+        const normalizedFilters = normalizeDashboardFilters(filters);
 
-        const cacheKey = `dashboard:sales-performance:${targetSocietyId}`;
+        const cacheKey = buildDashboardCacheKey('sales-performance', targetSocietyId, normalizedFilters);
         const cachedChart = await redis.get(cacheKey);
         if (cachedChart) return cachedChart;
 
-        const currentYear = new Date().getFullYear();
-        const startOfYear = new Date(currentYear, 0, 1);
-        const endOfYear = new Date(currentYear, 11, 31, 23, 59, 59, 999);
+        const { year, start: startOfYear, end: endOfYear } = getDashboardYearRange(normalizedFilters);
+        const monthSql =
+            normalizedFilters.month !== undefined
+                ? Prisma.sql` AND EXTRACT(MONTH FROM "orderDate") = ${normalizedFilters.month}`
+                : Prisma.empty;
+        const branchSql = buildBranchFilterSql('"branchId"', normalizedFilters.branchId);
 
-        // SQL GROUP BY instead of loading all orders into JS memory
         const results: any[] = await prisma.$queryRaw`
             SELECT EXTRACT(MONTH FROM "orderDate")::int as month,
                    COALESCE(SUM("totalAmount"), 0) as total
@@ -106,6 +135,8 @@ export const DashboardService = {
             WHERE "societyId" = ${targetSocietyId}
             AND status = 'COMPLETED'
             AND "orderDate" >= ${startOfYear} AND "orderDate" <= ${endOfYear}
+            ${branchSql}
+            ${monthSql}
             GROUP BY EXTRACT(MONTH FROM "orderDate")
             ORDER BY month
         `;
@@ -124,15 +155,16 @@ export const DashboardService = {
     /**
      * Get revenue by category for the current month
      */
-    getRevenueByCategory: async (societyId: string | undefined) => {
+    getRevenueByCategory: async (societyId: string | undefined, filters?: DashboardFilters) => {
         const targetSocietyId = await resolveSocietyId(societyId);
+        const normalizedFilters = normalizeDashboardFilters(filters);
 
-        const cacheKey = `dashboard:revenue-category:${targetSocietyId}`;
+        const cacheKey = buildDashboardCacheKey('revenue-category', targetSocietyId, normalizedFilters);
         const cachedChart = await redis.get(cacheKey);
         if (cachedChart) return cachedChart;
 
-        const startOfMonth = getFirstDayOfCurrentMonthLima();
-        const endOfMonth = getLastDayOfCurrentMonthLima();
+        const { start: startOfMonth, end: endOfMonth } = getDashboardMonthRange(normalizedFilters);
+        const branchSql = buildBranchFilterSql('o."branchId"', normalizedFilters.branchId);
 
         const results: any[] = await prisma.$queryRaw`
             SELECT c.name as category, COALESCE(SUM(oi.total), 0) as revenue 
@@ -143,6 +175,7 @@ export const DashboardService = {
             WHERE o."societyId" = ${targetSocietyId} 
             AND o.status = 'COMPLETED'
             AND o."orderDate" >= ${startOfMonth} AND o."orderDate" <= ${endOfMonth}
+            ${branchSql}
             GROUP BY c.name
             ORDER BY revenue DESC
         `;
@@ -166,25 +199,39 @@ export const DashboardService = {
     /**
      * Get top selling products (Best Sellers)
      */
-    getTopProducts: async (societyId: string | undefined) => {
+    getTopProducts: async (societyId: string | undefined, filters?: DashboardFilters) => {
         const targetSocietyId = await resolveSocietyId(societyId);
+        const normalizedFilters = normalizeDashboardFilters(filters);
 
-        const cacheKey = `dashboard:top-products:${targetSocietyId}`;
+        const cacheKey = buildDashboardCacheKey('top-products', targetSocietyId, normalizedFilters);
         const cachedChart = await redis.get(cacheKey);
         if (cachedChart) return cachedChart;
 
-        const products = await prisma.product.findMany({
-            where: { societyId: targetSocietyId, isDeleted: false, salesCount: { gt: 0 } },
-            orderBy: { salesCount: 'desc' },
-            take: 5,
-            select: { id: true, name: true, salesCount: true, stock: true }
-        });
+        const { start: startOfMonth, end: endOfMonth } = getDashboardMonthRange(normalizedFilters);
+        const branchSql = buildBranchFilterSql('o."branchId"', normalizedFilters.branchId);
+
+        const products: any[] = await prisma.$queryRaw`
+            SELECT p.id,
+                   p.name,
+                   p.stock,
+                   COALESCE(SUM(oi.quantity), 0)::int as "soldUnits"
+            FROM "OrderItem" oi
+            JOIN "Order" o ON oi."orderId" = o.id
+            JOIN "Product" p ON oi."productId" = p.id
+            WHERE o."societyId" = ${targetSocietyId}
+            AND o.status = 'COMPLETED'
+            AND o."orderDate" >= ${startOfMonth} AND o."orderDate" <= ${endOfMonth}
+            ${branchSql}
+            GROUP BY p.id, p.name, p.stock
+            ORDER BY "soldUnits" DESC
+            LIMIT 5
+        `;
 
         const formattedData = products.map(p => ({
             id: p.id,
             name: p.name,
-            soldUnits: p.salesCount,
-            stockRemaining: p.stock
+            soldUnits: Number(p.soldUnits || 0),
+            stockRemaining: Number(p.stock || 0)
         }));
 
         await redis.set(cacheKey, formattedData, 300);
@@ -194,21 +241,22 @@ export const DashboardService = {
     /**
      * Get payment methods for the current month
      */
-    getPaymentMethods: async (societyId: string | undefined) => {
+    getPaymentMethods: async (societyId: string | undefined, filters?: DashboardFilters) => {
         const targetSocietyId = await resolveSocietyId(societyId);
+        const normalizedFilters = normalizeDashboardFilters(filters);
 
-        const cacheKey = `dashboard:payment-methods:${targetSocietyId}`;
+        const cacheKey = buildDashboardCacheKey('payment-methods', targetSocietyId, normalizedFilters);
         const cachedChart = await redis.get(cacheKey);
         if (cachedChart) return cachedChart;
 
-        const startOfMonth = getFirstDayOfCurrentMonthLima();
-        const endOfMonth = getLastDayOfCurrentMonthLima();
+        const { start: startOfMonth, end: endOfMonth } = getDashboardMonthRange(normalizedFilters);
 
         const results = await prisma.orderPayment.groupBy({
             by: ['paymentMethod'],
             _sum: { amount: true },
             where: {
                 societyId: targetSocietyId,
+                ...(normalizedFilters.branchId ? { branchId: normalizedFilters.branchId } : {}),
                 status: 'CONFIRMED',
                 paymentDate: { gte: startOfMonth, lte: endOfMonth }
             }
@@ -227,18 +275,26 @@ export const DashboardService = {
      * Get cash flow (income vs expenses) for the current year
      * OPTIMIZADO: 2 queries SQL GROUP BY en paralelo
      */
-    getCashFlow: async (societyId: string | undefined) => {
+    getCashFlow: async (societyId: string | undefined, filters?: DashboardFilters) => {
         const targetSocietyId = await resolveSocietyId(societyId);
+        const normalizedFilters = normalizeDashboardFilters(filters);
 
-        const cacheKey = `dashboard:cash-flow:${targetSocietyId}`;
+        const cacheKey = buildDashboardCacheKey('cash-flow', targetSocietyId, normalizedFilters);
         const cachedChart = await redis.get(cacheKey);
         if (cachedChart) return cachedChart;
 
-        const currentYear = new Date().getFullYear();
-        const startOfYear = new Date(currentYear, 0, 1);
-        const endOfYear = new Date(currentYear, 11, 31, 23, 59, 59, 999);
+        const { start: startOfYear, end: endOfYear } = getDashboardYearRange(normalizedFilters);
+        const monthFilterSales =
+            normalizedFilters.month !== undefined
+                ? Prisma.sql` AND EXTRACT(MONTH FROM "orderDate") = ${normalizedFilters.month}`
+                : Prisma.empty;
+        const monthFilterPurchases =
+            normalizedFilters.month !== undefined
+                ? Prisma.sql` AND EXTRACT(MONTH FROM "purchaseDate") = ${normalizedFilters.month}`
+                : Prisma.empty;
+        const salesBranchSql = buildBranchFilterSql('"branchId"', normalizedFilters.branchId);
+        const purchaseBranchSql = buildBranchFilterSql('"branchOfficeId"', normalizedFilters.branchId);
 
-        // ─── PARALLEL: Sales + Purchases grouped by month in SQL ──────
         const [salesByMonth, purchasesByMonth] = await Promise.all([
             prisma.$queryRaw<any[]>`
                 SELECT EXTRACT(MONTH FROM "orderDate")::int as month,
@@ -247,6 +303,8 @@ export const DashboardService = {
                 WHERE "societyId" = ${targetSocietyId}
                 AND status = 'COMPLETED'
                 AND "orderDate" >= ${startOfYear} AND "orderDate" <= ${endOfYear}
+                ${salesBranchSql}
+                ${monthFilterSales}
                 GROUP BY EXTRACT(MONTH FROM "orderDate")
             `,
             prisma.$queryRaw<any[]>`
@@ -256,6 +314,8 @@ export const DashboardService = {
                 WHERE "societyId" = ${targetSocietyId}
                 AND status = 'COMPLETED'
                 AND "purchaseDate" >= ${startOfYear} AND "purchaseDate" <= ${endOfYear}
+                ${purchaseBranchSql}
+                ${monthFilterPurchases}
                 GROUP BY EXTRACT(MONTH FROM "purchaseDate")
             `
         ]);
@@ -274,17 +334,17 @@ export const DashboardService = {
      * Get branch performance for the current month
      * OPTIMIZADO: 1 sola query SQL con JOIN en vez de 2 queries separadas
      */
-    getBranchPerformance: async (societyId: string | undefined) => {
+    getBranchPerformance: async (societyId: string | undefined, filters?: DashboardFilters) => {
         const targetSocietyId = await resolveSocietyId(societyId);
+        const normalizedFilters = normalizeDashboardFilters(filters);
 
-        const cacheKey = `dashboard:branch-performance:${targetSocietyId}`;
+        const cacheKey = buildDashboardCacheKey('branch-performance', targetSocietyId, normalizedFilters);
         const cachedChart = await redis.get(cacheKey);
         if (cachedChart) return cachedChart;
 
-        const startOfMonth = getFirstDayOfCurrentMonthLima();
-        const endOfMonth = getLastDayOfCurrentMonthLima();
+        const { start: startOfMonth, end: endOfMonth } = getDashboardMonthRange(normalizedFilters);
+        const branchSql = buildBranchFilterSql('o."branchId"', normalizedFilters.branchId);
 
-        // 1 query con JOIN en vez de groupBy + findMany separados
         const results: any[] = await prisma.$queryRaw`
             SELECT b.name as branch, COALESCE(SUM(o."totalAmount"), 0) as revenue
             FROM "Order" o
@@ -292,6 +352,7 @@ export const DashboardService = {
             WHERE o."societyId" = ${targetSocietyId}
             AND o.status = 'COMPLETED'
             AND o."orderDate" >= ${startOfMonth} AND o."orderDate" <= ${endOfMonth}
+            ${branchSql}
             GROUP BY b.name
             ORDER BY revenue DESC
         `;

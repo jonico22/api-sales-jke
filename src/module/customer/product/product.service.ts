@@ -1,6 +1,5 @@
 import prisma from '@/config/prisma';
-import { z } from 'zod';
-import { createProductSchema, updateProductSchema } from './product.schema';
+import { CreateProductInput, UpdateProductInput } from './product.schema';
 import {
   PaginatedResult,
   getPrismaPaginationParams,
@@ -8,46 +7,27 @@ import {
   PaginationQuery,
 } from '@/utils/pagination';
 import { Product } from '@prisma/client';
-import { formatToLimaTime, convertLimaTimeToUTC, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
+import { formatToLimaTime } from '@/utils/dateFormatter';
 import { redis } from '@/config/redis';
-import { publishRealtimeUpdate } from '@/config/event-publisher';
-
-// Tipos inferidos de los schemas
-type CreateProductInput = z.infer<typeof createProductSchema>['body'];
-type UpdateProductInput = z.infer<typeof updateProductSchema>['body'];
-
-// Constantes de cache
-const CACHE_PREFIX = 'products:';
-const CACHE_TTL_LIST = 300; // 5 minutos para listas
-const CACHE_TTL_SINGLE = 600; // 10 minutos para registro individual
-const CACHE_TTL_SELECT = 900; // 15 minutos para select (datos que cambian poco)
-
-// Tipo para los filtros de producto
-export interface ProductFilters {
-  societyCode?: string;
-  societyId?: string;
-  categoryCode?: string;
-  categoryId?: string;
-  branchId?: string;       // Filtrar por sucursal (BranchOfficeProduct)
-  search?: string;
-  isActive?: boolean;
-  priceFrom?: number;
-  priceTo?: number;
-  priceCostFrom?: number;
-  priceCostTo?: number;
-  lowStock?: boolean;
-  stockStatus?: 'all' | 'available' | 'low' | 'out'; // Todos | Disponible | Bajo Stock | Agotado
-  stockFrom?: number;
-  stockTo?: number;
-  createdBy?: string;
-  updatedBy?: string;
-  createdAtFrom?: string;
-  createdAtTo?: string;
-  updatedAtFrom?: string;
-  updatedAtTo?: string;
-  color?: string;
-  brand?: string;
-}
+import {
+  buildProductListCacheKey,
+  buildProductSelectCacheKey,
+  buildProductWhereClause,
+  getProductListParams,
+  PRODUCT_CACHE_PREFIX,
+  PRODUCT_CACHE_TTL_LIST,
+  PRODUCT_CACHE_TTL_SELECT,
+  PRODUCT_CACHE_TTL_SINGLE,
+  ProductFilters,
+  resolveCategoryId,
+  resolveDefaultProductBranchId,
+  resolveSocietyByCodeOrId,
+  resolveSocietyId,
+} from './product.helpers';
+import {
+  scheduleProductMutationSideEffects,
+  syncProductStockWithMainBranch,
+} from './product.service.support';
 
 export const ProductService = {
   /**
@@ -58,235 +38,27 @@ export const ProductService = {
     paginationQuery?: PaginationQuery,
     filters?: ProductFilters
   ): Promise<PaginatedResult<Product>> => {
-    const page = paginationQuery?.page ?? 1;
-    const limit = paginationQuery?.limit ?? 10;
-    const sortBy = paginationQuery?.sortBy ?? 'name';
-    const sortOrder = paginationQuery?.sortOrder ?? 'asc';
-
-    const categoryCode = filters?.categoryCode; // keep code only
-    const categoryId = filters?.categoryId;
-    const rawSocietyRef = filters?.societyCode || filters?.societyId;
-
-    // ─── Resolver sociedad ANTES de construir la clave de caché ───────
-    // Esto garantiza que `societyCode=SOC-001` y `societyId=<uuid>` generen
-    // la misma clave y que no haya mezcla de datos entre sociedades.
+    const { page, limit, sortBy, sortOrder } = getProductListParams(paginationQuery);
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
-    const whereClause: any = { isDeleted: false };
-    let resolvedSocietyId: string | null = null;
 
-    if (rawSocietyRef) {
-      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(rawSocietyRef);
-      if (isUuid) {
-        resolvedSocietyId = rawSocietyRef;
-        whereClause.societyId = rawSocietyRef;
-      } else {
-        const society = await prisma.society.findUnique({ where: { code: rawSocietyRef } });
-        if (society) {
-          resolvedSocietyId = society.id;
-          whereClause.societyId = society.id;
-        } else {
-          return buildPaginatedResult([], page, limit, 0);
-        }
-      }
-    }
-
-    // Fallback: Si no hay sociedad pero hay sucursal, resolvemos la sociedad de la sucursal
-    if (!resolvedSocietyId && filters?.branchId) {
-      const branch = await prisma.branchOffice.findUnique({
-        where: { id: filters.branchId },
-        select: { societyId: true }
-      });
-      if (branch) {
-        resolvedSocietyId = branch.societyId;
-        whereClause.societyId = branch.societyId;
-      }
-    }
-
-    // SI NO HAY SOCIEDAD EN ESTE PUNTO, RETORNAMOS VACÍO (Seguridad multitenant)
+    const resolvedSocietyId = await resolveSocietyId(filters?.societyCode || filters?.societyId, filters?.branchId);
     if (!resolvedSocietyId) {
       return buildPaginatedResult([], page, limit, 0);
     }
 
-    // Construir clave de cache usando el UUID resuelto (Scope por sociedad)
-    const cacheKeyParts = [
-      'list',
-      categoryCode || 'all',
-      categoryId || 'all',
-      filters?.branchId || 'all',
-      filters?.search || 'all',
-      filters?.isActive !== undefined ? filters.isActive : 'all',
-      filters?.priceFrom || 'all',
-      filters?.priceTo || 'all',
-      filters?.priceCostFrom || 'all',
-      filters?.priceCostTo || 'all',
-      filters?.lowStock !== undefined ? filters.lowStock : 'all',
-      filters?.stockFrom || 'all',
-      filters?.stockTo || 'all',
-      filters?.createdBy || 'all',
-      filters?.updatedBy || 'all',
-      filters?.createdAtFrom || 'all',
-      filters?.createdAtTo || 'all',
-      filters?.updatedAtFrom || 'all',
-      filters?.updatedAtTo || 'all',
-      filters?.color || 'all',
-      filters?.brand || 'all',
-      filters?.stockStatus || 'all',
-      page,
-      limit,
-      sortBy,
-      sortOrder
-    ];
-    // La clave ahora es products:<societyId>:list:...
-    const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:${cacheKeyParts.join(':')}`;
+    const cacheKey = buildProductListCacheKey(resolvedSocietyId, page, limit, sortBy, sortOrder, filters);
 
-    // 1. Intentar obtener del cache
     const cached = await redis.get<PaginatedResult<Product>>(cacheKey);
     if (cached) return cached;
 
-    // Filtro por categoría ID directa
-    if (filters?.categoryId) {
-      whereClause.categoryId = filters.categoryId;
-    }
-    // Filtro por categoría código (mantener compatibilidad)
-    if (categoryCode) {
-      const category = await prisma.category.findFirst({
-        where: { 
-          code: categoryCode, 
-          isDeleted: false,
-          ...(whereClause.societyId && { societyId: whereClause.societyId })
-        }
-      });
-      if (category) {
-        whereClause.categoryId = category.id;
-      } else {
-        return buildPaginatedResult([], page, limit, 0);
-      }
+    const resolvedCategoryId = filters?.categoryCode
+      ? await resolveCategoryId(filters.categoryCode, resolvedSocietyId)
+      : undefined;
+    if (filters?.categoryCode && !resolvedCategoryId) {
+      return buildPaginatedResult([], page, limit, 0);
     }
 
-    // Filtro por sucursal (BranchOfficeProduct)
-    if (filters?.branchId) {
-      whereClause.BranchOfficeProduct = {
-        some: { branchOfficeId: filters.branchId }
-      };
-    }
-
-    // Búsqueda por nombre o código (case-insensitive)
-    if (filters?.search) {
-      whereClause.OR = [
-        { name: { contains: filters.search, mode: 'insensitive' } },
-        { code: { contains: filters.search, mode: 'insensitive' } },
-        { barcode: { contains: filters.search, mode: 'insensitive' } },
-        { brand: { contains: filters.search, mode: 'insensitive' } },
-        { color: { contains: filters.search, mode: 'insensitive' } }
-      ];
-    }
-
-    // Filtro por isActive
-    if (filters?.isActive !== undefined) {
-      whereClause.isActive = filters.isActive;
-    }
-
-    // Filtro por brand
-    if (filters?.brand) {
-      whereClause.brand = { contains: filters.brand, mode: 'insensitive' };
-    }
-
-    // Filtro por color
-    if (filters?.color) {
-      whereClause.color = { contains: filters.color, mode: 'insensitive' };
-    }
-
-    // Filtro de rango de precio
-    if (filters?.priceFrom !== undefined || filters?.priceTo !== undefined) {
-      whereClause.price = {};
-      if (filters.priceFrom !== undefined) {
-        whereClause.price.gte = filters.priceFrom;
-      }
-      if (filters.priceTo !== undefined) {
-        whereClause.price.lte = filters.priceTo;
-      }
-    }
-
-    // Filtro de rango de precio de costo
-    if (filters?.priceCostFrom !== undefined || filters?.priceCostTo !== undefined) {
-      whereClause.priceCost = {};
-      if (filters.priceCostFrom !== undefined) {
-        whereClause.priceCost.gte = filters.priceCostFrom;
-      }
-      if (filters.priceCostTo !== undefined) {
-        whereClause.priceCost.lte = filters.priceCostTo;
-      }
-    }
-
-    // Filtro de stock (combinable)
-    const stockConditions: any = {};
-    const applyLowStockFilter = filters?.lowStock === true || filters?.stockStatus === 'low';
-
-    if (applyLowStockFilter) {
-      stockConditions.lte = (prisma.product as any).fields.minStock;
-    }
-
-    if (filters?.stockStatus === 'available') {
-      stockConditions.gt = 0;
-    } else if (filters?.stockStatus === 'out') {
-      stockConditions.lte = 0;
-    }
-
-    // Filtro de rango de stock
-    if (filters?.stockFrom !== undefined || filters?.stockTo !== undefined) {
-      if (filters.stockFrom !== undefined) stockConditions.gte = filters.stockFrom;
-      if (filters.stockTo !== undefined) stockConditions.lte = filters.stockTo;
-    }
-
-    const hasStockFilters = Object.keys(stockConditions).length > 0;
-
-    // APLICAR FILTROS DE STOCK Y SUCURSAL
-    if (filters?.branchId) {
-      // Si hay sucursal, el filtro de stock de la sucursal es lo principal
-      whereClause.BranchOfficeProduct = {
-        some: { 
-          branchOfficeId: filters.branchId,
-          ...(hasStockFilters && { physicalStock: stockConditions })
-        }
-      };
-    } else if (hasStockFilters) {
-      // Si no hay sucursal, filtramos por el stock global
-      whereClause.stock = stockConditions;
-    }
-
-    // Filtro por createdBy
-    if (filters?.createdBy) {
-      whereClause.createdBy = filters.createdBy;
-    }
-
-    // Filtro por updatedBy
-    if (filters?.updatedBy) {
-      whereClause.updatedBy = filters.updatedBy;
-    }
-
-    // Filtro de rango de fechas para createdAt (convierte de Lima a UTC con soporte de rango completo)
-    if (filters?.createdAtFrom || filters?.createdAtTo) {
-      whereClause.createdAt = {};
-      const dateRange = convertLimaDateRangeToUTC(filters.createdAtFrom, filters.createdAtTo);
-      if (dateRange.from) {
-        whereClause.createdAt.gte = dateRange.from;
-      }
-      if (dateRange.to) {
-        whereClause.createdAt.lte = dateRange.to;
-      }
-    }
-
-    // Filtro de rango de fechas para updatedAt (convierte de Lima a UTC con soporte de rango completo)
-    if (filters?.updatedAtFrom || filters?.updatedAtTo) {
-      whereClause.updatedAt = {};
-      const dateRange = convertLimaDateRangeToUTC(filters.updatedAtFrom, filters.updatedAtTo);
-      if (dateRange.from) {
-        whereClause.updatedAt.gte = dateRange.from;
-      }
-      if (dateRange.to) {
-        whereClause.updatedAt.lte = dateRange.to;
-      }
-    }
+    const whereClause = buildProductWhereClause(resolvedSocietyId, filters, resolvedCategoryId ?? undefined);
 
     // 2. Buscar en DB
     const [data, total] = await prisma.$transaction([
@@ -352,8 +124,7 @@ export const ProductService = {
 
     const result = buildPaginatedResult(formattedData, page, limit, total);
 
-    // 3. Guardar en cache
-    await redis.set(cacheKey, result, CACHE_TTL_LIST);
+    await redis.set(cacheKey, result, PRODUCT_CACHE_TTL_LIST);
 
     return result;
   },
@@ -396,7 +167,7 @@ export const ProductService = {
    * Obtener producto por ID con cache
    */
   getById: async (id: string, branchId?: string) => {
-    const cacheKey = branchId ? `${CACHE_PREFIX}${id}:${branchId}` : `${CACHE_PREFIX}${id}`;
+    const cacheKey = branchId ? `${PRODUCT_CACHE_PREFIX}${id}:${branchId}` : `${PRODUCT_CACHE_PREFIX}${id}`;
 
     const cached = await redis.get<any>(cacheKey);
     if (cached) return cached;
@@ -426,7 +197,7 @@ export const ProductService = {
     }
 
     // 3. Guardar en cache
-    await redis.set(cacheKey, finalProduct, CACHE_TTL_SINGLE);
+    await redis.set(cacheKey, finalProduct, PRODUCT_CACHE_TTL_SINGLE);
 
     return finalProduct;
   },
@@ -529,7 +300,7 @@ export const ProductService = {
     }
 
     // Usar el UUID resuelto en la clave de caché para evitar colisiones (Scope por sociedad)
-    const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:brands:all`;
+    const cacheKey = `${PRODUCT_CACHE_PREFIX}${resolvedSocietyId}:brands:all`;
     const cached = await redis.get<{ id: string; brand: string }[]>(cacheKey);
     if (cached) return cached;
 
@@ -544,7 +315,7 @@ export const ProductService = {
       .filter((item): item is { brand: string } => typeof item.brand === 'string' && item.brand.length > 0)
       .map(item => ({ id: item.brand, brand: item.brand }));
 
-    await redis.set(cacheKey, brands, CACHE_TTL_SELECT);
+    await redis.set(cacheKey, brands, PRODUCT_CACHE_TTL_SELECT);
     return brands;
   },
 
@@ -574,7 +345,7 @@ export const ProductService = {
     }
 
     // Usar el UUID resuelto en la clave de caché para evitar colisiones (Scope por sociedad)
-    const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:colors:all`;
+    const cacheKey = `${PRODUCT_CACHE_PREFIX}${resolvedSocietyId}:colors:all`;
     const cached = await redis.get<{ id: string; color: string; colorCode: string | null }[]>(cacheKey);
     if (cached) return cached;
 
@@ -589,7 +360,7 @@ export const ProductService = {
       .filter((item): item is { color: string; colorCode: string | null } => typeof item.color === 'string' && item.color.length > 0)
       .map(item => ({ id: item.color, color: item.color, colorCode: item.colorCode }));
 
-    await redis.set(cacheKey, colors, CACHE_TTL_SELECT);
+    await redis.set(cacheKey, colors, PRODUCT_CACHE_TTL_SELECT);
     return colors;
   },
 
@@ -597,16 +368,12 @@ export const ProductService = {
    * Crear un nuevo producto e invalidar cache de listas
    */
   create: async (data: CreateProductInput) => {
-    // ─── 1. PARALLEL: Resolver Society + Category ────────────────────
-    const [society, category] = await Promise.all([
-      prisma.society.findUnique({ where: { code: data.societyId } }),
-      prisma.category.findFirst({ where: { code: data.categoryId, isDeleted: false } })
-    ]);
-
+    const society = await resolveSocietyByCodeOrId(data.societyId);
     if (!society) return { error: 'Código de sociedad inválido' };
-    if (!category) return { error: 'Código de categoría inválido' };
 
-    // ─── 2. Crear producto ────────────────────────────────────────────
+    const categoryId = await resolveCategoryId(data.categoryId, society.id);
+    if (!categoryId) return { error: 'Código de categoría inválido' };
+
     const created = await prisma.product.create({
       data: {
         name: data.name,
@@ -616,7 +383,7 @@ export const ProductService = {
         stock: data.stock ?? 0,
         minStock: data.minStock ?? 0,
         societyId: society.id,
-        categoryId: category.id,
+        categoryId,
         imageId: data.imageId,
         isActive: data.isActive,
         createdBy: data.createdBy,
@@ -634,52 +401,35 @@ export const ProductService = {
       },
     });
 
-    // ─── 3. Auto-assign to Main Branch + Update Counter ──────────────
     const mainBranch = await prisma.branchOffice.findFirst({
-      where: { societyId: society.id, code: 'ALM-PRINCIPAL' }
+      where: { societyId: society.id, code: 'ALM-PRINCIPAL' },
+      select: { id: true },
     });
 
     await Promise.all([
-      mainBranch ? prisma.branchOfficeProduct.create({
-        data: {
-          branchOfficeId: mainBranch.id,
-          productId: created.id,
-          physicalStock: data.stock ?? 0,
-          availableStock: data.stock ?? 0,
-          location: 'ALMACEN-GENERAL',
-          isActive: true
-        }
-      }) : Promise.resolve(),
+      mainBranch
+        ? prisma.branchOfficeProduct.create({
+            data: {
+              branchOfficeId: mainBranch.id,
+              productId: created.id,
+              physicalStock: data.stock ?? 0,
+              availableStock: data.stock ?? 0,
+              location: 'ALMACEN-GENERAL',
+              isActive: true,
+            },
+          })
+        : Promise.resolve(),
       prisma.society.update({
         where: { id: society.id },
-        data: { totalProducts: { increment: 1 } }
-      })
+        data: { totalProducts: { increment: 1 } },
+      }),
     ]);
 
-    // ─── 4. BACKGROUND: Cache + Notifications ────────────────────────
-    const societyId = society.id;
-    const subscriptionId = society.subscriptionId;
-
-    setImmediate(async () => {
-      try {
-        await Promise.all([
-          redis.deleteKeysByPrefix(`${CACHE_PREFIX}${societyId}:`),
-          redis.deleteKeysByPrefix('branch_office_products:'),
-          ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
-            .map(k => redis.del(`dashboard:${k}:${societyId}`))
-        ]);
-
-        if (subscriptionId) {
-          await Promise.all([
-            publishRealtimeUpdate(subscriptionId, 'PRODUCTO', {
-              id: created.id, action: 'CREATED', name: created.name, code: created.code
-            }),
-            publishRealtimeUpdate(subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' })
-          ]);
-        }
-      } catch (error) {
-        console.error('[ProductService] ❌ Error background (create):', error);
-      }
+    scheduleProductMutationSideEffects({
+      societyId: society.id,
+      subscriptionId: society.subscriptionId,
+      product: { id: created.id, name: created.name, code: created.code },
+      action: 'CREATED',
     });
 
     return created;
@@ -690,24 +440,29 @@ export const ProductService = {
    */
   update: async (id: string, data: UpdateProductInput) => {
     const updateData: any = { ...data };
+    const currentProduct = await prisma.product.findUnique({
+      where: { id },
+      select: { societyId: true }
+    });
 
-    // ─── PARALLEL: Resolver Society + Category si se envían ──────────
-    const [societyResult, categoryResult] = await Promise.all([
-      data.societyId
-        ? prisma.society.findUnique({ where: { code: data.societyId } })
-        : Promise.resolve(null),
-      data.categoryId
-        ? prisma.category.findFirst({ where: { code: data.categoryId, isDeleted: false } })
-        : Promise.resolve(null)
+    if (!currentProduct) {
+      return null;
+    }
+
+    const [societyResult] = await Promise.all([
+      data.societyId ? resolveSocietyByCodeOrId(data.societyId) : Promise.resolve(null),
     ]);
 
     if (data.societyId) {
       if (!societyResult) return { error: 'Código de sociedad inválido' };
       updateData.societyId = societyResult.id;
     }
+
+    const targetSocietyId = updateData.societyId || currentProduct.societyId;
     if (data.categoryId) {
-      if (!categoryResult) return { error: 'Código de categoría inválido' };
-      updateData.categoryId = categoryResult.id;
+      const categoryId = await resolveCategoryId(data.categoryId, targetSocietyId);
+      if (!categoryId) return { error: 'Código de categoría inválido' };
+      updateData.categoryId = categoryId;
     }
 
     const updated = await prisma.product.update({
@@ -720,66 +475,15 @@ export const ProductService = {
       },
     });
 
-    // SYNC STOCK WITH MAIN BRANCH (critical, must stay synchronous)
     if (data.stock !== undefined) {
-      const mainBranch = await prisma.branchOffice.findFirst({
-        where: { societyId: updated.societyId, code: 'ALM-PRINCIPAL' }
-      });
-
-      if (mainBranch) {
-        const existingBOP = await prisma.branchOfficeProduct.findUnique({
-          where: {
-            productId_branchOfficeId: { productId: id, branchOfficeId: mainBranch.id }
-          }
-        });
-
-        const currentReserved = existingBOP?.reservedStock ?? 0;
-        const newPhysical = data.stock;
-        const newAvailable = newPhysical - currentReserved;
-
-        await prisma.branchOfficeProduct.upsert({
-          where: {
-            productId_branchOfficeId: { productId: id, branchOfficeId: mainBranch.id }
-          },
-          update: { physicalStock: newPhysical, availableStock: newAvailable },
-          create: {
-            productId: id,
-            branchOfficeId: mainBranch.id,
-            physicalStock: newPhysical,
-            availableStock: newPhysical,
-            reservedStock: 0,
-            location: 'ALMACEN-GENERAL',
-            isActive: true
-          }
-        });
-      }
+      await syncProductStockWithMainBranch(id, updated.societyId, data.stock);
     }
 
-    // ─── BACKGROUND: Cache + Notifications ────────────────────────────
-    const updatedSocietyId = updated.societyId;
-    const subscriptionId = updated.society.subscriptionId;
-
-    setImmediate(async () => {
-      try {
-        await Promise.all([
-          redis.del(`${CACHE_PREFIX}${updated.id}`), // Cache individual (sin societyId en el prefijo antiguo)
-          redis.deleteKeysByPrefix(`${CACHE_PREFIX}${updatedSocietyId}:`), // Cache de listas de esta sociedad
-          redis.deleteKeysByPrefix('branch_office_products:'),
-          ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
-            .map(k => redis.del(`dashboard:${k}:${updatedSocietyId}`))
-        ]);
-
-        if (subscriptionId) {
-          await Promise.all([
-            publishRealtimeUpdate(subscriptionId, 'PRODUCTO', {
-              id: updated.id, action: 'UPDATED', name: updated.name, code: updated.code
-            }),
-            publishRealtimeUpdate(subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' })
-          ]);
-        }
-      } catch (error) {
-        console.error('[ProductService] ❌ Error background (update):', error);
-      }
+    scheduleProductMutationSideEffects({
+      societyId: updated.societyId,
+      subscriptionId: updated.society.subscriptionId,
+      product: { id: updated.id, name: updated.name, code: updated.code },
+      action: 'UPDATED',
     });
 
     return updated;
@@ -798,34 +502,14 @@ export const ProductService = {
     // Decrement counter (synchronous, important for consistency)
     await prisma.society.update({
       where: { id: deleted.societyId },
-      data: { totalProducts: { decrement: 1 } }
+      data: { totalProducts: { decrement: 1 } },
     });
 
-    // ─── BACKGROUND: Cache + Notifications ────────────────────────────
-    const deletedSocietyId = deleted.societyId;
-    const subscriptionId = deleted.society.subscriptionId;
-
-    setImmediate(async () => {
-      try {
-        await Promise.all([
-          redis.del(`${CACHE_PREFIX}${id}`),
-          redis.deleteKeysByPrefix(`${CACHE_PREFIX}${deletedSocietyId}:`),
-          redis.deleteKeysByPrefix('branch_office_products:'),
-          ...['stats', 'sales-performance', 'revenue-category', 'top-products', 'payment-methods', 'branch-performance', 'cash-flow']
-            .map(k => redis.del(`dashboard:${k}:${deletedSocietyId}`))
-        ]);
-
-        if (subscriptionId) {
-          await Promise.all([
-            publishRealtimeUpdate(subscriptionId, 'PRODUCTO', {
-              id: deleted.id, action: 'DELETED', name: deleted.name, code: deleted.code
-            }),
-            publishRealtimeUpdate(subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' })
-          ]);
-        }
-      } catch (error) {
-        console.error('[ProductService] ❌ Error background (delete):', error);
-      }
+    scheduleProductMutationSideEffects({
+      societyId: deleted.societyId,
+      subscriptionId: deleted.society.subscriptionId,
+      product: { id: deleted.id, name: deleted.name, code: deleted.code },
+      action: 'DELETED',
     });
 
     return deleted;
@@ -834,116 +518,79 @@ export const ProductService = {
   /**
    * Obtener productos para select/dropdown con cache largo
    */
-    getForSelect: async (societyCode?: string, categoryCode?: string, branchId?: string) => {
-        // Resolvemos sociedad primero para la clave de caché
-        let resolvedSocietyId: string | undefined;
-        if (societyCode) {
-            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
-            if (isUuid) {
-                resolvedSocietyId = societyCode;
-            } else {
-                const society = await prisma.society.findUnique({ where: { code: societyCode }, select: { id: true } });
-                if (society) resolvedSocietyId = society.id;
+  getForSelect: async (societyCode?: string, categoryCode?: string, branchId?: string) => {
+    const resolvedSocietyId = await resolveSocietyId(societyCode, branchId);
+    if (!resolvedSocietyId) return [];
+
+    const cacheKey = buildProductSelectCacheKey(resolvedSocietyId, categoryCode, branchId);
+    const cached = await redis.get<any[]>(cacheKey);
+    if (cached) return cached;
+
+    const whereClause: any = {
+      isDeleted: false,
+      isActive: true,
+      societyId: resolvedSocietyId,
+    };
+
+    if (categoryCode) {
+      const categoryId = await resolveCategoryId(categoryCode, resolvedSocietyId);
+      if (!categoryId) return [];
+      whereClause.categoryId = categoryId;
+    }
+
+    const targetBranchId = await resolveDefaultProductBranchId(resolvedSocietyId, branchId);
+    if (targetBranchId) {
+      whereClause.BranchOfficeProduct = {
+        some: {
+          branchOfficeId: targetBranchId,
+          availableStock: { gt: 0 },
+        },
+      };
+    }
+
+    const products = await prisma.product.findMany({
+      where: whereClause,
+      select: {
+        id: true,
+        name: true,
+        price: true,
+        code: true,
+        category: {
+          select: {
+            id: true,
+            name: true,
+            code: true,
+          },
+        },
+        BranchOfficeProduct: targetBranchId
+          ? {
+              where: { branchOfficeId: targetBranchId },
+              select: { availableStock: true },
             }
-        }
+          : undefined,
+      },
+      orderBy: { name: 'asc' },
+    });
 
-        // Si no hay sociedad pero hay sucursal, resolvemos sociedad de la sucursal
-        if (!resolvedSocietyId && branchId) {
-            const branch = await prisma.branchOffice.findUnique({ where: { id: branchId }, select: { societyId: true } });
-            if (branch) resolvedSocietyId = branch.societyId;
-        }
+    const formattedProducts = products.map((product) => {
+      const stock = (product as any).BranchOfficeProduct?.[0]?.availableStock ?? 0;
+      const { BranchOfficeProduct, ...rest } = product as any;
+      return {
+        ...rest,
+        stock,
+      };
+    });
 
-        // Si no se puede resolver la sociedad, no cacheamos o retornamos vacío (Seguridad)
-        if (!resolvedSocietyId) return [];
+    await redis.set(cacheKey, formattedProducts, PRODUCT_CACHE_TTL_SELECT);
 
-        const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:select:${categoryCode || 'all'}:${branchId || 'all'}`;
-        const cached = await redis.get<any[]>(cacheKey);
-        if (cached) return cached;
-
-        const whereClause: any = { 
-            isDeleted: false, 
-            isActive: true,
-            societyId: resolvedSocietyId
-        };
-
-        // 2. Resolve Category
-        if (categoryCode) {
-            const category = await prisma.category.findFirst({
-                where: { code: categoryCode, isDeleted: false }
-            });
-            if (category) {
-                whereClause.categoryId = category.id;
-            } else {
-                return [];
-            }
-        }
-
-        // 3. Resolve Branch Stock
-        let targetBranchId = branchId;
-
-        // If no branchId provided, default to main branch of society
-        if (!targetBranchId && resolvedSocietyId) {
-            const mainBranch = await prisma.branchOffice.findFirst({
-                where: { societyId: resolvedSocietyId, isMain: true }
-            });
-            if (mainBranch) {
-                targetBranchId = mainBranch.id;
-            }
-        }
-
-        // 4. Apply branch stock filter to whereClause
-        if (targetBranchId) {
-            whereClause.BranchOfficeProduct = {
-                some: {
-                    branchOfficeId: targetBranchId,
-                    availableStock: { gt: 0 }
-                }
-            };
-        }
-
-        const products = await prisma.product.findMany({
-            where: whereClause,
-            select: {
-                id: true,
-                name: true,
-                price: true,
-                code: true,
-                category: {
-                    select: {
-                        id: true,
-                        name: true,
-                        code: true,
-                    },
-                },
-                BranchOfficeProduct: targetBranchId ? {
-                    where: { branchOfficeId: targetBranchId },
-                    select: { availableStock: true }
-                } : undefined
-            },
-            orderBy: { name: 'asc' },
-        });
-
-        // Map stock to maintain a flat structure
-        const formattedProducts = products.map(p => {
-            const stock = (p as any).BranchOfficeProduct?.[0]?.availableStock ?? 0;
-            const { BranchOfficeProduct, ...rest } = p as any;
-            return {
-                ...rest,
-                stock
-            };
-        });
-
-        // Guardar en cache con TTL largo
-        await redis.set(cacheKey, formattedProducts, CACHE_TTL_SELECT);
-
-        return formattedProducts;
-    },
+    return formattedProducts;
+  },
 
   /**
    * Invalidar todo el cache de productos (para uso manual si es necesario)
    */
   invalidateAllCache: async () => {
-    await redis.deleteKeysByPrefix(CACHE_PREFIX);
+    await redis.deleteKeysByPrefix(PRODUCT_CACHE_PREFIX);
     console.log('[Cache] Todo el cache de productos ha sido invalidado');
   },
 };

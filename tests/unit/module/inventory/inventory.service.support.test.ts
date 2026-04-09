@@ -161,10 +161,11 @@ describe('inventory.service.support', () => {
   it('reserves stock and decrements the global stock counter', async () => {
     const tx = {
       branchOfficeProduct: {
-        upsert: vi.fn().mockResolvedValue({ id: 'bop-1' }),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+        findUnique: vi.fn().mockResolvedValue({ id: 'bop-1' }),
       },
       product: {
-        update: vi.fn().mockResolvedValue(undefined),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
     };
 
@@ -174,9 +175,22 @@ describe('inventory.service.support', () => {
       quantity: 2,
     });
 
-    expect(tx.branchOfficeProduct.upsert).toHaveBeenCalled();
-    expect(tx.product.update).toHaveBeenCalledWith({
-      where: { id: 'prod-1' },
+    expect(tx.branchOfficeProduct.updateMany).toHaveBeenCalledWith({
+      where: {
+        productId: 'prod-1',
+        branchOfficeId: 'branch-1',
+        availableStock: { gte: 2 },
+      },
+      data: {
+        availableStock: { decrement: 2 },
+        reservedStock: { increment: 2 },
+      },
+    });
+    expect(tx.product.updateMany).toHaveBeenCalledWith({
+      where: {
+        id: 'prod-1',
+        stock: { gte: 2 },
+      },
       data: { stock: { decrement: 2 } },
     });
     expect(result).toEqual({ id: 'bop-1' });
@@ -185,7 +199,7 @@ describe('inventory.service.support', () => {
   it('confirms stock output on physical and reserved stock', async () => {
     const tx = {
       branchOfficeProduct: {
-        update: vi.fn().mockResolvedValue(undefined),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
     };
 
@@ -195,12 +209,12 @@ describe('inventory.service.support', () => {
       quantity: 2,
     });
 
-    expect(tx.branchOfficeProduct.update).toHaveBeenCalledWith({
+    expect(tx.branchOfficeProduct.updateMany).toHaveBeenCalledWith({
       where: {
-        productId_branchOfficeId: {
-          productId: 'prod-1',
-          branchOfficeId: 'branch-1',
-        },
+        productId: 'prod-1',
+        branchOfficeId: 'branch-1',
+        physicalStock: { gte: 2 },
+        reservedStock: { gte: 2 },
       },
       data: {
         physicalStock: { decrement: 2 },
@@ -212,7 +226,7 @@ describe('inventory.service.support', () => {
   it('cancels a reservation and restores global stock', async () => {
     const tx = {
       branchOfficeProduct: {
-        update: vi.fn().mockResolvedValue(undefined),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
       },
       product: {
         update: vi.fn().mockResolvedValue(undefined),
@@ -225,7 +239,17 @@ describe('inventory.service.support', () => {
       quantity: 2,
     });
 
-    expect(tx.branchOfficeProduct.update).toHaveBeenCalled();
+    expect(tx.branchOfficeProduct.updateMany).toHaveBeenCalledWith({
+      where: {
+        productId: 'prod-1',
+        branchOfficeId: 'branch-1',
+        reservedStock: { gte: 2 },
+      },
+      data: {
+        availableStock: { increment: 2 },
+        reservedStock: { decrement: 2 },
+      },
+    });
     expect(tx.product.update).toHaveBeenCalledWith({
       where: { id: 'prod-1' },
       data: { stock: { increment: 2 } },

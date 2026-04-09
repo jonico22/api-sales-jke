@@ -1,10 +1,11 @@
 import prisma from '@/config/prisma';
 import {
+  BranchOfficeProductFilters,
   createBranchOfficeProductSchema,
+  CreateBranchOfficeProductInput,
   updateBranchOfficeProductSchema,
-  branchOfficeProductFiltersSchema,
+  UpdateBranchOfficeProductInput,
 } from './branchofficeproduct.validation';
-import { z } from 'zod';
 import {
   PaginatedResult,
   getPrismaPaginationParams,
@@ -12,83 +13,47 @@ import {
   PaginationQuery,
 } from '@/utils/pagination';
 import { redis } from '@/config/redis';
-
-export type BranchOfficeProductFilters = z.infer<typeof branchOfficeProductFiltersSchema>['query'];
-
-const CACHE_PREFIX = 'branch_office_products';
-const CACHE_TTL_LIST = 300;
-const CACHE_TTL_SINGLE = 600;
+import {
+  BRANCH_OFFICE_PRODUCT_CACHE_PREFIX,
+  BRANCH_OFFICE_PRODUCT_CACHE_TTL_LIST,
+  BRANCH_OFFICE_PRODUCT_CACHE_TTL_SINGLE,
+  buildBranchOfficeProductListCacheKey,
+  buildBranchOfficeProductSelectWhereClause,
+  buildBranchOfficeProductWhereClause,
+  getBranchOfficeProductListParams,
+  resolveBranchOfficeProductSocietyId,
+} from './branchofficeproduct.helpers';
+import { invalidateBranchOfficeProductCaches } from './branchofficeproduct.service.support';
 
 export const BranchOfficeProductService = {
   getAll: async (
     paginationQuery?: PaginationQuery,
     filters?: BranchOfficeProductFilters
   ): Promise<PaginatedResult<any>> => {
-    const page = paginationQuery?.page ?? 1;
-    const limit = paginationQuery?.limit ?? 10;
-    const sortBy = paginationQuery?.sortBy ?? 'createdAt';
-    const sortOrder = paginationQuery?.sortOrder ?? 'desc';
+    const { page, limit, sortBy, sortOrder } = getBranchOfficeProductListParams(paginationQuery);
 
-    let resolvedSocietyId: string | undefined;
-    const societyValue = filters?.societyCode || filters?.societyId;
-
-    if (societyValue) {
-      const society = await prisma.society.findUnique({
-        where: filters?.societyCode ? { code: societyValue } : { id: societyValue },
-      });
-      if (society) {
-        resolvedSocietyId = society.id;
-      } else {
-        return buildPaginatedResult([], page, limit, 0);
-      }
+    const resolvedSocietyId = await resolveBranchOfficeProductSocietyId(
+      filters?.societyCode,
+      filters?.societyId
+    );
+    if ((filters?.societyCode || filters?.societyId) && !resolvedSocietyId) {
+      return buildPaginatedResult([], page, limit, 0);
     }
 
-    const cacheKey = [
-      CACHE_PREFIX,
-      'list',
-      resolvedSocietyId || 'all',
-      filters?.branchOfficeId || 'all',
-      filters?.productId || 'all',
-      filters?.productName || 'all',
-      filters?.location || 'all',
-      filters?.lowStock !== undefined ? filters.lowStock : 'all',
-      filters?.isActive !== undefined ? filters.isActive : 'all',
-      filters?.stockFrom || 'all',
-      filters?.stockTo || 'all',
+    const cacheKey = buildBranchOfficeProductListCacheKey(
+      resolvedSocietyId ?? undefined,
       page,
       limit,
       sortBy,
-      sortOrder
-    ].join(':');
+      sortOrder,
+      filters
+    );
 
     const cached = await redis.get<PaginatedResult<any>>(cacheKey);
     if (cached) return cached;
 
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
-    const whereClause: any = { isDeleted: false };
-
-    if (resolvedSocietyId) {
-      whereClause.branchOffice = {
-        societyId: resolvedSocietyId
-      };
-    }
-
-    if (filters?.branchOfficeId) whereClause.branchOfficeId = filters.branchOfficeId;
-    if (filters?.productId) whereClause.productId = filters.productId;
-    if (filters?.location) whereClause.location = { contains: filters.location, mode: 'insensitive' };
-    if (filters?.isActive !== undefined) whereClause.isActive = filters.isActive;
-
-    if (filters?.productName) {
-      whereClause.product = {
-        name: { contains: filters.productName, mode: 'insensitive' }
-      };
-    }
-
-    if (filters?.stockFrom !== undefined || filters?.stockTo !== undefined) {
-      whereClause.physicalStock = {};
-      if (filters.stockFrom !== undefined) whereClause.physicalStock.gte = filters.stockFrom;
-      if (filters.stockTo !== undefined) whereClause.physicalStock.lte = filters.stockTo;
-    }
+    const whereClause = buildBranchOfficeProductWhereClause(resolvedSocietyId ?? undefined, filters);
 
     const [data, total] = await prisma.$transaction([
       prisma.branchOfficeProduct.findMany({
@@ -105,12 +70,12 @@ export const BranchOfficeProductService = {
     ]);
 
     const result = buildPaginatedResult(data, page, limit, total);
-    await redis.set(cacheKey, result, CACHE_TTL_LIST);
+    await redis.set(cacheKey, result, BRANCH_OFFICE_PRODUCT_CACHE_TTL_LIST);
     return result;
   },
 
   getById: async (id: string) => {
-    const cacheKey = `${CACHE_PREFIX}:${id}`;
+    const cacheKey = `${BRANCH_OFFICE_PRODUCT_CACHE_PREFIX}:${id}`;
     const cached = await redis.get(cacheKey);
     if (cached) return cached;
 
@@ -123,13 +88,13 @@ export const BranchOfficeProductService = {
     });
 
     if (result) {
-      await redis.set(cacheKey, result, CACHE_TTL_SINGLE);
+      await redis.set(cacheKey, result, BRANCH_OFFICE_PRODUCT_CACHE_TTL_SINGLE);
     }
     return result;
   },
 
   create: async (data: unknown) => {
-    const parsed = createBranchOfficeProductSchema.parse(data);
+    const parsed: CreateBranchOfficeProductInput = createBranchOfficeProductSchema.parse(data);
 
     const existing = await prisma.branchOfficeProduct.findUnique({
       where: {
@@ -157,16 +122,13 @@ export const BranchOfficeProductService = {
       });
     }
 
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:select:`);
-    await redis.deleteKeysByPrefix('products:');
-    await redis.deleteKeysByPrefix('products:select:');
+    await invalidateBranchOfficeProductCaches();
 
     return result;
   },
 
   update: async (id: string, data: unknown) => {
-    const parsed = updateBranchOfficeProductSchema.parse(data);
+    const parsed: UpdateBranchOfficeProductInput = updateBranchOfficeProductSchema.parse(data);
     const updated = await prisma.branchOfficeProduct.update({
       where: { id },
       data: {
@@ -175,11 +137,7 @@ export const BranchOfficeProductService = {
       },
     });
 
-    await redis.del(`${CACHE_PREFIX}:${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:select:`);
-    await redis.deleteKeysByPrefix('products:');
-    await redis.deleteKeysByPrefix('products:select:');
+    await invalidateBranchOfficeProductCaches({ id });
 
     return updated;
   },
@@ -194,10 +152,7 @@ export const BranchOfficeProductService = {
       },
     });
 
-    await redis.del(`${CACHE_PREFIX}:${id}`);
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
-    await redis.deleteKeysByPrefix('products:');
-    await redis.deleteKeysByPrefix('products:select:');
+    await invalidateBranchOfficeProductCaches({ id, includeSelect: false });
 
     return deleted;
   },
@@ -233,25 +188,7 @@ export const BranchOfficeProductService = {
     const limit = paginationQuery?.limit ?? 100;
     const sortOrder = paginationQuery?.sortOrder ?? 'asc';
 
-    const whereClause: any = { branchOfficeId, isDeleted: false };
-
-    if (societyCode) {
-      const society = await prisma.society.findUnique({ where: { code: societyCode } });
-      if (society) {
-        whereClause.branchOffice = { societyId: society.id };
-      }
-    }
-
-    if (search) {
-      whereClause.product = {
-        OR: [
-          { name: { contains: search, mode: 'insensitive' } },
-          { code: { contains: search, mode: 'insensitive' } },
-          { brand: { contains: search, mode: 'insensitive' } },
-          { barcode: { contains: search, mode: 'insensitive' } },
-        ],
-      };
-    }
+    const whereClause = await buildBranchOfficeProductSelectWhereClause(branchOfficeId, societyCode, search);
 
     const prismaParams = getPrismaPaginationParams(page, limit, 'product.name', sortOrder);
 

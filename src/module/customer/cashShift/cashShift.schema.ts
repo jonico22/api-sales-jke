@@ -100,3 +100,8 @@ export const getCurrentShiftSchema = z.object({
         societyCode: z.string().optional().openapi({ example: 'SOC01', description: 'Código de la sociedad' }),
     })
 });
+
+export type OpenShiftInput = z.infer<typeof openShiftSchema>['body'];
+export type CloseShiftInput = z.infer<typeof closeShiftSchema>['body'] & { id: string };
+export type AddManualMovementInput = z.infer<typeof addManualMovementSchema>['body'];
+export type CashShiftFilters = z.infer<typeof cashShiftFiltersSchema>['query'];

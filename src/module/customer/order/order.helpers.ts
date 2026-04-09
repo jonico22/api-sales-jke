@@ -20,6 +20,10 @@ export const ORDER_DASHBOARD_CACHE_KEYS = [
   'branch-performance',
   'cash-flow'
 ] as const;
+
+export const invalidateOrderDashboardCaches = async (societyId: string) => Promise.all(
+  ORDER_DASHBOARD_CACHE_KEYS.map(key => redis.deleteKeysByPrefix(`dashboard:${key}:${societyId}`))
+);
 export const ORDER_TAX_RATE = 0.18;
 
 export interface CalculatedOrderItem {
@@ -228,7 +232,7 @@ export const validateBranchStockAvailability = async (
 export const invalidateOrderCaches = async (societyId: string, orderId?: string) => {
   const cacheOperations = [
     redis.deleteKeysByPrefix(`${ORDER_CACHE_PREFIX}list:`),
-    ...ORDER_DASHBOARD_CACHE_KEYS.map(key => redis.del(`dashboard:${key}:${societyId}`)),
+    ...ORDER_DASHBOARD_CACHE_KEYS.map(key => redis.deleteKeysByPrefix(`dashboard:${key}:${societyId}`)),
     redis.deleteKeysByPrefix('products:'),
     redis.deleteKeysByPrefix('products:select:'),
     redis.deleteKeysByPrefix('branch_office_products:')

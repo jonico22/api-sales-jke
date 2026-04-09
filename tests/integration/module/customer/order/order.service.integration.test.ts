@@ -144,6 +144,51 @@ describeIntegration('OrderService integration', () => {
     ).rejects.toThrow('Stock insuficiente');
   });
 
+  it('rejects completing a pending order when stock is no longer available', async () => {
+    fixture = await createOrderInventoryFixture();
+
+    const createdOrder = await OrderService.create({
+      societyId: fixture.refs.societyCode,
+      branchId: fixture.refs.branchCode,
+      partnerId: fixture.ids.partnerId,
+      currencyId: fixture.refs.currencyCode,
+      exchangeRate: 1,
+      discount: 0,
+      status: OrderStatus.PENDING,
+      orderItems: [
+        {
+          productId: fixture.ids.productId,
+          quantity: 4,
+          unitPrice: 100,
+        },
+      ],
+    } as any);
+
+    await prisma.branchOfficeProduct.update({
+      where: {
+        productId_branchOfficeId: {
+          productId: fixture.ids.productId,
+          branchOfficeId: fixture.ids.branchId,
+        },
+      },
+      data: {
+        availableStock: 0,
+        physicalStock: 0,
+      },
+    });
+
+    await prisma.product.update({
+      where: { id: fixture.ids.productId },
+      data: { stock: 0 },
+    });
+
+    await expect(
+      OrderService.update(createdOrder.id, {
+        status: OrderStatus.COMPLETED,
+      } as any)
+    ).rejects.toThrow('Stock insuficiente');
+  });
+
   it('cancels a pending-payment order and restores reserved stock', async () => {
     fixture = await createOrderInventoryFixture();
 

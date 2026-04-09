@@ -9,25 +9,28 @@ import {
   buildPaginatedResult,
   PaginationQuery,
 } from '@/utils/pagination';
-import { formatToLimaTime, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
-import { createProductBranchMovementSchema, bulkCreateProductBranchMovementSchema, transferAllSchema } from './productBranchMovement.validation';
+import { formatToLimaTime } from '@/utils/dateFormatter';
+import {
+  bulkCreateProductBranchMovementSchema,
+  BulkCreateProductBranchMovementInput,
+  createProductBranchMovementSchema,
+  CreateProductBranchMovementInput,
+  transferAllSchema,
+  TransferAllInput,
+} from './productBranchMovement.validation';
 import { ConflictAppError, NotFoundAppError } from '@/utils/domain-errors';
-
-const CACHE_PREFIX = 'branch_movements';
-const CACHE_TTL_LIST = 300;
-const CACHE_TTL_SINGLE = 600;
-
-export interface ProductBranchMovementFilters {
-  societyId?: string;
-  societyCode?: string;
-  originBranchId?: string;
-  destinationBranchId?: string;
-  productId?: string;
-  status?: MovementStatus;
-  batchId?: string;
-  dateFrom?: string;
-  dateTo?: string;
-}
+import {
+  buildBulkTransferBatchId,
+  buildProductBranchMovementListCacheKey,
+  buildProductBranchMovementWhereClause,
+  buildTransferAllBatchId,
+  getProductBranchMovementListParams,
+  PRODUCT_BRANCH_MOVEMENT_CACHE_PREFIX,
+  PRODUCT_BRANCH_MOVEMENT_CACHE_TTL_LIST,
+  PRODUCT_BRANCH_MOVEMENT_CACHE_TTL_SINGLE,
+  ProductBranchMovementFilters,
+} from './productBranchMovement.helpers';
+import { scheduleProductBranchMovementCacheInvalidation } from './productBranchMovement.service.support';
 
 export class ProductBranchMovementService {
   /**
@@ -37,65 +40,17 @@ export class ProductBranchMovementService {
     paginationQuery?: PaginationQuery,
     filters?: ProductBranchMovementFilters
   ): Promise<PaginatedResult<any>> {
-    const page = paginationQuery?.page ?? 1;
-    const limit = paginationQuery?.limit ?? 10;
-    const sortBy = paginationQuery?.sortBy ?? 'movementDate';
-    const sortOrder = paginationQuery?.sortOrder ?? 'desc';
-
-    // Cache Key
-    const societyValue = filters?.societyCode || filters?.societyId;
-    const cacheKeyParts = [
-      CACHE_PREFIX,
-      'list',
-      societyValue || 'all',
-      filters?.originBranchId || 'all',
-      filters?.destinationBranchId || 'all',
-      filters?.productId || 'all',
-      filters?.status || 'all',
-      filters?.batchId || 'all',
-      filters?.dateFrom || 'all',
-      filters?.dateTo || 'all',
-      page,
-      limit,
-      sortBy,
-      sortOrder
-    ];
-    const cacheKey = cacheKeyParts.join(':');
-
-    // 1. Return Cache
+    const { page, limit, sortBy, sortOrder } = getProductBranchMovementListParams(paginationQuery);
+    const cacheKey = buildProductBranchMovementListCacheKey(page, limit, sortBy, sortOrder, filters);
     const cached = await redis.get<PaginatedResult<any>>(cacheKey);
     if (cached) return cached;
 
-    // 2. Build Query
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
-    const whereClause: any = {};
-
-    // Filter by Society (via originBranch)
-    if (filters?.societyCode) {
-      const society = await prisma.society.findUnique({ where: { code: filters.societyCode } });
-      if (society) {
-        whereClause.originBranch = { societyId: society.id };
-      } else {
-        return buildPaginatedResult([], page, limit, 0);
-      }
-    } else if (filters?.societyId) {
-      whereClause.originBranch = { societyId: filters.societyId };
+    const whereClause = await buildProductBranchMovementWhereClause(filters);
+    if (whereClause === null) {
+      return buildPaginatedResult([], page, limit, 0);
     }
 
-    if (filters?.originBranchId) whereClause.originBranchId = filters.originBranchId;
-    if (filters?.destinationBranchId) whereClause.destinationBranchId = filters.destinationBranchId;
-    if (filters?.productId) whereClause.productId = filters.productId;
-    if (filters?.status) whereClause.status = filters.status;
-    if (filters?.batchId) whereClause.batchId = filters.batchId;
-
-    if (filters?.dateFrom || filters?.dateTo) {
-      whereClause.movementDate = {};
-      const dateRange = convertLimaDateRangeToUTC(filters.dateFrom, filters.dateTo);
-      if (dateRange.from) whereClause.movementDate.gte = dateRange.from;
-      if (dateRange.to) whereClause.movementDate.lte = dateRange.to;
-    }
-
-    // 3. Execute
     const [data, total] = await prisma.$transaction([
       prisma.productBranchMovement.findMany({
         where: whereClause,
@@ -122,13 +77,12 @@ export class ProductBranchMovementService {
 
     const result = buildPaginatedResult(formattedData, page, limit, total);
 
-    // 4. Set Cache
-    await redis.set(cacheKey, result, CACHE_TTL_LIST);
+    await redis.set(cacheKey, result, PRODUCT_BRANCH_MOVEMENT_CACHE_TTL_LIST);
     return result;
   }
 
   static async getById(id: string) {
-    const cacheKey = `${CACHE_PREFIX}:${id}`;
+    const cacheKey = `${PRODUCT_BRANCH_MOVEMENT_CACHE_PREFIX}:${id}`;
     const cached = await redis.get(cacheKey);
     if (cached) return cached;
 
@@ -141,7 +95,7 @@ export class ProductBranchMovementService {
       },
     });
 
-    if (movement) await redis.set(cacheKey, movement, CACHE_TTL_SINGLE);
+    if (movement) await redis.set(cacheKey, movement, PRODUCT_BRANCH_MOVEMENT_CACHE_TTL_SINGLE);
     return movement;
   }
 
@@ -149,7 +103,7 @@ export class ProductBranchMovementService {
    * Create Transfer: Reserves stock at Origin
    */
   static async create(data: any) {
-    const validated = createProductBranchMovementSchema.parse(data);
+    const validated: CreateProductBranchMovementInput = createProductBranchMovementSchema.parse(data);
 
     // 1. Resolve product info for error messages
     const product = await prisma.product.findUnique({ where: { id: validated.productId } });
@@ -216,16 +170,7 @@ export class ProductBranchMovementService {
       return movement;
     });
 
-    // 4. Background Processing
-    setImmediate(async () => {
-      try {
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
-        await redis.deleteKeysByPrefix('products:');
-        await redis.deleteKeysByPrefix('branch_office_products:');
-      } catch (e) {
-        console.error('[MovementService] Cache error:', e);
-      }
-    });
+    scheduleProductBranchMovementCacheInvalidation({ logLabel: 'Cache' });
 
     return result;
   }
@@ -234,8 +179,8 @@ export class ProductBranchMovementService {
    * Create Bulk Transfer: Reserves stock for multiple items
    */
   static async createBulk(data: any) {
-    const validated = bulkCreateProductBranchMovementSchema.parse(data);
-    const batchId = `BATCH-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`.toUpperCase();
+    const validated: BulkCreateProductBranchMovementInput = bulkCreateProductBranchMovementSchema.parse(data);
+    const batchId = buildBulkTransferBatchId();
 
     const productIds = validated.items.map(i => i.productId);
 
@@ -321,16 +266,7 @@ export class ProductBranchMovementService {
       return { batchId, count: movements.length, movements };
     }, { timeout: 60000 });
 
-    // 4. Background Processing
-    setImmediate(async () => {
-      try {
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
-        await redis.deleteKeysByPrefix('products:'); // Stocks updated
-        await redis.deleteKeysByPrefix('branch_office_products:');
-      } catch (e) {
-        console.error('[MovementService] Bulk Cache error:', e);
-      }
-    });
+    scheduleProductBranchMovementCacheInvalidation({ logLabel: 'Bulk Cache' });
 
     return results;
   }
@@ -447,16 +383,7 @@ export class ProductBranchMovementService {
     });
 
     // Background processing
-    setImmediate(async () => {
-      try {
-        await redis.del(`${CACHE_PREFIX}:${id}`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
-        await redis.deleteKeysByPrefix('products:');
-        await redis.deleteKeysByPrefix('branch_office_products:');
-      } catch (e) {
-        console.error('[MovementService] Update background error:', e);
-      }
-    });
+    scheduleProductBranchMovementCacheInvalidation({ id, logLabel: 'Update background' });
 
     return result;
   }
@@ -473,17 +400,10 @@ export class ProductBranchMovementService {
       await tx.productBranchMovement.delete({ where: { id } });
     });
 
-    setImmediate(async () => {
-      try {
-        await redis.del(`${CACHE_PREFIX}:${id}`);
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
-        if (current.status === 'PENDING') {
-           await redis.deleteKeysByPrefix('products:');
-           await redis.deleteKeysByPrefix('branch_office_products:');
-        }
-      } catch (e) {
-        console.error('[MovementService] Delete background error:', e);
-      }
+    scheduleProductBranchMovementCacheInvalidation({
+      id,
+      includeProducts: current.status === 'PENDING',
+      logLabel: 'Delete background',
     });
   }
 
@@ -491,8 +411,8 @@ export class ProductBranchMovementService {
    * Transfer All Stock: Transfers every product with available stock from Origin to Destination
    */
   static async transferAll(data: any) {
-    const validated = transferAllSchema.parse(data);
-    const batchId = `TRANSFER-ALL-${Date.now()}-${Math.random().toString(36).substring(2, 7)}`.toUpperCase();
+    const validated: TransferAllInput = transferAllSchema.parse(data);
+    const batchId = buildTransferAllBatchId();
 
     // 1. Get all products with stock at the origin
     const originProducts = await prisma.branchOfficeProduct.findMany({
@@ -609,16 +529,7 @@ export class ProductBranchMovementService {
       return { batchId, count: movements.length, movements };
     }, { timeout: 90000 }); // Increase timeout for potentially many products
 
-    // 3. Background Processing
-    setImmediate(async () => {
-      try {
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:list:`);
-        await redis.deleteKeysByPrefix('products:');
-        await redis.deleteKeysByPrefix('branch_office_products:');
-      } catch (e) {
-        console.error('[MovementService] TransferAll Cache error:', e);
-      }
-    });
+    scheduleProductBranchMovementCacheInvalidation({ logLabel: 'TransferAll Cache' });
 
     return results;
   }

@@ -44,3 +44,7 @@ export const branchOfficeProductFiltersSchema = z.object({
     societyId: z.string().uuid().optional(),
   }),
 });
+
+export type CreateBranchOfficeProductInput = z.infer<typeof createBranchOfficeProductSchema>;
+export type UpdateBranchOfficeProductInput = z.infer<typeof updateBranchOfficeProductSchema>;
+export type BranchOfficeProductFilters = z.infer<typeof branchOfficeProductFiltersSchema>['query'];

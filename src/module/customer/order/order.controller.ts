@@ -9,6 +9,63 @@ import {
 import { paginationQuerySchema } from '@/schemas/pagination.schema';
 import { formatSafeParseErrors } from '@/utils/controller-helpers';
 import { asyncHandler } from '@/utils/asyncHandler';
+import { formatToLimaTime, toLimaTimezone } from '@/utils/dateFormatter';
+
+const REPORT_DEFAULT_DAYS = 30;
+const REPORT_MAX_DETAILED_DAYS = 31;
+
+const normalizeReportFilters = (filters: Record<string, any>) => {
+  const normalized = { ...filters };
+  const reportMode = normalized.reportMode || 'detailed';
+  const limaToday = toLimaTimezone(new Date());
+
+  const endDate = normalized.dateTo
+    ? toLimaTimezone(normalized.dateTo)
+    : limaToday;
+
+  if (!normalized.dateFrom && !normalized.dateTo) {
+    const startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - REPORT_DEFAULT_DAYS);
+    normalized.dateFrom = formatToLimaTime(startDate, 'yyyy-MM-dd');
+    normalized.dateTo = formatToLimaTime(endDate, 'yyyy-MM-dd');
+  } else if (!normalized.dateFrom && normalized.dateTo) {
+    const startDate = new Date(endDate);
+    startDate.setDate(startDate.getDate() - REPORT_DEFAULT_DAYS);
+    normalized.dateFrom = formatToLimaTime(startDate, 'yyyy-MM-dd');
+  } else if (normalized.dateFrom && !normalized.dateTo) {
+    normalized.dateTo = formatToLimaTime(endDate, 'yyyy-MM-dd');
+  }
+
+  if (!normalized.societyId && !normalized.societyCode) {
+    return {
+      ok: false,
+      status: 400,
+      body: { message: 'El reporte requiere societyId o societyCode.' }
+    } as const;
+  }
+
+  if (reportMode === 'detailed' && normalized.dateFrom && normalized.dateTo) {
+    const from = toLimaTimezone(normalized.dateFrom);
+    const to = toLimaTimezone(normalized.dateTo);
+    const diffMs = Math.abs(to.getTime() - from.getTime());
+    const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+
+    if (diffDays > REPORT_MAX_DETAILED_DAYS) {
+      return {
+        ok: false,
+        status: 422,
+        body: {
+          message: `El reporte detallado permite un rango maximo de ${REPORT_MAX_DETAILED_DAYS} dias.`
+        }
+      } as const;
+    }
+  }
+
+  return {
+    ok: true,
+    filters: normalized,
+  } as const;
+};
 
 export const OrderController = {
   /**
@@ -22,16 +79,21 @@ export const OrderController = {
       return res.status(400).json(filtersParse.error.format());
     }
 
+    const normalizedResult = normalizeReportFilters(filtersParse.data.query);
+    if (!normalizedResult.ok) {
+      return res.status(normalizedResult.status).json(normalizedResult.body);
+    }
+
     const { reportQueue } = await import('@/config/queue');
     const userId = (req as any).user?.id || 'system';
-    const societyId = filtersParse.data.query.societyCode
+    const societyId = normalizedResult.filters.societyCode
       ? undefined
-      : filtersParse.data.query.societyId;
+      : normalizedResult.filters.societyId;
 
     await reportQueue.add('generate-excel', {
-      filters: filtersParse.data.query,
+      filters: normalizedResult.filters,
       userId,
-      societyId: societyId || filtersParse.data.query.societyId
+      societyId: societyId || normalizedResult.filters.societyId
     });
 
     res.status(202).json({

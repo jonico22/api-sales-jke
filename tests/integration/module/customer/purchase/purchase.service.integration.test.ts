@@ -113,9 +113,74 @@ describeIntegration('PurchaseService integration', () => {
     expect(updatedPurchase.status).toBe(PurchaseStatus.COMPLETED);
     expect(branchStock.physicalStock).toBe(6);
     expect(branchStock.availableStock).toBe(6);
+    expect(product.stock).toBe(6);
     expect(product.priceCost.toString()).toBe('50');
     expect(inventoryLogs).toHaveLength(1);
     expect(inventoryLogs[0].type).toBe(TransactionType.PURCHASE_ENTRY);
     expect(inventoryLogs[0].quantity).toBe(6);
+  });
+
+  it('rejects completing a purchase without details', async () => {
+    fixture = await createOrderInventoryFixture({
+      partnerType: PartnerType.SUPPLIER,
+      initialStock: 0,
+    });
+
+    const purchase = await createPurchase({
+      societyId: fixture.refs.societyCode,
+      providerId: fixture.ids.partnerId,
+      currencyId: fixture.ids.currencyId,
+      branchOfficeId: fixture.ids.branchId,
+      totalAmount: 0,
+      subTotal: 0,
+      taxAmount: 0,
+      exchangeRate: 1,
+      status: PurchaseStatus.PENDING,
+      documentNumber: `PUR-EMPTY-${fixture.refs.societyCode}`,
+    } as any);
+
+    await expect(
+      updatePurchase(purchase.id, {
+        status: PurchaseStatus.COMPLETED,
+      } as any)
+    ).rejects.toThrow('No se puede completar una compra sin detalles');
+  });
+
+  it('rejects completing a purchase when totals do not match purchase details', async () => {
+    fixture = await createOrderInventoryFixture({
+      partnerType: PartnerType.SUPPLIER,
+      initialStock: 0,
+    });
+
+    const purchase = await createPurchase({
+      societyId: fixture.refs.societyCode,
+      providerId: fixture.ids.partnerId,
+      currencyId: fixture.ids.currencyId,
+      branchOfficeId: fixture.ids.branchId,
+      totalAmount: 999,
+      subTotal: 900,
+      taxAmount: 99,
+      exchangeRate: 1,
+      status: PurchaseStatus.PENDING,
+      documentNumber: `PUR-MISMATCH-${fixture.refs.societyCode}`,
+    } as any);
+
+    await prisma.purchaseDetail.create({
+      data: {
+        purchaseId: purchase.id,
+        productId: fixture.ids.productId,
+        quantity: 2,
+        unitPrice: 50,
+        subtotal: 100,
+        taxAmount: 18,
+        total: 118,
+      },
+    });
+
+    await expect(
+      updatePurchase(purchase.id, {
+        status: PurchaseStatus.COMPLETED,
+      } as any)
+    ).rejects.toThrow('No se puede completar la compra porque los totales no coinciden con sus detalles');
   });
 });

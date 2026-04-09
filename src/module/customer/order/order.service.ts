@@ -15,7 +15,7 @@ import {
   ORDER_CACHE_TTL_LIST,
   ORDER_CACHE_TTL_SINGLE,
 } from './order.helpers';
-import { shouldValidateStockForOrderStatus } from './order.stock-rules';
+import { getUpdateOrderStockActions, shouldValidateStockForOrderStatus } from './order.stock-rules';
 import {
   applyOrderCreateInventoryEffects,
   applyOrderUpdateStatusEffects,
@@ -38,6 +38,29 @@ import { toLimaTimezone, formatToLimaTime } from '@/utils/dateFormatter';
 import { ConflictAppError, NotFoundAppError } from '@/utils/domain-errors';
 
 export const OrderService = {
+  getReportRowCount: async (filters?: OrderFilters): Promise<{ rowCount: number; subscriptionId?: string }> => {
+    const { whereClause, subscriptionId } = await buildOrderWhereClause(filters);
+
+    const [itemCount, emptyOrderCount] = await prisma.$transaction([
+      prisma.orderItem.count({
+        where: {
+          order: whereClause,
+        },
+      }),
+      prisma.order.count({
+        where: {
+          ...whereClause,
+          orderItems: { none: {} },
+        },
+      }),
+    ]);
+
+    return {
+      rowCount: itemCount + emptyOrderCount,
+      subscriptionId,
+    };
+  },
+
   /**
    * Crear una nueva orden con cálculo de financieros backend-side
    * OPTIMIZADO: Validaciones paralelas, stock batch, notificaciones en background
@@ -241,6 +264,28 @@ export const OrderService = {
     if (!currentOrder) throw new NotFoundAppError('Orden no encontrada', { id });
 
     const isCompleting = updateData.status === OrderStatus.COMPLETED && currentOrder.status !== OrderStatus.COMPLETED;
+    const stockActions = getUpdateOrderStockActions(currentOrder.status, updateData.status);
+
+    if (stockActions.reserveStock && !stockActions.requiresExistingReservation) {
+      const productIds = currentOrder.orderItems.map(item => item.productId);
+      const products = await prisma.product.findMany({
+        where: { id: { in: productIds } }
+      });
+      const productMap = buildProductMap(products);
+      const itemsToValidate = currentOrder.orderItems.map(item => ({
+        productId: item.productId,
+        quantity: item.quantity,
+        unitPrice: Number(item.unitPrice),
+        discount: Number(item.discount),
+        subtotal: Number(item.subtotal),
+        taxAmount: Number(item.taxAmount),
+        total: Number(item.total),
+        comment: item.comment ?? undefined,
+        costPrice: Number(item.costPrice),
+      }));
+
+      await validateBranchStockAvailability(currentOrder.branchId, productIds, itemsToValidate, productMap);
+    }
 
     const result = await prisma.$transaction(async (tx) => {
       const updated = await tx.order.update({
@@ -313,33 +358,68 @@ export const OrderService = {
    * Generar reporte Excel (Buffer) con detalle de items y métodos de pago
    */
   getReport: async (filters?: OrderFilters): Promise<{ buffer: Buffer; subscriptionId?: string }> => {
+    const REPORT_BATCH_SIZE = 500;
+
     // 1. Construir WHERE (reutilizando lógica)
     const { whereClause, subscriptionId } = await buildOrderWhereClause(filters);
 
-    // 2. Consultar sin paginación y con las relaciones necesarias para el reporte
-    const orders = await prisma.order.findMany({
-      where: whereClause,
-      orderBy: { createdAt: 'desc' },
-      include: {
-        partner: { select: { companyName: true, firstName: true, lastName: true, documentNumber: true, email: true } },
-        currency: { select: { code: true } },
-        society: { select: { name: true } },
-        branch: { select: { name: true } },
-        OrderPayment: { select: { paymentMethod: true, amount: true, paymentDate: true } },
-        orderItems: {
-          include: {
-            product: { select: { name: true, code: true, category: { select: { name: true } } } }
-          }
-        }
-      }
-    });
+    // 2. Consultar en lotes y generar filas del Excel incrementalmente
+    const reportBatches = async function* () {
+      let skip = 0;
 
-    const data = buildOrderReportRows(orders, formatToLimaTime);
+      while (true) {
+        const orders = await prisma.order.findMany({
+          where: whereClause,
+          orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+          skip,
+          take: REPORT_BATCH_SIZE,
+          select: {
+            orderCode: true,
+            orderDate: true,
+            paymentDate: true,
+            status: true,
+            subtotal: true,
+            taxAmount: true,
+            discount: true,
+            totalAmount: true,
+            partner: { select: { companyName: true, firstName: true, lastName: true, documentNumber: true } },
+            currency: { select: { code: true } },
+            branch: { select: { name: true } },
+            OrderPayment: { select: { paymentMethod: true, paymentDate: true } },
+            orderItems: {
+              select: {
+                quantity: true,
+                unitPrice: true,
+                discount: true,
+                subtotal: true,
+                total: true,
+                product: {
+                  select: {
+                    name: true,
+                    code: true,
+                    category: { select: { name: true } }
+                  }
+                }
+              }
+            }
+          }
+        });
+
+        if (orders.length === 0) break;
+
+        yield buildOrderReportRows(orders, formatToLimaTime);
+
+        if (orders.length < REPORT_BATCH_SIZE) break;
+        skip += orders.length;
+      }
+    };
 
     // 4. Generar Buffer usando ExcelService
-    // Dynamic import to avoid circular dependency issues if any, or just importing at top
     const { ExcelService } = await import('@/services/excel.service');
-    const buffer = await ExcelService.generateExcelBuffer(data, 'Reporte Detallado');
+    const buffer = await ExcelService.generateExcelBufferFromBatches(
+      reportBatches(),
+      'Reporte Detallado'
+    );
 
     return { buffer, subscriptionId };
   }
