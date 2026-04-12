@@ -5,7 +5,6 @@ import { PartnerType, PurchaseStatus } from '@prisma/client';
 export const PURCHASE_CACHE_PREFIX = 'purchases:';
 export const PURCHASE_CACHE_TTL_LIST = 300;
 export const PURCHASE_CACHE_TTL_SINGLE = 600;
-export const PURCHASE_DASHBOARD_CACHE_KEYS = ['cash-flow'] as const;
 export const PURCHASE_TOTAL_TOLERANCE = 0.01;
 
 export const isUuid = (value: string) =>

@@ -85,7 +85,6 @@ describe('purchaseDetail.service', () => {
     expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('purchaseDetails:list:');
     expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('purchases:list:');
     expect(redisMock.del).toHaveBeenCalledWith('purchases:purchase-1');
-    expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('dashboard:cash-flow:soc-1');
     expect(result).toEqual({ id: 'detail-1' });
   });
 

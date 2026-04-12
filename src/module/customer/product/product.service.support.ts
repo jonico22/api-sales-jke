@@ -6,6 +6,13 @@ import {
   PRODUCT_DASHBOARD_CACHE_KEYS,
 } from './product.helpers';
 
+const publishDashboardRefresh = async (subscriptionId: string) => {
+  await Promise.all([
+    publishRealtimeUpdate(subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' }),
+    publishRealtimeUpdate(subscriptionId, 'DASHBOARD', { action: 'REFRESH_DASHBOARD' }),
+  ]);
+};
+
 export const invalidateProductCaches = async (societyId: string, productId?: string) => {
   const operations = [
     redis.deleteKeysByPrefix(`${PRODUCT_CACHE_PREFIX}${societyId}:`),
@@ -41,7 +48,7 @@ export const scheduleProductMutationSideEffects = (input: {
             name: input.product.name,
             code: input.product.code,
           }),
-          publishRealtimeUpdate(input.subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' }),
+          publishDashboardRefresh(input.subscriptionId),
         ]);
       }
     } catch (error) {

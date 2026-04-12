@@ -1,7 +1,7 @@
 
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
-import { PaymentStatus } from '@prisma/client';
+import { PaymentMethodOrder, PaymentStatus } from '@prisma/client';
 import {
   PaginatedResult,
   getPrismaPaginationParams,
@@ -15,6 +15,15 @@ import { NotFoundAppError } from '@/utils/domain-errors';
 
 const CACHE_PREFIX = 'order_payments:';
 const CACHE_TTL_LIST = 300; // 5 min
+
+const invalidatePaymentCaches = async (societyId: string) => {
+  await Promise.all([
+    redis.deleteKeysByPrefix(`dashboard:overview:${societyId}`),
+    redis.deleteKeysByPrefix(`dashboard:overview:v2:${societyId}`),
+    redis.deleteKeysByPrefix(`dashboard:overview:v3:${societyId}`),
+    redis.deleteKeysByPrefix(`analytics:payments-distribution:${societyId}`),
+  ]);
+};
 
 export const OrderPaymentService = {
   create: async (data: CreateOrderPaymentInput) => {
@@ -57,13 +66,17 @@ export const OrderPaymentService = {
     ]);
 
     // ─── 2. Crear el pago ─────────────────────────────────────────────
+    const paymentDate = data.paymentDate ? toLimaTimezone(data.paymentDate) : toLimaTimezone(new Date());
+    const resolvedStatus =
+      data.status ?? (data.paymentMethod === PaymentMethodOrder.CARD ? PaymentStatus.CONFIRMED : PaymentStatus.PENDING);
     const finalData = {
       ...data,
       societyId: societyResult.id,
       currencyId: currencyResult.id,
       orderId: orderResult?.id || undefined,
-      status: data.status || PaymentStatus.PENDING,
-      paymentDate: data.paymentDate ? toLimaTimezone(data.paymentDate) : toLimaTimezone(new Date())
+      status: resolvedStatus,
+      paymentDate,
+      confirmedAt: resolvedStatus === PaymentStatus.CONFIRMED ? paymentDate : undefined,
     };
 
     const created = await prisma.orderPayment.create({
@@ -78,7 +91,10 @@ export const OrderPaymentService = {
     setImmediate(async () => {
       try {
         // A. Invalidar cache
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        await Promise.all([
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+          invalidatePaymentCaches(resolvedSocietyId),
+        ]);
 
         if (resolvedOrderId) {
           await redis.del(`orders:${resolvedOrderId}`);
@@ -213,7 +229,10 @@ export const OrderPaymentService = {
     const updated = await prisma.orderPayment.update({ where: { id }, data: { ...data } });
 
     // Invalidar cache
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await Promise.all([
+      redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+      invalidatePaymentCaches(updated.societyId),
+    ]);
     if (updated.orderId) {
       await redis.del(`orders:${updated.orderId}`);
     }
@@ -224,7 +243,10 @@ export const OrderPaymentService = {
   delete: async (id: string) => {
     const deleted = await prisma.orderPayment.delete({ where: { id } });
 
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await Promise.all([
+      redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+      invalidatePaymentCaches(deleted.societyId),
+    ]);
     if (deleted.orderId) {
       await redis.del(`orders:${deleted.orderId}`);
     }

@@ -3,12 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const { dashboardServiceMock } = vi.hoisted(() => ({
   dashboardServiceMock: {
     getStats: vi.fn(),
-    getSalesPerformance: vi.fn(),
-    getRevenueByCategory: vi.fn(),
-    getTopProducts: vi.fn(),
-    getPaymentMethods: vi.fn(),
-    getCashFlow: vi.fn(),
-    getBranchPerformance: vi.fn(),
+    getOverview: vi.fn(),
+    getAlertsLowStock: vi.fn(),
+    getCatalogSummary: vi.fn(),
   },
 }));
 
@@ -46,7 +43,7 @@ describe('DashboardController', () => {
   });
 
   it('returns stats successfully', async () => {
-    dashboardServiceMock.getStats.mockResolvedValueOnce({ totalStockValue: 10 });
+    dashboardServiceMock.getStats.mockResolvedValueOnce({ salesToday: 10 });
     const req: any = { query: { societyCode: 'SOC1' } };
     const res = createResponse();
     const next = vi.fn();
@@ -55,45 +52,63 @@ describe('DashboardController', () => {
     await flushAsyncHandler();
 
     expect(dashboardServiceMock.getStats).toHaveBeenCalledWith('SOC1', {});
-    expect(res.json).toHaveBeenCalledWith({ totalStockValue: 10 });
+    expect(res.json).toHaveBeenCalledWith({ salesToday: 10 });
   });
 
-  it('returns payment methods successfully', async () => {
-    dashboardServiceMock.getPaymentMethods.mockResolvedValueOnce([{ method: 'CASH', value: 10 }]);
-    const req: any = { query: { societyId: '550e8400-e29b-41d4-a716-446655440000' } };
-    const res = createResponse();
-    const next = vi.fn();
-
-    await DashboardController.getPaymentMethods(req, res as any, next);
-    await flushAsyncHandler();
-
-    expect(dashboardServiceMock.getPaymentMethods).toHaveBeenCalledWith(
-      '550e8400-e29b-41d4-a716-446655440000',
-      {}
-    );
-    expect(res.json).toHaveBeenCalledWith([{ method: 'CASH', value: 10 }]);
-  });
-
-  it('passes month, year and branch filters to the service', async () => {
-    dashboardServiceMock.getSalesPerformance.mockResolvedValueOnce([]);
+  it('returns overview successfully', async () => {
+    dashboardServiceMock.getOverview.mockResolvedValueOnce({ salesTrend: [] });
     const req: any = {
       query: {
         societyCode: 'SOC1',
-        month: '3',
-        year: '2026',
         branchId: 'branch-1',
+        dateFrom: '2026-04-01',
+        dateTo: '2026-04-15',
+        granularity: 'day',
+        limit: '6',
       },
     };
     const res = createResponse();
     const next = vi.fn();
 
-    await DashboardController.getSalesPerformance(req, res as any, next);
+    await DashboardController.getOverview(req, res as any, next);
     await flushAsyncHandler();
 
-    expect(dashboardServiceMock.getSalesPerformance).toHaveBeenCalledWith('SOC1', {
-      month: 3,
-      year: 2026,
+    expect(dashboardServiceMock.getOverview).toHaveBeenCalledWith('SOC1', {
       branchId: 'branch-1',
+      dateFrom: '2026-04-01',
+      dateTo: '2026-04-15',
+      granularity: 'day',
+      limit: 6,
     });
+    expect(res.json).toHaveBeenCalledWith({ salesTrend: [] });
+  });
+
+  it('returns low stock alerts successfully', async () => {
+    dashboardServiceMock.getAlertsLowStock.mockResolvedValueOnce({ count: 1, items: [] });
+    const req: any = { query: { societyId: '550e8400-e29b-41d4-a716-446655440000', branchId: 'branch-1' } };
+    const res = createResponse();
+    const next = vi.fn();
+
+    await DashboardController.getAlertsLowStock(req, res as any, next);
+    await flushAsyncHandler();
+
+    expect(dashboardServiceMock.getAlertsLowStock).toHaveBeenCalledWith(
+      '550e8400-e29b-41d4-a716-446655440000',
+      { branchId: 'branch-1' }
+    );
+    expect(res.json).toHaveBeenCalledWith({ count: 1, items: [] });
+  });
+
+  it('returns catalog summary successfully', async () => {
+    dashboardServiceMock.getCatalogSummary.mockResolvedValueOnce({ totalStockValue: 10 });
+    const req: any = { query: { societyCode: 'SOC1' } };
+    const res = createResponse();
+    const next = vi.fn();
+
+    await DashboardController.getCatalogSummary(req, res as any, next);
+    await flushAsyncHandler();
+
+    expect(dashboardServiceMock.getCatalogSummary).toHaveBeenCalledWith('SOC1', {});
+    expect(res.json).toHaveBeenCalledWith({ totalStockValue: 10 });
   });
 });

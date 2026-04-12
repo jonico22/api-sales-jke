@@ -13,12 +13,11 @@ export const ORDER_CACHE_TTL_LIST = 300;
 export const ORDER_CACHE_TTL_SINGLE = 600;
 export const ORDER_DASHBOARD_CACHE_KEYS = [
   'stats',
-  'sales-performance',
-  'revenue-category',
-  'top-products',
-  'payment-methods',
-  'branch-performance',
-  'cash-flow'
+  'stats-v2',
+  'overview',
+  'overview:v2',
+  'overview:v3',
+  'catalog-summary',
 ] as const;
 
 export const invalidateOrderDashboardCaches = async (societyId: string) => Promise.all(

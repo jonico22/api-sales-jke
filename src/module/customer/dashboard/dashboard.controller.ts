@@ -4,6 +4,7 @@ import { DashboardService } from './dashboard.service';
 import { asyncHandler } from '@/utils/asyncHandler';
 import { getQueryString } from '@/utils/controller-helpers';
 import { DashboardFilters } from './dashboard.helpers';
+import { AnalyticsFilters } from '../analytics/analytics.helpers';
 
 const getSocietyCodeOrId = (req: Request) => {
     return getQueryString(req, 'societyCode', 'societyId');
@@ -25,6 +26,23 @@ const getDashboardFilters = (req: Request): DashboardFilters => {
     };
 };
 
+const getDashboardOverviewFilters = (req: Request): AnalyticsFilters => {
+    const branchId = getQueryString(req, 'branchId');
+    const dateFrom = getQueryString(req, 'dateFrom');
+    const dateTo = getQueryString(req, 'dateTo');
+    const granularity = getQueryString(req, 'granularity') as AnalyticsFilters['granularity'];
+    const limitRaw = getQueryString(req, 'limit');
+    const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
+
+    return {
+        ...(branchId ? { branchId } : {}),
+        ...(dateFrom ? { dateFrom } : {}),
+        ...(dateTo ? { dateTo } : {}),
+        ...(granularity ? { granularity } : {}),
+        ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
+    };
+};
+
 export const DashboardController = {
     getStats: asyncHandler(async (req: Request, res: Response) => {
         const societyCode = getSocietyCodeOrId(req);
@@ -37,49 +55,21 @@ export const DashboardController = {
         res.json(stats);
     }),
 
-    getSalesPerformance: asyncHandler(async (req: Request, res: Response) => {
+    getOverview: asyncHandler(async (req: Request, res: Response) => {
         const societyCode = getSocietyCodeOrId(req);
-        const filters = getDashboardFilters(req);
-        if (!societyCode) {
-            return res.status(400).json({ message: 'Society Code/ID is required' });
-        }
-
-        const chartData = await DashboardService.getSalesPerformance(societyCode, filters);
-        res.json(chartData);
+        if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
+        res.json(await DashboardService.getOverview(societyCode, getDashboardOverviewFilters(req)));
     }),
 
-    getRevenueByCategory: asyncHandler(async (req: Request, res: Response) => {
+    getAlertsLowStock: asyncHandler(async (req: Request, res: Response) => {
         const societyCode = getSocietyCodeOrId(req);
-        const filters = getDashboardFilters(req);
         if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
-        res.json(await DashboardService.getRevenueByCategory(societyCode, filters));
+        res.json(await DashboardService.getAlertsLowStock(societyCode, getDashboardOverviewFilters(req)));
     }),
 
-    getTopProducts: asyncHandler(async (req: Request, res: Response) => {
+    getCatalogSummary: asyncHandler(async (req: Request, res: Response) => {
         const societyCode = getSocietyCodeOrId(req);
-        const filters = getDashboardFilters(req);
         if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
-        res.json(await DashboardService.getTopProducts(societyCode, filters));
-    }),
-
-    getPaymentMethods: asyncHandler(async (req: Request, res: Response) => {
-        const societyCode = getSocietyCodeOrId(req);
-        const filters = getDashboardFilters(req);
-        if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
-        res.json(await DashboardService.getPaymentMethods(societyCode, filters));
-    }),
-
-    getCashFlow: asyncHandler(async (req: Request, res: Response) => {
-        const societyCode = getSocietyCodeOrId(req);
-        const filters = getDashboardFilters(req);
-        if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
-        res.json(await DashboardService.getCashFlow(societyCode, filters));
-    }),
-
-    getBranchPerformance: asyncHandler(async (req: Request, res: Response) => {
-        const societyCode = getSocietyCodeOrId(req);
-        const filters = getDashboardFilters(req);
-        if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
-        res.json(await DashboardService.getBranchPerformance(societyCode, filters));
+        res.json(await DashboardService.getCatalogSummary(societyCode, getDashboardOverviewFilters(req)));
     })
 };

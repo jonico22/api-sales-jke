@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { ConsignmentStatus } from '@prisma/client';
 
 export const createOutgoingConsignmentAgreementSchema = z.object({
-  societyId: z.string().uuid(),
+  societyId: z.string().min(1),
   branchId: z.string().uuid(),
   partnerId: z.string().uuid(),
   startDate: z.coerce.date(),

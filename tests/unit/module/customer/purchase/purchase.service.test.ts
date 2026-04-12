@@ -134,7 +134,6 @@ describe('purchase.service', () => {
       quantity: 6,
     }), tx);
     expect(redisMock.del).toHaveBeenCalledWith('purchases:purchase-1');
-    expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('dashboard:cash-flow:soc-1');
     expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('purchases:list:');
     expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('products:');
     expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('products:select:');
@@ -142,7 +141,7 @@ describe('purchase.service', () => {
     expect(result.status).toBe(PurchaseStatus.COMPLETED);
   });
 
-  it('invalidates dashboard cash-flow cache when creating a purchase', async () => {
+  it('invalidates purchase list cache when creating a purchase', async () => {
     prismaMock.bussinessPartner.findUnique.mockResolvedValueOnce({
       id: 'partner-1',
       type: PartnerType.SUPPLIER,
@@ -162,7 +161,6 @@ describe('purchase.service', () => {
       totalAmount: 100,
     } as any);
 
-    expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('dashboard:cash-flow:550e8400-e29b-41d4-a716-446655440000');
     expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('purchases:list:');
   });
 

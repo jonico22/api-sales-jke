@@ -13,6 +13,7 @@ import {
   PaginationQuery,
 } from '@/utils/pagination';
 import { DeliveredConsignmentAgreement } from '@prisma/client';
+import { DomainRuleAppError } from '@/utils/domain-errors';
 
 type CreateInput = z.infer<typeof createDeliveredConsignmentAgreementSchema>;
 type UpdateInput = z.infer<typeof updateDeliveredConsignmentAgreementSchema>;
@@ -21,6 +22,15 @@ type Filters = z.infer<typeof filterDeliveredConsignmentAgreementSchema>['query'
 const CACHE_PREFIX = 'deliveredConsignments:';
 const CACHE_TTL_LIST = 300; // 5 minutos
 const CACHE_TTL_SINGLE = 600; // 10 minutos
+const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+const resolveSocietyFilter = async (societyIdOrCode?: string) => {
+  if (!societyIdOrCode) return undefined;
+  if (UUID_REGEX.test(societyIdOrCode)) return societyIdOrCode;
+
+  const society = await prisma.society.findUnique({ where: { code: societyIdOrCode } });
+  return society?.id;
+};
 
 export const create = async (input: CreateInput) => {
   // Logic: Calculate totals if not provided
@@ -31,9 +41,17 @@ export const create = async (input: CreateInput) => {
   // Ensure totals are calculated
   const data = {
     ...input,
+    remainingStock: input.remainingStock ?? deliveredStock,
     totalCost: input.totalCost ?? (deliveredStock * costPrice),
     totalValue: input.totalValue ?? (deliveredStock * suggestedSalePrice),
   };
+
+  if (data.remainingStock > deliveredStock) {
+    throw new DomainRuleAppError('El stock restante no puede ser mayor al stock entregado', {
+      deliveredStock,
+      remainingStock: data.remainingStock,
+    });
+  }
 
   const created = await prisma.deliveredConsignmentAgreement.create({ data });
 
@@ -44,11 +62,31 @@ export const create = async (input: CreateInput) => {
 };
 
 export const update = async (id: string, input: UpdateInput) => {
-  // If stock or price changes, we might need to recalculate totals, but simplified update for now.
-  // Ideally we check if these fields are present.
-  // For now, trust the input or simpler logic: just update.
+  const existing = await prisma.deliveredConsignmentAgreement.findUnique({ where: { id } });
+  if (!existing) {
+    throw new DomainRuleAppError('Entrega en consignación no encontrada', { id });
+  }
 
-  const updated = await prisma.deliveredConsignmentAgreement.update({ where: { id }, data: input });
+  const deliveredStock = input.deliveredStock ?? existing.deliveredStock;
+  const remainingStock = input.remainingStock ?? existing.remainingStock ?? deliveredStock;
+  const costPrice = input.costPrice ?? Number(existing.costPrice);
+  const suggestedSalePrice = input.suggestedSalePrice ?? Number(existing.suggestedSalePrice);
+
+  if (remainingStock > deliveredStock) {
+    throw new DomainRuleAppError('El stock restante no puede ser mayor al stock entregado', {
+      deliveredStock,
+      remainingStock,
+    });
+  }
+
+  const data = {
+    ...input,
+    totalCost: input.totalCost ?? (deliveredStock * costPrice),
+    totalValue: input.totalValue ?? (deliveredStock * suggestedSalePrice),
+    remainingStock,
+  };
+
+  const updated = await prisma.deliveredConsignmentAgreement.update({ where: { id }, data });
 
   // Invalidate Cache
   await redis.del(`${CACHE_PREFIX}${id}`);
@@ -98,20 +136,13 @@ export const getAll = async (
   const sortOrder = paginationQuery?.sortOrder || 'desc';
 
   // Resolve societyId from filters
-  let resolvedSocietyId = filters?.societyId;
+  let resolvedSocietyId: string | undefined;
   const societyCode = filters?.societyCode || filters?.societyId;
 
-  if (!resolvedSocietyId && societyCode) {
-    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
-    if (isUuid) {
-      resolvedSocietyId = societyCode;
-    } else {
-      const society = await prisma.society.findUnique({ where: { code: societyCode } });
-      if (society) {
-        resolvedSocietyId = society.id;
-      } else {
-        return buildPaginatedResult([], page, limit, 0);
-      }
+  if (societyCode) {
+    resolvedSocietyId = await resolveSocietyFilter(societyCode);
+    if (!resolvedSocietyId) {
+      return buildPaginatedResult([], page, limit, 0);
     }
   }
 

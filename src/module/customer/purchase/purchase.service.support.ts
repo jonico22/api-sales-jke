@@ -1,10 +1,7 @@
 import { InventoryService } from '@/module/inventory/inventory.service';
 import { TransactionType } from '@prisma/client';
 import { redis } from '@/config/redis';
-import {
-  PURCHASE_CACHE_PREFIX,
-  PURCHASE_DASHBOARD_CACHE_KEYS,
-} from './purchase.helpers';
+import { PURCHASE_CACHE_PREFIX } from './purchase.helpers';
 
 export const invalidatePurchaseCaches = async (societyId?: string, purchaseId?: string) => {
   const cacheOperations = [
@@ -17,13 +14,6 @@ export const invalidatePurchaseCaches = async (societyId?: string, purchaseId?: 
   if (purchaseId) {
     cacheOperations.unshift(redis.del(`${PURCHASE_CACHE_PREFIX}${purchaseId}`));
   }
-
-  if (societyId) {
-    cacheOperations.push(
-      ...PURCHASE_DASHBOARD_CACHE_KEYS.map((key) => redis.deleteKeysByPrefix(`dashboard:${key}:${societyId}`))
-    );
-  }
-
   await Promise.all(cacheOperations);
 };
 

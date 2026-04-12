@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { format } from 'date-fns';
+import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
 import { convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
 import { ValidationAppError } from '@/utils/domain-errors';
 
@@ -70,3 +72,21 @@ export const getDashboardYearRange = (filters?: DashboardFilters) => {
 
 export const buildBranchFilterSql = (columnName: string, branchId?: string) =>
   branchId ? Prisma.sql` AND ${Prisma.raw(columnName)} = ${branchId}` : Prisma.empty;
+
+export const getCurrentDashboardDateContexts = () => {
+  const now = new Date();
+  const limaNow = toZonedTime(now, 'America/Lima');
+  const today = formatInTimeZone(now, 'America/Lima', 'yyyy-MM-dd');
+  const currentDay = new Date(limaNow);
+  const dayOfWeek = currentDay.getDay();
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const weekStart = new Date(currentDay);
+  weekStart.setDate(currentDay.getDate() + diffToMonday);
+
+  return {
+    today,
+    weekStart: format(weekStart, 'yyyy-MM-dd'),
+    month: limaNow.getMonth() + 1,
+    year: limaNow.getFullYear(),
+  };
+};

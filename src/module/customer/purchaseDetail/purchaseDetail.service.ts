@@ -20,7 +20,6 @@ const CACHE_TTL_LIST = 300; // 5 minutos
 const CACHE_TTL_SINGLE = 600; // 10 minutos
 
 const PURCHASE_CACHE_PREFIX = 'purchases:';
-const PURCHASE_DASHBOARD_CACHE_KEYS = ['cash-flow'] as const;
 
 const recalculatePurchaseTotals = async (tx: any, purchaseId: string) => {
   const aggregate = await tx.purchaseDetail.aggregate({
@@ -75,13 +74,6 @@ const invalidatePurchaseDetailCaches = async (purchaseId?: string, purchaseDetai
   if (purchaseId) {
     cacheOperations.push(redis.del(`${PURCHASE_CACHE_PREFIX}${purchaseId}`));
   }
-
-  if (societyId) {
-    cacheOperations.push(
-      ...PURCHASE_DASHBOARD_CACHE_KEYS.map(key => redis.deleteKeysByPrefix(`dashboard:${key}:${societyId}`))
-    );
-  }
-
   await Promise.all(cacheOperations);
 };
 

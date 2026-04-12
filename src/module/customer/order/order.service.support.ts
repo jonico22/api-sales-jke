@@ -11,6 +11,13 @@ import { getCreateOrderStockActions, getUpdateOrderStockActions } from './order.
 import { runInBackground } from '@/utils/background-task';
 import { OrderStatus, TransactionType } from '@prisma/client';
 
+const publishDashboardRefresh = async (subscriptionId: string) => {
+  await Promise.all([
+    publishRealtimeUpdate(subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' }),
+    publishRealtimeUpdate(subscriptionId, 'DASHBOARD', { action: 'REFRESH_DASHBOARD' }),
+  ]);
+};
+
 export const buildOrderListCacheKey = (
   page: number,
   limit: number,
@@ -174,7 +181,7 @@ export const publishCompletedOrderNotifications = async (input: {
       partnerName,
       paidAt: new Date(),
     }),
-    publishRealtimeUpdate(subscriptionId, 'DASHBOARD', { action: 'REFRESH_STATS' }),
+    publishDashboardRefresh(subscriptionId),
     publishNotification({
       type: NotificationType.SALES,
       title: 'Venta Realizada',

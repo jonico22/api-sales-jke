@@ -34,12 +34,7 @@ export const PRODUCT_CACHE_TTL_SINGLE = 600;
 export const PRODUCT_CACHE_TTL_SELECT = 900;
 export const PRODUCT_DASHBOARD_CACHE_KEYS = [
   'stats',
-  'sales-performance',
-  'revenue-category',
-  'top-products',
-  'payment-methods',
-  'branch-performance',
-  'cash-flow',
+  'stats-v2',
 ] as const;
 
 export const isUuid = (value: string) =>

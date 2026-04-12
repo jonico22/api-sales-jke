@@ -34,11 +34,8 @@ const router = Router();
  *                   type: number
  */
 router.get('/stats', DashboardController.getStats);
-router.get('/charts/sales-performance', DashboardController.getSalesPerformance);
-router.get('/charts/revenue-by-category', DashboardController.getRevenueByCategory);
-router.get('/charts/top-products', DashboardController.getTopProducts);
-router.get('/charts/payment-methods', DashboardController.getPaymentMethods);
-router.get('/charts/branch-performance', DashboardController.getBranchPerformance);
-router.get('/charts/cash-flow', DashboardController.getCashFlow);
+router.get('/overview', DashboardController.getOverview);
+router.get('/alerts/low-stock', DashboardController.getAlertsLowStock);
+router.get('/catalog-summary', DashboardController.getCatalogSummary);
 
 export default router;
