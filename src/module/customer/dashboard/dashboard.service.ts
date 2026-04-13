@@ -21,10 +21,16 @@ import {
 
 const DASHBOARD_CACHE_TTL = 300;
 
+const shiftLimaDateKey = (dateKey: string, days: number) => {
+  const date = new Date(`${dateKey}T00:00:00-05:00`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+};
+
 const resolveOverviewTrendFilters = (filters?: AnalyticsFilters): AnalyticsFilters => {
   const resolved = normalizeAnalyticsFilters(filters);
   const granularity = filters?.granularity ?? resolved.granularity;
-  const { today, weekStart } = getCurrentDashboardDateContexts();
+  const { today } = getCurrentDashboardDateContexts();
   const hasExplicitRange =
     Boolean(filters?.dateFrom) &&
     Boolean(filters?.dateTo) &&
@@ -46,7 +52,7 @@ const resolveOverviewTrendFilters = (filters?: AnalyticsFilters): AnalyticsFilte
   if (!hasExplicitRange && (granularity === 'week' || granularity === 'month')) {
     return {
       ...filters,
-      dateFrom: granularity === 'week' ? weekStart : `${today.slice(0, 7)}-01`,
+      dateFrom: granularity === 'week' ? shiftLimaDateKey(today, -6) : `${today.slice(0, 7)}-01`,
       dateTo: today,
       granularity,
       limit: filters?.limit ?? resolved.limit,
@@ -61,6 +67,11 @@ const resolveOverviewTrendFilters = (filters?: AnalyticsFilters): AnalyticsFilte
     limit: filters?.limit ?? resolved.limit,
   };
 };
+
+const hasExplicitOverviewRange = (filters?: AnalyticsFilters) =>
+  Boolean(filters?.dateFrom) &&
+  Boolean(filters?.dateTo) &&
+  filters?.dateFrom !== filters?.dateTo;
 
 const buildHourlyLabels = () =>
   Array.from({ length: 24 }, (_, hour) => `${String(hour).padStart(2, '0')}:00`);
@@ -148,14 +159,15 @@ export const DashboardService = {
 
   getOverview: async (societyRef: string | undefined, filters?: AnalyticsFilters) => {
     const targetSocietyId = await resolveSocietyId(societyRef);
+    const explicitRange = hasExplicitOverviewRange(filters);
     const compactFilters = resolveOverviewTrendFilters(filters);
     const resolved = normalizeAnalyticsFilters(compactFilters);
-    const trendGranularity = 'day';
+    const trendGranularity = explicitRange && compactFilters.granularity === 'week' ? 'week' : 'day';
     const targetOverviewDate = compactFilters.granularity === 'day' ? compactFilters.dateTo || compactFilters.dateFrom : undefined;
     const overviewCacheKey = [
       'dashboard',
       'overview',
-      'v3',
+      'v4',
       targetSocietyId,
       compactFilters.branchId || 'all',
       compactFilters.dateFrom || 'auto-from',

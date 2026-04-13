@@ -17,6 +17,7 @@ export const ORDER_DASHBOARD_CACHE_KEYS = [
   'overview',
   'overview:v2',
   'overview:v3',
+  'overview:v4',
   'catalog-summary',
 ] as const;
 

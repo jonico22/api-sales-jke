@@ -21,6 +21,7 @@ const invalidatePaymentCaches = async (societyId: string) => {
     redis.deleteKeysByPrefix(`dashboard:overview:${societyId}`),
     redis.deleteKeysByPrefix(`dashboard:overview:v2:${societyId}`),
     redis.deleteKeysByPrefix(`dashboard:overview:v3:${societyId}`),
+    redis.deleteKeysByPrefix(`dashboard:overview:v4:${societyId}`),
     redis.deleteKeysByPrefix(`analytics:payments-distribution:${societyId}`),
   ]);
 };
