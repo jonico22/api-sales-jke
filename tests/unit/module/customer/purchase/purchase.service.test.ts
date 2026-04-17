@@ -138,6 +138,10 @@ describe('purchase.service', () => {
     expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('products:');
     expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('products:select:');
     expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('branch_office_products:');
+    expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('dashboard:overview:soc-1');
+    expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('dashboard:overview:v4:soc-1');
+    expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('analytics:summary:soc-1');
+    expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('analytics:cash-flow-trend:soc-1');
     expect(result.status).toBe(PurchaseStatus.COMPLETED);
   });
 
@@ -162,6 +166,7 @@ describe('purchase.service', () => {
     } as any);
 
     expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('purchases:list:');
+    expect(redisMock.deleteKeysByPrefix).toHaveBeenCalledWith('dashboard:overview:v4:550e8400-e29b-41d4-a716-446655440000');
   });
 
   it('rejects completing a purchase without details', async () => {

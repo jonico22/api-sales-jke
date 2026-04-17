@@ -8,7 +8,11 @@ export interface DashboardFilters {
   month?: number;
   year?: number;
   branchId?: string;
+  dateFrom?: string;
+  dateTo?: string;
 }
+
+const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 
 export const normalizeDashboardFilters = (filters?: DashboardFilters): DashboardFilters => {
   if (!filters) {
@@ -23,6 +27,14 @@ export const normalizeDashboardFilters = (filters?: DashboardFilters): Dashboard
     throw new ValidationAppError('Year must be an integer between 2000 and 2100', { year: filters.year });
   }
 
+  if (filters.dateFrom !== undefined && !DATE_ONLY_REGEX.test(filters.dateFrom)) {
+    throw new ValidationAppError('dateFrom must use YYYY-MM-DD format', { dateFrom: filters.dateFrom });
+  }
+
+  if (filters.dateTo !== undefined && !DATE_ONLY_REGEX.test(filters.dateTo)) {
+    throw new ValidationAppError('dateTo must use YYYY-MM-DD format', { dateTo: filters.dateTo });
+  }
+
   return filters;
 };
 
@@ -35,6 +47,8 @@ export const buildDashboardCacheKey = (
     'dashboard',
     metric,
     societyId,
+    filters?.dateFrom || 'all',
+    filters?.dateTo || 'all',
     filters?.year || 'all',
     filters?.month || 'all',
     filters?.branchId || 'all',

@@ -35,6 +35,7 @@ export const PRODUCT_CACHE_TTL_SELECT = 900;
 export const PRODUCT_DASHBOARD_CACHE_KEYS = [
   'stats',
   'stats-v2',
+  'stats-v3',
 ] as const;
 
 export const isUuid = (value: string) =>

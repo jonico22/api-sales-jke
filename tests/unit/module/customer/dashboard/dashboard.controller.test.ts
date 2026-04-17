@@ -55,6 +55,30 @@ describe('DashboardController', () => {
     expect(res.json).toHaveBeenCalledWith({ salesToday: 10 });
   });
 
+  it('passes explicit stats date range filters', async () => {
+    dashboardServiceMock.getStats.mockResolvedValueOnce({ salesThisMonth: 100 });
+    const req: any = {
+      query: {
+        societyCode: 'SOC1',
+        dateFrom: '2026-03-01',
+        dateTo: '2026-03-31',
+        branchId: 'branch-1',
+      },
+    };
+    const res = createResponse();
+    const next = vi.fn();
+
+    await DashboardController.getStats(req, res as any, next);
+    await flushAsyncHandler();
+
+    expect(dashboardServiceMock.getStats).toHaveBeenCalledWith('SOC1', {
+      branchId: 'branch-1',
+      dateFrom: '2026-03-01',
+      dateTo: '2026-03-31',
+    });
+    expect(res.json).toHaveBeenCalledWith({ salesThisMonth: 100 });
+  });
+
   it('returns overview successfully', async () => {
     dashboardServiceMock.getOverview.mockResolvedValueOnce({ salesTrend: [] });
     const req: any = {

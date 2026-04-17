@@ -14,6 +14,18 @@ export const invalidatePurchaseCaches = async (societyId?: string, purchaseId?: 
   if (purchaseId) {
     cacheOperations.unshift(redis.del(`${PURCHASE_CACHE_PREFIX}${purchaseId}`));
   }
+
+  if (societyId) {
+    cacheOperations.push(
+      redis.deleteKeysByPrefix(`dashboard:overview:${societyId}`),
+      redis.deleteKeysByPrefix(`dashboard:overview:v2:${societyId}`),
+      redis.deleteKeysByPrefix(`dashboard:overview:v3:${societyId}`),
+      redis.deleteKeysByPrefix(`dashboard:overview:v4:${societyId}`),
+      redis.deleteKeysByPrefix(`analytics:summary:${societyId}`),
+      redis.deleteKeysByPrefix(`analytics:cash-flow-trend:${societyId}`),
+    );
+  }
+
   await Promise.all(cacheOperations);
 };
 

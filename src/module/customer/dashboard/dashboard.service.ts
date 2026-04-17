@@ -27,6 +27,28 @@ const shiftLimaDateKey = (dateKey: string, days: number) => {
   return date.toISOString().slice(0, 10);
 };
 
+const resolveStatsDateContexts = (filters: DashboardFilters) => {
+  const { today, weekStart, month, year } = getCurrentDashboardDateContexts();
+
+  if (filters.dateFrom || filters.dateTo) {
+    const rangeStart = filters.dateFrom ?? filters.dateTo ?? today;
+    const rangeEnd = filters.dateTo ?? filters.dateFrom ?? today;
+    const explicitRange = convertLimaDateRangeToUTC(rangeStart, rangeEnd);
+
+    return {
+      today: rangeEnd,
+      weekStart: shiftLimaDateKey(rangeEnd, -6),
+      monthRange: { start: explicitRange.from!, end: explicitRange.to! },
+    };
+  }
+
+  return {
+    today,
+    weekStart,
+    monthRange: getDashboardMonthRange({ month, year, branchId: filters.branchId }),
+  };
+};
+
 const resolveOverviewTrendFilters = (filters?: AnalyticsFilters): AnalyticsFilters => {
   const resolved = normalizeAnalyticsFilters(filters);
   const granularity = filters?.granularity ?? resolved.granularity;
@@ -91,17 +113,36 @@ const resolveSocietyId = async (societyRef: string | undefined): Promise<string>
   throw new NotFoundAppError('Invalid Society Code', { societyCode: societyRef });
 };
 
+const resolveBranchId = async (societyId: string, branchRef?: string) => {
+  if (!branchRef) return undefined;
+
+  const isUuid = /^[0-9a-fA-F-]{36}$/.test(branchRef);
+  if (isUuid) return branchRef;
+
+  const branch = await prisma.branchOffice.findUnique({
+    where: { societyId_code: { societyId, code: branchRef } },
+    select: { id: true },
+  });
+
+  if (branch) return branch.id;
+  throw new NotFoundAppError('Invalid Branch Code', { societyId, branchCode: branchRef });
+};
+
 export const DashboardService = {
   getStats: async (societyRef: string | undefined, filters?: DashboardFilters) => {
     const targetSocietyId = await resolveSocietyId(societyRef);
     const normalizedFilters = normalizeDashboardFilters(filters);
-    const cacheKey = buildDashboardCacheKey('stats-v2', targetSocietyId, normalizedFilters);
+    const resolvedBranchId = await resolveBranchId(targetSocietyId, normalizedFilters.branchId);
+    const resolvedFilters = {
+      ...normalizedFilters,
+      branchId: resolvedBranchId,
+    };
+    const cacheKey = buildDashboardCacheKey('stats-v3', targetSocietyId, resolvedFilters);
     const cachedStats = await redis.get(cacheKey);
     if (cachedStats) return cachedStats;
 
-    const { today, weekStart, month, year } = getCurrentDashboardDateContexts();
-    const branchFilter = normalizedFilters.branchId ? { branchId: normalizedFilters.branchId } : {};
-    const monthRange = getDashboardMonthRange({ month, year, branchId: normalizedFilters.branchId });
+    const { today, weekStart, monthRange } = resolveStatsDateContexts(resolvedFilters);
+    const branchFilter = resolvedFilters.branchId ? { branchId: resolvedFilters.branchId } : {};
     const todayRange = convertLimaDateRangeToUTC(today, today);
     const weekRange = convertLimaDateRangeToUTC(weekStart, today);
 
@@ -159,8 +200,13 @@ export const DashboardService = {
 
   getOverview: async (societyRef: string | undefined, filters?: AnalyticsFilters) => {
     const targetSocietyId = await resolveSocietyId(societyRef);
-    const explicitRange = hasExplicitOverviewRange(filters);
-    const compactFilters = resolveOverviewTrendFilters(filters);
+    const resolvedBranchId = await resolveBranchId(targetSocietyId, filters?.branchId);
+    const resolvedInputFilters = {
+      ...filters,
+      branchId: resolvedBranchId,
+    };
+    const explicitRange = hasExplicitOverviewRange(resolvedInputFilters);
+    const compactFilters = resolveOverviewTrendFilters(resolvedInputFilters);
     const resolved = normalizeAnalyticsFilters(compactFilters);
     const trendGranularity = explicitRange && compactFilters.granularity === 'week' ? 'week' : 'day';
     const targetOverviewDate = compactFilters.granularity === 'day' ? compactFilters.dateTo || compactFilters.dateFrom : undefined;
@@ -366,8 +412,9 @@ export const DashboardService = {
 
   getAlertsLowStock: async (societyRef: string | undefined, filters?: AnalyticsFilters) => {
     const targetSocietyId = await resolveSocietyId(societyRef);
+    const resolvedBranchId = await resolveBranchId(targetSocietyId, filters?.branchId);
     const result: any = await AnalyticsService.getInventoryLowStock(targetSocietyId, {
-      branchId: filters?.branchId,
+      branchId: resolvedBranchId,
       limit: filters?.limit ?? 10,
     });
 
@@ -387,8 +434,9 @@ export const DashboardService = {
 
   getCatalogSummary: async (societyRef: string | undefined, filters?: AnalyticsFilters) => {
     const targetSocietyId = await resolveSocietyId(societyRef);
+    const resolvedBranchId = await resolveBranchId(targetSocietyId, filters?.branchId);
     const cacheKey = buildDashboardCacheKey('catalog-summary', targetSocietyId, {
-      branchId: filters?.branchId,
+      branchId: resolvedBranchId,
       month: undefined,
       year: undefined,
     });
@@ -396,13 +444,13 @@ export const DashboardService = {
     if (cached) return cached;
 
     const [stockValueResult, lowStockCountResult, newProductsThisMonth, activeProducts] = await Promise.all([
-      filters?.branchId
+      resolvedBranchId
         ? prisma.$queryRaw<any[]>`
             SELECT COALESCE(SUM(p.price * bop."physicalStock"), 0) as total
             FROM "BranchOfficeProduct" bop
             JOIN "Product" p ON p.id = bop."productId"
             WHERE p."societyId" = ${targetSocietyId}
-            AND bop."branchOfficeId" = ${filters.branchId}
+            AND bop."branchOfficeId" = ${resolvedBranchId}
             AND bop."isDeleted" = false
             AND p."isActive" = true
             AND p."isDeleted" = false
@@ -422,7 +470,7 @@ export const DashboardService = {
         AND bop."isDeleted" = false
         AND p."isDeleted" = false
         AND p."isActive" = true
-        ${filters?.branchId ? Prisma.sql`AND bop."branchOfficeId" = ${filters.branchId}` : Prisma.empty}
+        ${resolvedBranchId ? Prisma.sql`AND bop."branchOfficeId" = ${resolvedBranchId}` : Prisma.empty}
         AND bop."availableStock" <= COALESCE(bop."minStock", p."minStock")
       `,
       prisma.product.count({

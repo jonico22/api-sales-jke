@@ -18,11 +18,15 @@ const getDashboardFilters = (req: Request): DashboardFilters => {
         ? Number.parseInt(req.query.year, 10)
         : undefined;
     const branchId = getQueryString(req, 'branchId');
+    const dateFrom = getQueryString(req, 'dateFrom');
+    const dateTo = getQueryString(req, 'dateTo');
 
     return {
         ...(month !== undefined && !Number.isNaN(month) ? { month } : {}),
         ...(year !== undefined && !Number.isNaN(year) ? { year } : {}),
         ...(branchId ? { branchId } : {}),
+        ...(dateFrom ? { dateFrom } : {}),
+        ...(dateTo ? { dateTo } : {}),
     };
 };
 

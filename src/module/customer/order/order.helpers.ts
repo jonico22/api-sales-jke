@@ -14,6 +14,7 @@ export const ORDER_CACHE_TTL_SINGLE = 600;
 export const ORDER_DASHBOARD_CACHE_KEYS = [
   'stats',
   'stats-v2',
+  'stats-v3',
   'overview',
   'overview:v2',
   'overview:v3',
