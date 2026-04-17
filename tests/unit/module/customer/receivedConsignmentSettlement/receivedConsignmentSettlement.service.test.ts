@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { prismaMock, redisMock } = vi.hoisted(() => ({
   prismaMock: {
+    society: {
+      findUnique: vi.fn(),
+    },
+    receivedConsignmentSettlement: {
+      count: vi.fn(),
+      findMany: vi.fn(),
+    },
     $transaction: vi.fn(),
   },
   redisMock: {
@@ -20,13 +27,18 @@ vi.mock('@/config/redis', () => ({
   redis: redisMock,
 }));
 
-import { createReceivedConsignmentSettlement } from '@/module/customer/receivedConsignmentSettlement/receivedConsignmentSettlement.service';
+import {
+  createReceivedConsignmentSettlement,
+  getAllReceivedConsignmentSettlements,
+} from '@/module/customer/receivedConsignmentSettlement/receivedConsignmentSettlement.service';
 import { DomainRuleAppError } from '@/utils/domain-errors';
 
 describe('receivedConsignmentSettlement.service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     redisMock.deleteKeysByPrefix.mockResolvedValue(undefined);
+    redisMock.get.mockResolvedValue(null);
+    redisMock.set.mockResolvedValue(undefined);
   });
 
   it('rejects settlements whose net amount does not match reported sales minus commission', async () => {
@@ -89,5 +101,23 @@ describe('receivedConsignmentSettlement.service', () => {
     ).rejects.toBeInstanceOf(DomainRuleAppError);
 
     expect(tx.receivedConsignmentSettlement.create).not.toHaveBeenCalled();
+  });
+
+  it('stores list cache keys under the same settlements prefix it invalidates', async () => {
+    prismaMock.society.findUnique.mockResolvedValue({ id: 'soc-1' });
+    prismaMock.receivedConsignmentSettlement.findMany.mockReturnValue({ kind: 'findMany' });
+    prismaMock.receivedConsignmentSettlement.count.mockReturnValue({ kind: 'count' });
+    prismaMock.$transaction.mockResolvedValue([[{ id: 'settlement-1' }], 1]);
+
+    await getAllReceivedConsignmentSettlements(
+      { page: 1, limit: 10, sortBy: 'createdAt', sortOrder: 'desc' },
+      { societyId: 'SOC-001' } as any
+    );
+
+    expect(redisMock.set).toHaveBeenCalledWith(
+      'settlements:list:soc-1:all:all:all:1:10:createdAt:desc',
+      expect.any(Object),
+      300
+    );
   });
 });

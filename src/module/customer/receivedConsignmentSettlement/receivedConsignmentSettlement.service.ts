@@ -27,6 +27,7 @@ const CACHE_PREFIX = 'settlements:';
 const CACHE_TTL_LIST = 300; // 5 minutos
 const CACHE_TTL_SINGLE = 600; // 10 minutos
 const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const LIST_CACHE_PREFIX = `${CACHE_PREFIX}list:`;
 
 const resolveSocietyFilter = async (societyIdOrCode?: string) => {
   if (!societyIdOrCode) return undefined;
@@ -175,7 +176,7 @@ export const createReceivedConsignmentSettlement = async (input: CreateInput) =>
   });
 
   // Invalidate List Cache
-  await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+  await redis.deleteKeysByPrefix(LIST_CACHE_PREFIX);
 
   return created;
 };
@@ -203,7 +204,7 @@ export const updateReceivedConsignmentSettlement = async (id: string, input: Upd
 
   // Invalidate Cache
   await redis.del(`${CACHE_PREFIX}${id}`);
-  await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+  await redis.deleteKeysByPrefix(LIST_CACHE_PREFIX);
 
   return updated;
 };
@@ -213,7 +214,7 @@ export const deleteReceivedConsignmentSettlement = async (id: string) => {
 
   // Invalidate Cache
   await redis.del(`${CACHE_PREFIX}${id}`);
-  await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+  await redis.deleteKeysByPrefix(LIST_CACHE_PREFIX);
 
   return deleted;
 };
@@ -261,8 +262,7 @@ export const getAllReceivedConsignmentSettlements = async (
 
   // Cache Key
   const cacheKeyParts = [
-    CACHE_PREFIX,
-    'list',
+    LIST_CACHE_PREFIX.slice(0, -1),
     resolvedSocietyId || 'all',
     filters?.status || 'all',
     filters?.settlementDateFrom?.toISOString() || 'all',

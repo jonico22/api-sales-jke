@@ -10,7 +10,7 @@ export const createOutgoingConsignmentAgreementSchema = z.object({
   commissionRate: z.coerce.number().min(0),
 
   // Financials
-  currencyId: z.string().uuid(),
+  currencyId: z.string(),
   totalValue: z.coerce.number().default(0),
   creditLimit: z.coerce.number().optional(),
 

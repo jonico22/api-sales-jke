@@ -22,6 +22,7 @@ type Filters = z.infer<typeof filterExternalConsignmentSaleSchema>['query'];
 const CACHE_PREFIX = 'externalSales:';
 const CACHE_TTL_LIST = 300; // 5 minutos
 const CACHE_TTL_SINGLE = 600; // 10 minutos
+const LIST_CACHE_PREFIX = `${CACHE_PREFIX}list:`;
 
 const buildNextDeliveryStatus = (remainingStock: number) => (remainingStock === 0 ? 'sold_out' : 'active');
 
@@ -78,7 +79,7 @@ export const createExternalConsignmentSale = async (input: CreateInput) => {
   });
 
   // Invalidate List Cache
-  await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+  await redis.deleteKeysByPrefix(LIST_CACHE_PREFIX);
 
   return created;
 };
@@ -187,7 +188,7 @@ export const updateExternalConsignmentSale = async (id: string, input: UpdateInp
 
   // Invalidate Cache
   await redis.del(`${CACHE_PREFIX}${id}`);
-  await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+  await redis.deleteKeysByPrefix(LIST_CACHE_PREFIX);
 
   return updated;
 };
@@ -239,7 +240,7 @@ export const deleteExternalConsignmentSale = async (id: string) => {
 
   // Invalidate Cache
   await redis.del(`${CACHE_PREFIX}${id}`);
-  await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+  await redis.deleteKeysByPrefix(LIST_CACHE_PREFIX);
 
   return deleted;
 };
@@ -278,8 +279,7 @@ export const getAllExternalConsignmentSales = async (
 
   // Cache Key
   const cacheKeyParts = [
-    CACHE_PREFIX,
-    'list',
+    LIST_CACHE_PREFIX.slice(0, -1),
     filters?.deliveredConsignmentId || 'all',
     filters?.reportedSaleDateFrom?.toISOString() || 'all',
     filters?.reportedSaleDateTo?.toISOString() || 'all',

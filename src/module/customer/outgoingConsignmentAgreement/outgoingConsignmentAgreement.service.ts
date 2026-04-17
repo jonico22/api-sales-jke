@@ -23,6 +23,7 @@ const CACHE_PREFIX = 'outgoingConsignments:';
 const CACHE_TTL_LIST = 300; // 5 minutos
 const CACHE_TTL_SINGLE = 600; // 10 minutos
 const UUID_REGEX = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+const LIST_CACHE_PREFIX = `${CACHE_PREFIX}list:`;
 
 const resolveSocietyId = async (societyIdOrCode: string) => {
   if (UUID_REGEX.test(societyIdOrCode)) return societyIdOrCode;
@@ -52,7 +53,7 @@ export const createAgreement = async (input: CreateAgreementInput) => {
   const created = await prisma.outgoingConsignmentAgreement.create({ data: input });
 
   // Invalidate List Cache
-  await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+  await redis.deleteKeysByPrefix(LIST_CACHE_PREFIX);
 
   return created;
 };
@@ -66,7 +67,7 @@ export const updateAgreement = async (id: string, input: UpdateAgreementInput) =
 
   // Invalidate Cache
   await redis.del(`${CACHE_PREFIX}${id}`);
-  await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+  await redis.deleteKeysByPrefix(LIST_CACHE_PREFIX);
 
   return updated;
 };
@@ -76,7 +77,7 @@ export const deleteAgreement = async (id: string) => {
 
   // Invalidate Cache
   await redis.del(`${CACHE_PREFIX}${id}`);
-  await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+  await redis.deleteKeysByPrefix(LIST_CACHE_PREFIX);
 
   return deleted;
 };
@@ -125,8 +126,7 @@ export const getAllAgreements = async (
 
   // Cache Key
   const cacheKeyParts = [
-    CACHE_PREFIX,
-    'list',
+    LIST_CACHE_PREFIX.slice(0, -1),
     resolvedSocietyId || 'all',
     filters?.branchId || 'all',
     filters?.partnerId || 'all',
