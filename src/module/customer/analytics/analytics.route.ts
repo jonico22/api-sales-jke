@@ -11,5 +11,6 @@ router.get('/sales/by-branch', AnalyticsController.getSalesByBranch);
 router.get('/payments/distribution', AnalyticsController.getPaymentsDistribution);
 router.get('/products/top', AnalyticsController.getProductsTop);
 router.get('/inventory/low-stock', AnalyticsController.getInventoryLowStock);
+router.get('/inventory/low-stock/trend', AnalyticsController.getInventoryLowStockTrend);
 
 export default router;

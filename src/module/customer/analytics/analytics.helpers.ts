@@ -30,8 +30,15 @@ export interface ResolvedAnalyticsFilters {
   previousEnd?: Date;
 }
 
+export interface AlignedPreviousPeriodItem {
+  label: string;
+  sourceLabel: string | null;
+  sales: number;
+}
+
 const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const LIMA_TIMEZONE = 'America/Lima';
+const ANALYTICS_CACHE_VERSION = 'v2';
 
 const parseDateOnlyAsLimaUtc = (date: string) => convertLimaTimeToUTC(`${date}T00:00:00`);
 const formatLimaDateKey = (date: Date) => formatInTimeZone(date, LIMA_TIMEZONE, 'yyyy-MM-dd');
@@ -45,6 +52,11 @@ const addMonths = (date: Date, months: number) => {
   clone.setUTCMonth(clone.getUTCMonth() + months, 1);
   return clone;
 };
+const endOfMonth = (date: Date) => {
+  const clone = new Date(date);
+  clone.setUTCMonth(clone.getUTCMonth() + 1, 0);
+  return clone;
+};
 const startOfWeek = (date: Date) => {
   const clone = new Date(date);
   const day = clone.getUTCDay();
@@ -56,6 +68,31 @@ const startOfMonth = (date: Date) => {
   const clone = new Date(date);
   clone.setUTCDate(1);
   return clone;
+};
+
+const resolvePreviousPeriod = (
+  resolved: Pick<ResolvedAnalyticsFilters, 'dateFrom' | 'dateTo' | 'granularity'>
+) => {
+  if (resolved.granularity === 'month') {
+    const currentMonthCount = enumeratePeriodLabels(resolved.dateFrom, resolved.dateTo, 'month').length;
+    const currentStartMonth = startOfMonth(parseDateOnlyAsLimaUtc(resolved.dateFrom));
+    const previousStartDate = addMonths(currentStartMonth, -currentMonthCount);
+    const previousEndDate = endOfMonth(addMonths(currentStartMonth, -1));
+
+    return {
+      previousDateFrom: formatLimaDateKey(previousStartDate),
+      previousDateTo: formatLimaDateKey(previousEndDate),
+    };
+  }
+
+  const rangeDays = getRangeLengthInDays(resolved.dateFrom, resolved.dateTo);
+  const previousEndDate = addDays(parseDateOnlyAsLimaUtc(resolved.dateFrom), -1);
+  const previousStartDate = addDays(previousEndDate, -(rangeDays - 1));
+
+  return {
+    previousDateFrom: formatLimaDateKey(previousStartDate),
+    previousDateTo: formatLimaDateKey(previousEndDate),
+  };
 };
 
 export const validateDateOnly = (value: string, fieldName: string) => {
@@ -130,10 +167,9 @@ export const normalizeAnalyticsFilters = (filters?: AnalyticsFilters): ResolvedA
   };
 
   if (resolved.comparePrevious) {
-    const previousEndDate = addDays(parseDateOnlyAsLimaUtc(resolved.dateFrom), -1);
-    const previousStartDate = addDays(previousEndDate, -(rangeDays - 1));
-    resolved.previousDateFrom = formatLimaDateKey(previousStartDate);
-    resolved.previousDateTo = formatLimaDateKey(previousEndDate);
+    const previousPeriod = resolvePreviousPeriod(resolved);
+    resolved.previousDateFrom = previousPeriod.previousDateFrom;
+    resolved.previousDateTo = previousPeriod.previousDateTo;
     const previousRange = convertLimaDateRangeToUTC(resolved.previousDateFrom, resolved.previousDateTo);
     resolved.previousStart = previousRange.from!;
     resolved.previousEnd = previousRange.to!;
@@ -146,6 +182,7 @@ export const buildAnalyticsCacheKey = (metric: string, societyId: string, filter
   [
     'analytics',
     metric,
+    ANALYTICS_CACHE_VERSION,
     societyId,
     filters.branchId || 'all',
     filters.dateFrom,
@@ -199,4 +236,21 @@ export const enumeratePeriodLabels = (dateFrom: string, dateTo: string, granular
 export const calculatePercentageChange = (current: number, previous: number) => {
   if (previous === 0) return current === 0 ? 0 : 100;
   return Number((((current - previous) / previous) * 100).toFixed(2));
+};
+
+export const buildAlignedPreviousPeriod = (
+  series: Array<{ label: string; sales: number }>,
+  previousPeriod: Array<{ label: string; sales: number }>
+): AlignedPreviousPeriodItem[] => {
+  if (series.length === 0) return [];
+
+  return series.map((point, index) => {
+    const source = index === 0 ? previousPeriod[previousPeriod.length - 1] : series[index - 1];
+
+    return {
+      label: point.label,
+      sourceLabel: source?.label ?? null,
+      sales: Number(source?.sales ?? 0),
+    };
+  });
 };

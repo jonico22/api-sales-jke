@@ -10,6 +10,7 @@ const { analyticsServiceMock } = vi.hoisted(() => ({
     getPaymentsDistribution: vi.fn(),
     getProductsTop: vi.fn(),
     getInventoryLowStock: vi.fn(),
+    getInventoryLowStockTrend: vi.fn(),
   },
 }));
 
@@ -90,5 +91,31 @@ describe('AnalyticsController', () => {
       { limit: 3 }
     );
     expect(res.json).toHaveBeenCalledWith({ items: [] });
+  });
+
+  it('passes analytics filters to low stock trend', async () => {
+    analyticsServiceMock.getInventoryLowStockTrend.mockResolvedValueOnce({ series: [] });
+    const req: any = {
+      query: {
+        societyCode: 'SOC1',
+        dateFrom: '2026-03-01',
+        dateTo: '2026-04-30',
+        granularity: 'month',
+        comparePrevious: 'true',
+      },
+    };
+    const res = createResponse();
+    const next = vi.fn();
+
+    await AnalyticsController.getInventoryLowStockTrend(req, res as any, next);
+    await flushAsyncHandler();
+
+    expect(analyticsServiceMock.getInventoryLowStockTrend).toHaveBeenCalledWith('SOC1', {
+      dateFrom: '2026-03-01',
+      dateTo: '2026-04-30',
+      granularity: 'month',
+      comparePrevious: true,
+    });
+    expect(res.json).toHaveBeenCalledWith({ series: [] });
   });
 });

@@ -242,11 +242,26 @@ Defaults:
 ```json
 {
   "range": {
-    "dateFrom": "2026-04-01",
-    "dateTo": "2026-04-30",
-    "granularity": "day"
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "day"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "day"
+    }
   },
   "totals": {
+    "sales": 0,
+    "expenses": 0,
+    "grossProfitEstimate": 0,
+    "orders": 0,
+    "averageTicket": 0,
+    "unitsSold": 0
+  },
+  "previousTotals": {
     "sales": 0,
     "expenses": 0,
     "grossProfitEstimate": 0,
@@ -258,17 +273,71 @@ Defaults:
     "salesPct": 0,
     "ordersPct": 0,
     "averageTicketPct": 0
+  },
+  "comparisonByMetric": {
+    "sales": {
+      "current": 0,
+      "previous": 0,
+      "delta": 0,
+      "deltaPct": 0
+    }
   }
 }
+```
+
+Notas:
+- `totals` mantiene el periodo actual.
+- `previousTotals` expone el bloque anterior completo para comparacion.
+- `comparison` conserva los porcentajes historicos para compatibilidad.
+- `comparisonByMetric` es el contrato recomendado para cards comparativas en analytics.
+
+Uso recomendado en frontend:
+- usar `comparisonByMetric.sales`, `comparisonByMetric.orders` y `comparisonByMetric.averageTicket` como cards principales de comparacion;
+- usar `comparisonByMetric.expenses`, `comparisonByMetric.grossProfitEstimate` y `comparisonByMetric.unitsSold` como cards secundarias o panel de detalle;
+- evitar renderizar `totals` y `previousTotals` como dos bloques separados si ya se muestra `comparisonByMetric`, porque eso duplica informacion;
+- si `comparePrevious=false`, tratar `previous`, `previousTotals`, `delta` y `deltaPct` como `null` y mostrar solo el valor actual.
+
+Ejemplo de mapeo para cards:
+```json
+[
+  {
+    "title": "Ventas",
+    "value": "comparisonByMetric.sales.current",
+    "previous": "comparisonByMetric.sales.previous",
+    "delta": "comparisonByMetric.sales.delta",
+    "deltaPct": "comparisonByMetric.sales.deltaPct"
+  },
+  {
+    "title": "Ordenes",
+    "value": "comparisonByMetric.orders.current",
+    "previous": "comparisonByMetric.orders.previous",
+    "delta": "comparisonByMetric.orders.delta",
+    "deltaPct": "comparisonByMetric.orders.deltaPct"
+  },
+  {
+    "title": "Ticket promedio",
+    "value": "comparisonByMetric.averageTicket.current",
+    "previous": "comparisonByMetric.averageTicket.previous",
+    "delta": "comparisonByMetric.averageTicket.delta",
+    "deltaPct": "comparisonByMetric.averageTicket.deltaPct"
+  }
+]
 ```
 
 ### 2. `GET /analytics/sales/trend`
 ```json
 {
   "range": {
-    "dateFrom": "2026-04-01",
-    "dateTo": "2026-04-30",
-    "granularity": "week"
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "week"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "week"
+    }
   },
   "series": [
     {
@@ -280,30 +349,82 @@ Defaults:
   ],
   "previousPeriod": [
     { "label": "2026-03-10", "sales": 0 }
+  ],
+  "previousPeriodAligned": [
+    {
+      "label": "2026-04-07",
+      "sourceLabel": "2026-03-31",
+      "sales": 0
+    }
   ]
 }
 ```
+
+Notas:
+- `previousPeriod` representa el bloque historico anterior completo.
+- `previousPeriodAligned` alinea la comparacion al eje visible del grafico usando el periodo inmediatamente anterior a cada punto visible.
+- para graficos de barras o lineas con `comparePrevious=true`, frontend debe preferir `previousPeriodAligned`.
+
+Uso recomendado en frontend:
+- usar `series` como serie principal visible;
+- usar `previousPeriodAligned` como segunda serie cuando el objetivo sea comparar sobre el mismo eje del grafico;
+- usar `previousPeriod` solo para tooltips avanzados, tablas auxiliares o vistas donde importe mostrar el rango historico real sin alinear;
+- para comparacion visual principal, no mezclar `summary` con una segunda serie inventada en frontend: la comparacion del grafico debe salir de este endpoint;
+- ejemplo mensual: si el rango visible es `2026-03` a `2026-04`, la serie alineada sera `2026-03 <- 2026-02` y `2026-04 <- 2026-03`.
 
 ### 3. `GET /analytics/cash-flow/trend`
 ```json
 {
   "range": {
-    "dateFrom": "2026-04-01",
-    "dateTo": "2026-04-30",
-    "granularity": "week"
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "week"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "week"
+    }
   },
   "series": [
     { "label": "2026-04-07", "income": 0, "expense": 0, "net": 0 }
+  ],
+  "previousPeriod": [
+    { "label": "2026-03-07", "income": 0, "expense": 0, "net": 0 }
+  ],
+  "previousPeriodAligned": [
+    {
+      "label": "2026-04-07",
+      "sourceLabel": "2026-03-07",
+      "income": 0,
+      "expense": 0,
+      "net": 0
+    }
   ]
 }
 ```
+
+Notas:
+- usar `series` para el periodo actual;
+- usar `previousPeriodAligned` como segunda serie en graficos comparativos de cash flow;
+- `previousPeriod` queda disponible para tooltips o tablas historicas;
+- ejemplo mensual: si el rango visible es `2026-03` a `2026-04`, la serie alineada sera `2026-03 <- 2026-02` y `2026-04 <- 2026-03`.
 
 ### 4. `GET /analytics/sales/by-category`
 ```json
 {
   "range": {
-    "dateFrom": "2026-04-01",
-    "dateTo": "2026-04-30"
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "month"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "month"
+    }
   },
   "items": [
     {
@@ -311,18 +432,53 @@ Defaults:
       "category": "Categoria",
       "revenue": 0,
       "unitsSold": 0,
-      "percentage": 0
+      "percentage": 0,
+      "previous": {
+        "revenue": 0,
+        "unitsSold": 0,
+        "percentage": 0
+      },
+      "comparison": {
+        "revenue": {
+          "current": 0,
+          "previous": 0,
+          "delta": 0,
+          "deltaPct": 0
+        },
+        "unitsSold": {
+          "current": 0,
+          "previous": 0,
+          "delta": 0,
+          "deltaPct": 0
+        }
+      }
     }
   ]
 }
 ```
 
+Uso recomendado en frontend:
+- barra 1: `revenue`
+- barra 2: `previous.revenue`
+- label auxiliar: `comparison.revenue.deltaPct`
+- para un grafico de barras comparativas, usar una categoria por item y dos series: `Actual` y `Anterior`;
+- si el espacio es reducido, ordenar por `revenue` actual y mostrar la variacion porcentual en tooltip o badge;
+- si `previous` es `null`, renderizar solo la barra actual.
+
 ### 5. `GET /analytics/sales/by-branch`
 ```json
 {
   "range": {
-    "dateFrom": "2026-04-01",
-    "dateTo": "2026-04-30"
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "month"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "month"
+    }
   },
   "items": [
     {
@@ -330,36 +486,91 @@ Defaults:
       "branch": "Sucursal",
       "revenue": 0,
       "orders": 0,
-      "averageTicket": 0
+      "averageTicket": 0,
+      "previous": {
+        "revenue": 0,
+        "orders": 0,
+        "averageTicket": 0
+      },
+      "comparison": {
+        "revenue": {
+          "current": 0,
+          "previous": 0,
+          "delta": 0,
+          "deltaPct": 0
+        }
+      }
     }
   ]
 }
 ```
 
+Uso recomendado en frontend:
+- serie principal: `revenue`
+- serie comparativa: `previous.revenue`
+- metrica auxiliar en tooltip: `comparison.orders.deltaPct` o `comparison.averageTicket.deltaPct`
+- recomendado para barras horizontales o columnas agrupadas por sucursal.
+
 ### 6. `GET /analytics/payments/distribution`
 ```json
 {
   "range": {
-    "dateFrom": "2026-04-01",
-    "dateTo": "2026-04-30"
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "month"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "month"
+    }
   },
   "items": [
     {
       "method": "CASH",
       "amount": 0,
       "percentage": 0,
-      "transactions": 0
+      "transactions": 0,
+      "previous": {
+        "amount": 0,
+        "percentage": 0,
+        "transactions": 0
+      },
+      "comparison": {
+        "amount": {
+          "current": 0,
+          "previous": 0,
+          "delta": 0,
+          "deltaPct": 0
+        }
+      }
     }
   ]
 }
 ```
 
+Uso recomendado en frontend:
+- si quieres comparacion clara, preferir barras agrupadas por metodo en vez de donut;
+- serie principal: `amount`
+- serie comparativa: `previous.amount`
+- usar `percentage` y `previous.percentage` solo como apoyo visual o tooltip;
+- mostrar `comparison.amount.deltaPct` como etiqueta de variacion por metodo.
+
 ### 7. `GET /analytics/products/top`
 ```json
 {
   "range": {
-    "dateFrom": "2026-04-01",
-    "dateTo": "2026-04-30"
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "month"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "month"
+    }
   },
   "items": [
     {
@@ -368,7 +579,25 @@ Defaults:
       "category": "Categoria",
       "soldUnits": 0,
       "revenue": 0,
-      "stockRemaining": 0
+      "stockRemaining": 0,
+      "previous": {
+        "soldUnits": 0,
+        "revenue": 0
+      },
+      "comparison": {
+        "soldUnits": {
+          "current": 0,
+          "previous": 0,
+          "delta": 0,
+          "deltaPct": 0
+        },
+        "revenue": {
+          "current": 0,
+          "previous": 0,
+          "delta": 0,
+          "deltaPct": 0
+        }
+      }
     }
   ]
 }
@@ -392,3 +621,126 @@ Defaults:
   ]
 }
 ```
+
+Uso recomendado:
+- tabla operativa o lista de atencion inmediata;
+- no usar este endpoint para historico comparativo, porque representa el estado actual.
+- esta ruta se mantiene y no debe ser reemplazada por la ruta `trend`;
+- usar `GET /analytics/inventory/low-stock` para el estado actual;
+- usar `GET /analytics/inventory/low-stock/trend` para el grafico historico/comparativo.
+
+### 9. `GET /analytics/inventory/low-stock/trend`
+```json
+{
+  "range": {
+    "current": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-04-30",
+      "granularity": "month"
+    },
+    "previous": {
+      "dateFrom": "2026-01-01",
+      "dateTo": "2026-02-28",
+      "granularity": "month"
+    }
+  },
+  "series": [
+    {
+      "label": "2026-03",
+      "lowStockCount": 12,
+      "criticalCount": 4
+    }
+  ],
+  "previousPeriod": [
+    {
+      "label": "2026-02",
+      "lowStockCount": 10,
+      "criticalCount": 3
+    }
+  ],
+  "previousPeriodAligned": [
+    {
+      "label": "2026-03",
+      "sourceLabel": "2026-02",
+      "lowStockCount": 10,
+      "criticalCount": 3
+    }
+  ]
+}
+```
+
+Notas:
+- `lowStockCount` cuenta productos cuyo stock historico estimado al cierre del bucket queda en o por debajo del minimo configurado;
+- `criticalCount` cuenta productos con stock en `0` o negativo al cierre del bucket;
+- la serie historica se apoya en `InventoryTransaction` como snapshot de stock por fecha;
+- cuando un producto no tiene movimientos historicos, el sistema toma el stock actual como snapshot base disponible.
+
+Uso recomendado en frontend:
+- grafico principal: barras o lineas con `series.lowStockCount`;
+- segunda serie comparativa: `previousPeriodAligned.lowStockCount`;
+- serie secundaria opcional: `criticalCount`;
+- combinar este endpoint con `GET /analytics/inventory/low-stock` si se quiere drilldown desde el grafico a la lista actual.
+
+## Recomendacion de composicion para la pantalla de Analytics
+
+Objetivo:
+- que `dashboard` siga siendo compacto y operativo;
+- que `analytics` sea comparativo, historico y grafico.
+
+Distribucion sugerida:
+- fila 1:
+  - card `Ventas` desde `GET /analytics/summary`
+  - card `Ordenes` desde `GET /analytics/summary`
+  - card `Ticket promedio` desde `GET /analytics/summary`
+- fila 2:
+  - grafico principal `Ventas por periodo` desde `GET /analytics/sales/trend?comparePrevious=true`
+- fila 3:
+  - grafico `Cash flow` desde `GET /analytics/cash-flow/trend?comparePrevious=true`
+  - grafico `Ventas por sucursal` desde `GET /analytics/sales/by-branch?comparePrevious=true`
+- fila 4:
+  - grafico `Ventas por categoria` desde `GET /analytics/sales/by-category?comparePrevious=true`
+  - grafico `Distribucion de pagos` desde `GET /analytics/payments/distribution?comparePrevious=true`
+- fila 5 opcional:
+  - tabla o barras `Top productos` desde `GET /analytics/products/top?comparePrevious=true`
+  - grafico `Tendencia low stock` desde `GET /analytics/inventory/low-stock/trend?comparePrevious=true`
+  - tabla `Low stock actual` desde `GET /analytics/inventory/low-stock`
+
+## Regla rapida para frontend
+
+- si necesitas cards comparativas: usar `GET /analytics/summary`;
+- si necesitas lineas, barras o areas con comparacion entre periodos: usar `GET /analytics/*` con `comparePrevious=true`;
+- si necesitas vista compacta de dashboard: usar `GET /dashboard/stats` y `GET /dashboard/overview`;
+- no usar `GET /analytics/summary` para construir una grafica historica.
+
+## Handoff Corto Para Frontend
+
+- `Ventas por categoria`: endpoint `GET /analytics/sales/by-category?comparePrevious=true`
+- `Ventas por categoria`: eje/categorias `item.category`
+- `Ventas por categoria`: serie `Actual` `item.revenue`
+- `Ventas por categoria`: serie `Anterior` `item.previous?.revenue ?? 0`
+- `Ventas por categoria`: badge o tooltip `item.comparison.revenue.deltaPct`
+
+- `Distribucion de pagos`: endpoint `GET /analytics/payments/distribution?comparePrevious=true`
+- `Distribucion de pagos`: eje/categorias `item.method`
+- `Distribucion de pagos`: serie `Actual` `item.amount`
+- `Distribucion de pagos`: serie `Anterior` `item.previous?.amount ?? 0`
+- `Distribucion de pagos`: badge o tooltip `item.comparison.amount.deltaPct`
+
+- `Ventas por sucursal`: endpoint `GET /analytics/sales/by-branch?comparePrevious=true`
+- `Ventas por sucursal`: eje/categorias `item.branch`
+- `Ventas por sucursal`: serie `Actual` `item.revenue`
+- `Ventas por sucursal`: serie `Anterior` `item.previous?.revenue ?? 0`
+- `Ventas por sucursal`: badge o tooltip `item.comparison.revenue.deltaPct`
+
+- `Tendencia low stock`: endpoint `GET /analytics/inventory/low-stock/trend?comparePrevious=true`
+- `Tendencia low stock`: eje/categorias `point.label`
+- `Tendencia low stock`: serie `Actual` `point.lowStockCount`
+- `Tendencia low stock`: serie `Anterior` `previousPeriodAligned[index]?.lowStockCount ?? 0`
+- `Tendencia low stock`: serie opcional `Critico` `point.criticalCount`
+
+## Decision Rapida Para Frontend En Low Stock
+
+- `GET /analytics/inventory/low-stock`: usar para tabla, lista o panel operativo del estado actual
+- `GET /analytics/inventory/low-stock/trend`: usar para grafico historico o comparativo
+- no reemplazar la ruta actual `low-stock`;
+- ambas rutas se complementan y cumplen objetivos distintos.

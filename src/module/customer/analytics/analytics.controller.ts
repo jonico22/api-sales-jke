@@ -66,4 +66,9 @@ export const AnalyticsController = {
     if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
     res.json(await AnalyticsService.getInventoryLowStock(societyCode, getAnalyticsFilters(req)));
   }),
+  getInventoryLowStockTrend: asyncHandler(async (req: Request, res: Response) => {
+    const societyCode = getSocietyCodeOrId(req);
+    if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
+    res.json(await AnalyticsService.getInventoryLowStockTrend(societyCode, getAnalyticsFilters(req)));
+  }),
 };
