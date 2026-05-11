@@ -1,6 +1,6 @@
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
-import { CreateBussinessPartnerInput, UpdateBussinessPartnerInput } from './bussinesspartner.schema';
+import { CreateBusinessPartnerInput, UpdateBusinessPartnerInput } from './businessPartner.schema';
 import {
     PaginatedResult,
     getPrismaPaginationParams,
@@ -11,24 +11,21 @@ import { BussinessPartner, PartnerType } from '@prisma/client';
 import { convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
 
 const CACHE_PREFIX = 'bps:';
-const CACHE_TTL_LIST = 300; // 5 minutos
-const CACHE_TTL_SINGLE = 600; // 10 minutos
+const CACHE_TTL_LIST = 300;
+const CACHE_TTL_SINGLE = 600;
 
 export interface BusinessPartnerFilters {
     search?: string;
-    isActive?: boolean | string; // query params come as string often
+    isActive?: boolean | string;
     typeBP?: string;
-    type?: PartnerType; // New Filter
+    type?: PartnerType;
     createdAtFrom?: string;
     createdAtTo?: string;
     societyCode?: string;
     societyId?: string;
 }
 
-export const BussinessPartnerService = {
-    /**
-     * Obtener todos los socios de negocio con paginación y filtros
-     */
+export const BusinessPartnerService = {
     async getAll(
         paginationQuery?: PaginationQuery,
         societyId?: string,
@@ -39,7 +36,6 @@ export const BussinessPartnerService = {
         const sortBy = paginationQuery?.sortBy || 'createdAt';
         const sortOrder = paginationQuery?.sortOrder || 'desc';
 
-        // Resolve societyId from args or filters
         let resolvedSocietyId = societyId;
         const societyCodeOrId = filters?.societyCode || filters?.societyId;
 
@@ -57,12 +53,10 @@ export const BussinessPartnerService = {
             }
         }
 
-        // SI NO HAY SOCIEDAD, NO PROCESAMOS (Seguridad y consistencia de caché)
         if (!resolvedSocietyId) {
             return buildPaginatedResult([], page, limit, 0);
         }
 
-        // Cache Key Construction (Scoped per Society)
         const cacheKeyParts = [
             'list',
             filters?.search || 'all',
@@ -78,11 +72,9 @@ export const BussinessPartnerService = {
         ];
         const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:${cacheKeyParts.join(':')}`;
 
-        // 1. Try Cache
         const cached = await redis.get<PaginatedResult<BussinessPartner>>(cacheKey);
         if (cached) return cached;
 
-        // 2. Database Query
         const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
 
         const whereClause: any = {
@@ -90,7 +82,6 @@ export const BussinessPartnerService = {
             societyId: resolvedSocietyId
         };
 
-        // Apply Filters
         if (filters?.search) {
             whereClause.OR = [
                 { companyName: { contains: filters.search, mode: 'insensitive' } },
@@ -102,9 +93,7 @@ export const BussinessPartnerService = {
         }
 
         if (filters?.isActive !== undefined) {
-            // Handle "true"/"false" strings if coming from query
-            const isActiveBool = String(filters.isActive) === 'true';
-            whereClause.isActive = isActiveBool;
+            whereClause.isActive = String(filters.isActive) === 'true';
         }
 
         if (filters?.typeBP) {
@@ -128,8 +117,8 @@ export const BussinessPartnerService = {
                 skip: prismaParams.skip,
                 take: prismaParams.take,
                 orderBy: sortBy === 'name'
-                  ? [{ companyName: sortOrder }, { firstName: sortOrder }]
-                  : (sortBy ? { [sortBy || 'createdAt']: sortOrder } : { createdAt: sortOrder }),
+                    ? [{ companyName: sortOrder }, { firstName: sortOrder }]
+                    : (sortBy ? { [sortBy || 'createdAt']: sortOrder } : { createdAt: sortOrder }),
                 include: {
                     documentType: true,
                     ubigeo: true,
@@ -146,20 +135,13 @@ export const BussinessPartnerService = {
         ]);
 
         const result = buildPaginatedResult(data, page, limit, total);
-
-        // 3. Set Cache
         await redis.set(cacheKey, result, CACHE_TTL_LIST);
 
         return result;
     },
 
-    /**
-     * Obtener un socio de negocio por ID
-     */
     async getById(id: string) {
         const cacheKey = `${CACHE_PREFIX}${id}`;
-
-        // Try Cache
         const cached = await redis.get<BussinessPartner>(cacheKey);
         if (cached) return cached;
 
@@ -183,11 +165,7 @@ export const BussinessPartnerService = {
         return bp;
     },
 
-    /**
-     * Crear un nuevo socio de negocio
-     */
-    async create(data: CreateBussinessPartnerInput) {
-        // Resolve societyId if it's a code
+    async create(data: CreateBusinessPartnerInput) {
         const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(data.societyId);
         if (!isUuid) {
             const society = await prisma.society.findUnique({ where: { code: data.societyId } });
@@ -210,16 +188,11 @@ export const BussinessPartnerService = {
             },
         });
 
-        // Invalidate Cache for this society only
         await redis.deleteKeysByPrefix(`${CACHE_PREFIX}${created.societyId}:`);
-
         return created;
     },
 
-    /**
-     * Actualizar un socio de negocio
-     */
-    async update(id: string, data: UpdateBussinessPartnerInput) {
+    async update(id: string, data: UpdateBusinessPartnerInput) {
         const updated = await prisma.bussinessPartner.update({
             where: { id },
             data,
@@ -236,7 +209,6 @@ export const BussinessPartnerService = {
             },
         });
 
-        // Invalidate Cache for this specific partner and its society's lists/selects
         await Promise.all([
             redis.del(`${CACHE_PREFIX}${id}`),
             redis.deleteKeysByPrefix(`${CACHE_PREFIX}${updated.societyId}:`)
@@ -245,9 +217,6 @@ export const BussinessPartnerService = {
         return updated;
     },
 
-    /**
-     * Soft delete de un socio de negocio
-     */
     async softDelete(id: string, updatedBy?: string) {
         const deleted = await prisma.bussinessPartner.update({
             where: { id },
@@ -259,7 +228,6 @@ export const BussinessPartnerService = {
             select: { societyId: true }
         });
 
-        // Invalidate Cache for this society
         await Promise.all([
             redis.del(`${CACHE_PREFIX}${id}`),
             redis.deleteKeysByPrefix(`${CACHE_PREFIX}${deleted.societyId}:`)
@@ -268,16 +236,12 @@ export const BussinessPartnerService = {
         return deleted;
     },
 
-    /**
-     * Hard delete de un socio de negocio (usar con precaución)
-     */
     async hardDelete(id: string) {
         const deleted = await prisma.bussinessPartner.delete({
             where: { id },
             select: { societyId: true }
         });
 
-        // Invalidate Cache for this society
         await Promise.all([
             redis.del(`${CACHE_PREFIX}${id}`),
             redis.deleteKeysByPrefix(`${CACHE_PREFIX}${deleted.societyId}:`)
@@ -286,9 +250,6 @@ export const BussinessPartnerService = {
         return deleted;
     },
 
-    /**
-     * Buscar socios de negocio por email
-     */
     async findByEmail(email: string) {
         return prisma.bussinessPartner.findUnique({
             where: { email },
@@ -298,9 +259,6 @@ export const BussinessPartnerService = {
         });
     },
 
-    /**
-     * Buscar socios de negocio por número de documento
-     */
     async findByDocumentNumber(documentNumber: string) {
         return prisma.bussinessPartner.findFirst({
             where: { documentNumber },
@@ -311,7 +269,6 @@ export const BussinessPartnerService = {
     },
 
     async getForSelect(societyCodeOrId?: string, type?: PartnerType) {
-        // Resolve Society Context FIRST
         let resolvedSocietyId: string | undefined;
         if (societyCodeOrId) {
             const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCodeOrId);
@@ -325,7 +282,6 @@ export const BussinessPartnerService = {
 
         if (!resolvedSocietyId) return [];
 
-        // Cache Key including society ID scope
         const cacheKey = `${CACHE_PREFIX}${resolvedSocietyId}:select:${type || 'all'}`;
         const cached = await redis.get<any[]>(cacheKey);
         if (cached) return cached;
@@ -337,7 +293,6 @@ export const BussinessPartnerService = {
         };
 
         if (type) {
-            // If requesting CUSTOMER, allow CUSTOMER and BOTH
             if (type === 'CUSTOMER') {
                 whereClause.type = { in: ['CUSTOMER'] };
             } else if (type === 'SUPPLIER') {
@@ -360,14 +315,16 @@ export const BussinessPartnerService = {
             orderBy: { createdAt: 'desc' }
         });
 
-        const result = partners.map(p => ({
+        const result = partners.map((p) => ({
             id: p.id,
             name: p.companyName || `${p.firstName} ${p.lastName}`.trim(),
             documentNumber: p.documentNumber,
             type: p.type
         }));
 
-        await redis.set(cacheKey, result, 300); // 5 min cache for select
+        await redis.set(cacheKey, result, 300);
         return result;
     }
 };
+
+export const BussinessPartnerService = BusinessPartnerService;

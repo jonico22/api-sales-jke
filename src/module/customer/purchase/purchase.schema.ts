@@ -78,3 +78,7 @@ export const purchaseFiltersSchema = z.object({
         sortOrder: z.string().optional().openapi({ example: 'desc' }),
     })
 });
+
+export type CreatePurchaseInput = z.infer<typeof createPurchaseSchema>['body'];
+export type UpdatePurchaseInput = z.infer<typeof updatePurchaseSchema>['body'];
+export type PurchaseFilters = z.infer<typeof purchaseFiltersSchema>['query'];

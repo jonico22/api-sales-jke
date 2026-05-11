@@ -1,6 +1,5 @@
 import prisma from '@/config/prisma';
-import { z } from 'zod';
-import { createCategorySchema, updateCategorySchema } from './category.schema';
+import { CategoryFilters, CreateCategoryInput, UpdateCategoryInput } from './category.schema';
 import {
   PaginatedResult,
   getPrismaPaginationParams,
@@ -8,31 +7,24 @@ import {
   PaginationQuery,
 } from '@/utils/pagination';
 import { Category } from '@prisma/client';
-import { formatToLimaTime, convertLimaTimeToUTC, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
+import { formatToLimaTime } from '@/utils/dateFormatter';
 import { redis } from '@/config/redis';
-
-// Tipos inferidos de los schemas
-type CreateCategoryInput = z.infer<typeof createCategorySchema>['body'];
-type UpdateCategoryInput = z.infer<typeof updateCategorySchema>['body'];
-
-// Constantes de cache
-const CACHE_PREFIX = 'categories';
-const CACHE_TTL_LIST = 300; // 5 minutos para listas
-const CACHE_TTL_SINGLE = 600; // 10 minutos para registro individual
-const CACHE_TTL_SELECT = 900; // 15 minutos para select (datos que cambian poco)
-
-// Tipo para los filtros de categoría
-export interface CategoryFilters {
-  societyCode?: string;
-  societyId?: string;
-  isActive?: boolean;
-  createdBy?: string;
-  createdAtFrom?: string;
-  createdAtTo?: string;
-  updatedAtFrom?: string;
-  updatedAtTo?: string;
-  search?: string;
-}
+import {
+  buildCategoryListCacheKey,
+  buildCategorySelectCacheKey,
+  buildCategoryWhereClause,
+  CATEGORY_CACHE_PREFIX,
+  CATEGORY_CACHE_TTL_LIST,
+  CATEGORY_CACHE_TTL_SELECT,
+  CATEGORY_CACHE_TTL_SINGLE,
+  getCategoryListParams,
+  isUuid,
+  resolveCategorySocietyId,
+} from './category.helpers';
+import {
+  resolveCategorySocietyForMutation,
+  scheduleCategoryCacheInvalidation,
+} from './category.service.support';
 
 export const CategoryService = {
   /**
@@ -43,100 +35,25 @@ export const CategoryService = {
     paginationQuery?: PaginationQuery,
     filters?: CategoryFilters
   ): Promise<PaginatedResult<Category>> => {
-    const page = paginationQuery?.page ?? 1;
-    const limit = paginationQuery?.limit ?? 10;
-    const sortBy = paginationQuery?.sortBy || 'createdAt';
-    const sortOrder = paginationQuery?.sortOrder || 'desc';
+    const { page, limit, sortBy, sortOrder } = getCategoryListParams(paginationQuery);
 
-    // Resolve societyId from filters
     let resolvedSocietyId = filters?.societyId;
     const societyCode = filters?.societyCode || filters?.societyId;
-
     if (!resolvedSocietyId && societyCode) {
-      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
-      if (isUuid) {
-        resolvedSocietyId = societyCode;
-      } else {
-        const society = await prisma.society.findUnique({ where: { code: societyCode } });
-        if (society) {
-          resolvedSocietyId = society.id;
-        } else {
-          return buildPaginatedResult([], page, limit, 0);
-        }
+      const societyId = await resolveCategorySocietyId(societyCode);
+      if (!societyId) {
+        return buildPaginatedResult([], page, limit, 0);
       }
+      resolvedSocietyId = societyId;
     }
 
-    // Construir clave de cache única para esta combinación de filtros
-    const cacheKeyParts = [
-      CACHE_PREFIX,
-      'list',
-      resolvedSocietyId || 'all',
-      filters?.isActive !== undefined ? filters.isActive : 'all',
-      filters?.createdBy || 'all',
-      filters?.createdAtFrom || 'all',
-      filters?.createdAtTo || 'all',
-      filters?.updatedAtFrom || 'all',
-      filters?.updatedAtTo || 'all',
-      filters?.search || 'all',
-      page,
-      limit,
-      sortBy,
-      sortOrder
-    ];
-    const cacheKey = cacheKeyParts.join(':');
+    const cacheKey = buildCategoryListCacheKey(resolvedSocietyId, page, limit, sortBy, sortOrder, filters);
 
     const cached = await redis.get<PaginatedResult<Category>>(cacheKey);
     if (cached) return cached;
 
     const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
-    const whereClause: any = { isDeleted: false };
-
-    if (resolvedSocietyId) {
-      whereClause.societyId = resolvedSocietyId;
-    }
-
-    // Búsqueda por nombre o código (case-insensitive)
-    if (filters?.search) {
-      whereClause.OR = [
-        { name: { contains: filters.search, mode: 'insensitive' } },
-        { code: { contains: filters.search, mode: 'insensitive' } }
-      ];
-    }
-
-
-    // Filtro por isActive
-    if (filters?.isActive !== undefined) {
-      whereClause.isActive = filters.isActive;
-    }
-
-    // Filtro por createdBy
-    if (filters?.createdBy) {
-      whereClause.createdBy = filters.createdBy;
-    }
-
-    // Filtro de rango de fechas para createdAt (convierte de Lima a UTC con soporte de rango completo)
-    if (filters?.createdAtFrom || filters?.createdAtTo) {
-      whereClause.createdAt = {};
-      const dateRange = convertLimaDateRangeToUTC(filters.createdAtFrom, filters.createdAtTo);
-      if (dateRange.from) {
-        whereClause.createdAt.gte = dateRange.from;
-      }
-      if (dateRange.to) {
-        whereClause.createdAt.lte = dateRange.to;
-      }
-    }
-
-    // Filtro de rango de fechas para updatedAt (convierte de Lima a UTC con soporte de rango completo)
-    if (filters?.updatedAtFrom || filters?.updatedAtTo) {
-      whereClause.updatedAt = {};
-      const dateRange = convertLimaDateRangeToUTC(filters.updatedAtFrom, filters.updatedAtTo);
-      if (dateRange.from) {
-        whereClause.updatedAt.gte = dateRange.from;
-      }
-      if (dateRange.to) {
-        whereClause.updatedAt.lte = dateRange.to;
-      }
-    }
+    const whereClause = buildCategoryWhereClause(resolvedSocietyId, filters);
 
     // 2. Buscar en DB
     const [data, total] = await prisma.$transaction([
@@ -172,7 +89,7 @@ export const CategoryService = {
     const result = buildPaginatedResult(formattedData, page, limit, total);
 
     // 3. Guardar en cache
-    await redis.set(cacheKey, result, CACHE_TTL_LIST);
+    await redis.set(cacheKey, result, CATEGORY_CACHE_TTL_LIST);
 
     return result;
   },
@@ -181,7 +98,7 @@ export const CategoryService = {
    * Obtener categoría por ID con cache
    */
   getById: async (id: string) => {
-    const cacheKey = `${CACHE_PREFIX}:${id}`;
+    const cacheKey = `${CATEGORY_CACHE_PREFIX}:${id}`;
 
     const cached = await redis.get<Category>(cacheKey);
     if (cached) return cached;
@@ -194,7 +111,7 @@ export const CategoryService = {
     if (!category) return null;
 
     // 3. Guardar en cache
-    await redis.set(cacheKey, category, CACHE_TTL_SINGLE);
+    await redis.set(cacheKey, category, CATEGORY_CACHE_TTL_SINGLE);
 
     return category;
   },
@@ -207,17 +124,11 @@ export const CategoryService = {
     const whereClause: any = { isDeleted: false, createdBy: { not: null } };
 
     if (societyId) {
-      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
-      if (isUuid) {
-        whereClause.societyId = societyId;
-      } else {
-        const society = await prisma.society.findUnique({ where: { code: societyId } });
-        if (society) {
-          whereClause.societyId = society.id;
-        } else {
-          return [];
-        }
+      const resolvedSocietyId = await resolveCategorySocietyId(societyId);
+      if (!resolvedSocietyId) {
+        return [];
       }
+      whereClause.societyId = resolvedSocietyId;
     }
 
     const result = await prisma.category.findMany({
@@ -241,17 +152,11 @@ export const CategoryService = {
     const whereClause: any = { isDeleted: false, updatedBy: { not: null } };
  
     if (societyId) {
-      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyId);
-      if (isUuid) {
-        whereClause.societyId = societyId;
-      } else {
-        const society = await prisma.society.findUnique({ where: { code: societyId } });
-        if (society) {
-          whereClause.societyId = society.id;
-        } else {
-          return [];
-        }
+      const resolvedSocietyId = await resolveCategorySocietyId(societyId);
+      if (!resolvedSocietyId) {
+        return [];
       }
+      whereClause.societyId = resolvedSocietyId;
     }
 
     const result = await prisma.category.findMany({
@@ -272,22 +177,15 @@ export const CategoryService = {
    * Crear categoría e invalidar cache de listas
    */
   create: async (data: CreateCategoryInput) => {
-    const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(data.societyId);
-    if (!isUuid) {
-      const society = await prisma.society.findUnique({ where: { code: data.societyId } });
-      if (!society) return null;
-      data.societyId = society.id;
+    const isCategorySocietyUuid = isUuid(data.societyId);
+    if (!isCategorySocietyUuid) {
+      const societyId = await resolveCategorySocietyForMutation(data.societyId);
+      if (!societyId) return null;
+      data.societyId = societyId;
     }
     const created = await prisma.category.create({ data });
 
-    // BACKGROUND: Invalidar cache
-    setImmediate(async () => {
-      try {
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:`);
-      } catch (e) {
-        console.error('[CategoryService] Error background (create):', e);
-      }
-    });
+    scheduleCategoryCacheInvalidation('create');
 
     return created;
   },
@@ -297,11 +195,11 @@ export const CategoryService = {
    */
   update: async (id: string, data: UpdateCategoryInput) => {
     if (data.societyId) {
-      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(data.societyId);
-      if (!isUuid) {
-        const society = await prisma.society.findUnique({ where: { code: data.societyId } });
-        if (!society) return null;
-        data.societyId = society.id;
+      const isCategorySocietyUuid = isUuid(data.societyId);
+      if (!isCategorySocietyUuid) {
+        const societyId = await resolveCategorySocietyForMutation(data.societyId);
+        if (!societyId) return null;
+        data.societyId = societyId;
       }
     }
 
@@ -310,14 +208,7 @@ export const CategoryService = {
       data,
     });
 
-    // BACKGROUND: Invalidar cache
-    setImmediate(async () => {
-      try {
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:`);
-      } catch (e) {
-        console.error('[CategoryService] Error background (update):', e);
-      }
-    });
+    scheduleCategoryCacheInvalidation('update');
 
     return updated;
   },
@@ -335,14 +226,7 @@ export const CategoryService = {
       },
     });
 
-    // BACKGROUND: Invalidar cache
-    setImmediate(async () => {
-      try {
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:`);
-      } catch (e) {
-        console.error('[CategoryService] Error background (delete):', e);
-      }
-    });
+    scheduleCategoryCacheInvalidation('delete');
 
     return deleted;
   },
@@ -351,7 +235,7 @@ export const CategoryService = {
    * Obtener categorías para select/dropdown con cache largo
    */
   getForSelect: async (societyCode?: string) => {
-    const cacheKey = `${CACHE_PREFIX}:select:${societyCode || 'all'}`;
+    const cacheKey = buildCategorySelectCacheKey(societyCode);
 
     const cached = await redis.get<{ id: string; name: string; code: string }[]>(cacheKey);
     if (cached) return cached;
@@ -359,17 +243,11 @@ export const CategoryService = {
     const whereClause: any = { isDeleted: false, isActive: true };
 
     if (societyCode) {
-      const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyCode);
-      if (isUuid) {
-        whereClause.societyId = societyCode;
-      } else {
-        const society = await prisma.society.findUnique({ where: { code: societyCode } });
-        if (society) {
-          whereClause.societyId = society.id;
-        } else {
-          return [];
-        }
+      const resolvedSocietyId = await resolveCategorySocietyId(societyCode);
+      if (!resolvedSocietyId) {
+        return [];
       }
+      whereClause.societyId = resolvedSocietyId;
     }
 
     const categories = await prisma.category.findMany({
@@ -383,7 +261,7 @@ export const CategoryService = {
     });
 
     // Guardar en cache con TTL largo
-    await redis.set(cacheKey, categories, CACHE_TTL_SELECT);
+    await redis.set(cacheKey, categories, CATEGORY_CACHE_TTL_SELECT);
 
     return categories;
   },
@@ -392,7 +270,7 @@ export const CategoryService = {
    * Invalidar todo el cache de categorías (para uso manual si es necesario)
    */
   invalidateAllCache: async () => {
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}:`);
+    await redis.deleteKeysByPrefix(`${CATEGORY_CACHE_PREFIX}:`);
     console.log('[Cache] Todo el cache de categorías ha sido invalidado');
   },
 };

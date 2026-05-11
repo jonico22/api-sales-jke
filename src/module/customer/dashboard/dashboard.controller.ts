@@ -1,94 +1,79 @@
 
 import { Request, Response } from 'express';
 import { DashboardService } from './dashboard.service';
+import { asyncHandler } from '@/utils/asyncHandler';
+import { getQueryString } from '@/utils/controller-helpers';
+import { DashboardFilters } from './dashboard.helpers';
+import { AnalyticsFilters } from '../analytics/analytics.helpers';
+
+const getSocietyCodeOrId = (req: Request) => {
+    return getQueryString(req, 'societyCode', 'societyId');
+};
+
+const getDashboardFilters = (req: Request): DashboardFilters => {
+    const month = typeof req.query.month === 'string' && req.query.month.length > 0
+        ? Number.parseInt(req.query.month, 10)
+        : undefined;
+    const year = typeof req.query.year === 'string' && req.query.year.length > 0
+        ? Number.parseInt(req.query.year, 10)
+        : undefined;
+    const branchId = getQueryString(req, 'branchId');
+    const dateFrom = getQueryString(req, 'dateFrom');
+    const dateTo = getQueryString(req, 'dateTo');
+
+    return {
+        ...(month !== undefined && !Number.isNaN(month) ? { month } : {}),
+        ...(year !== undefined && !Number.isNaN(year) ? { year } : {}),
+        ...(branchId ? { branchId } : {}),
+        ...(dateFrom ? { dateFrom } : {}),
+        ...(dateTo ? { dateTo } : {}),
+    };
+};
+
+const getDashboardOverviewFilters = (req: Request): AnalyticsFilters => {
+    const branchId = getQueryString(req, 'branchId');
+    const dateFrom = getQueryString(req, 'dateFrom');
+    const dateTo = getQueryString(req, 'dateTo');
+    const granularity = getQueryString(req, 'granularity') as AnalyticsFilters['granularity'];
+    const limitRaw = getQueryString(req, 'limit');
+    const limit = limitRaw ? Number.parseInt(limitRaw, 10) : undefined;
+
+    return {
+        ...(branchId ? { branchId } : {}),
+        ...(dateFrom ? { dateFrom } : {}),
+        ...(dateTo ? { dateTo } : {}),
+        ...(granularity ? { granularity } : {}),
+        ...(limit !== undefined && !Number.isNaN(limit) ? { limit } : {}),
+    };
+};
 
 export const DashboardController = {
-    getStats: async (req: Request, res: Response) => {
-        try {
-            // Prioritize query param, fallback to header or body user info
-            const societyCode = req.query.societyCode as string || req.query.societyId as string;
-
-            // If no society code in query, restrict to authenticated user's society if available
-            // For now, mirroring other controllers that accept societyCode from query
-            if (!societyCode) {
-                return res.status(400).json({ message: 'Society Code/ID is required' });
-            }
-
-            const stats = await DashboardService.getStats(societyCode);
-            res.json(stats);
-        } catch (error: any) {
-            console.error(error);
-            res.status(500).json({ message: 'Error retrieving dashboard stats', error: error.message });
+    getStats: asyncHandler(async (req: Request, res: Response) => {
+        const societyCode = getSocietyCodeOrId(req);
+        const filters = getDashboardFilters(req);
+        if (!societyCode) {
+            return res.status(400).json({ message: 'Society Code/ID is required' });
         }
-    },
 
-    getSalesPerformance: async (req: Request, res: Response) => {
-        try {
-            const societyCode = req.query.societyCode as string || req.query.societyId as string;
-            if (!societyCode) {
-                return res.status(400).json({ message: 'Society Code/ID is required' });
-            }
+        const stats = await DashboardService.getStats(societyCode, filters);
+        res.json(stats);
+    }),
 
-            const chartData = await DashboardService.getSalesPerformance(societyCode);
-            res.json(chartData);
-        } catch (error: any) {
-            console.error(error);
-            res.status(500).json({ message: 'Error retrieving sales performance', error: error.message });
-        }
-    },
+    getOverview: asyncHandler(async (req: Request, res: Response) => {
+        const societyCode = getSocietyCodeOrId(req);
+        if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
+        res.json(await DashboardService.getOverview(societyCode, getDashboardOverviewFilters(req)));
+    }),
 
-    getRevenueByCategory: async (req: Request, res: Response) => {
-        try {
-            const societyCode = req.query.societyCode as string || req.query.societyId as string;
-            if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
-            res.json(await DashboardService.getRevenueByCategory(societyCode));
-        } catch (error: any) {
-            console.error(error);
-            res.status(500).json({ message: 'Error retrieving revenue by category', error: error.message });
-        }
-    },
+    getAlertsLowStock: asyncHandler(async (req: Request, res: Response) => {
+        const societyCode = getSocietyCodeOrId(req);
+        if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
+        res.json(await DashboardService.getAlertsLowStock(societyCode, getDashboardOverviewFilters(req)));
+    }),
 
-    getTopProducts: async (req: Request, res: Response) => {
-        try {
-            const societyCode = req.query.societyCode as string || req.query.societyId as string;
-            if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
-            res.json(await DashboardService.getTopProducts(societyCode));
-        } catch (error: any) {
-            console.error(error);
-            res.status(500).json({ message: 'Error retrieving top products', error: error.message });
-        }
-    },
-
-    getPaymentMethods: async (req: Request, res: Response) => {
-        try {
-            const societyCode = req.query.societyCode as string || req.query.societyId as string;
-            if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
-            res.json(await DashboardService.getPaymentMethods(societyCode));
-        } catch (error: any) {
-            console.error(error);
-            res.status(500).json({ message: 'Error retrieving payment methods', error: error.message });
-        }
-    },
-
-    getCashFlow: async (req: Request, res: Response) => {
-        try {
-            const societyCode = req.query.societyCode as string || req.query.societyId as string;
-            if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
-            res.json(await DashboardService.getCashFlow(societyCode));
-        } catch (error: any) {
-            console.error(error);
-            res.status(500).json({ message: 'Error retrieving cash flow', error: error.message });
-        }
-    },
-
-    getBranchPerformance: async (req: Request, res: Response) => {
-        try {
-            const societyCode = req.query.societyCode as string || req.query.societyId as string;
-            if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
-            res.json(await DashboardService.getBranchPerformance(societyCode));
-        } catch (error: any) {
-            console.error(error);
-            res.status(500).json({ message: 'Error retrieving branch performance', error: error.message });
-        }
-    }
+    getCatalogSummary: asyncHandler(async (req: Request, res: Response) => {
+        const societyCode = getSocietyCodeOrId(req);
+        if (!societyCode) return res.status(400).json({ message: 'Society Code/ID is required' });
+        res.json(await DashboardService.getCatalogSummary(societyCode, getDashboardOverviewFilters(req)));
+    })
 };

@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import prisma from '@/config/prisma';
 import { ProductBulkService } from './product.bulk.service';
+import { AppError } from '@/utils/AppError';
 
 // Ensure upload directory exists
 const uploadDir = path.join(process.cwd(), 'uploads', 'temp');
@@ -96,9 +97,8 @@ export class ProductBulkController {
                 }
             }
 
-            console.error(error);
-            // Return specific error message
-            res.status(500).json({
+            const statusCode = error instanceof AppError ? error.statusCode : 500;
+            res.status(statusCode).json({
                 status: 'error',
                 message: error.message || 'Error interno en carga masiva',
                 error: error.message

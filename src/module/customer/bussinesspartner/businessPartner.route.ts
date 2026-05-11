@@ -1,14 +1,14 @@
 import { Router } from 'express';
-import { BussinessPartnerController } from './bussinesspartner.controller';
+import { BusinessPartnerController } from './businessPartner.controller';
 
 const router = Router();
 
 /**
  * @openapi
- * /bussinesspartners:
+ * /business-partners:
  *   get:
  *     summary: Obtener todos los socios de negocio
- *     tags: [BussinessPartner]
+ *     tags: [BusinessPartner]
  *     parameters:
  *       - in: query
  *         name: societyId
@@ -24,16 +24,16 @@ const router = Router();
  *             schema:
  *               type: array
  *               items:
- *                 $ref: '#/components/schemas/BussinessPartner'
+ *                 $ref: '#/components/schemas/BusinessPartner'
  */
-router.get('/', BussinessPartnerController.getAll);
+router.get('/', BusinessPartnerController.getAll);
 
 /**
  * @openapi
- * /bussinesspartners/select:
+ * /business-partners/select:
  *   get:
  *     summary: Obtener lista simplificada para selectores
- *     tags: [BussinessPartner]
+ *     tags: [BusinessPartner]
  *     parameters:
  *       - in: query
  *         name: type
@@ -45,14 +45,14 @@ router.get('/', BussinessPartnerController.getAll);
  *       200:
  *         description: Lista de socios simplificada
  */
-router.get('/select', BussinessPartnerController.getForSelect);
+router.get('/select', BusinessPartnerController.getForSelect);
 
 /**
  * @openapi
- * /bussinesspartners/{id}:
+ * /business-partners/{id}:
  *   get:
  *     summary: Obtener un socio de negocio por ID
- *     tags: [BussinessPartner]
+ *     tags: [BusinessPartner]
  *     parameters:
  *       - in: path
  *         name: id
@@ -66,44 +66,44 @@ router.get('/select', BussinessPartnerController.getForSelect);
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/BussinessPartner'
+ *               $ref: '#/components/schemas/BusinessPartner'
  *       404:
  *         description: Socio de negocio no encontrado
  */
-router.get('/:id', BussinessPartnerController.getById);
+router.get('/:id', BusinessPartnerController.getById);
 
 /**
  * @openapi
- * /bussinesspartners:
+ * /business-partners:
  *   post:
  *     summary: Crear un nuevo socio de negocio
- *     tags: [BussinessPartner]
+ *     tags: [BusinessPartner]
  *     requestBody:
  *       required: true
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/CreateBussinessPartner'
+ *             $ref: '#/components/schemas/CreateBusinessPartner'
  *     responses:
  *       201:
  *         description: Socio de negocio creado exitosamente
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/BussinessPartner'
+ *               $ref: '#/components/schemas/BusinessPartner'
  *       400:
  *         description: Datos inválidos
  *       409:
  *         description: Email o documento ya registrado
  */
-router.post('/', BussinessPartnerController.create);
+router.post('/', BusinessPartnerController.create);
 
 /**
  * @openapi
- * /bussinesspartners/{id}:
+ * /business-partners/{id}:
  *   put:
  *     summary: Actualizar un socio de negocio
- *     tags: [BussinessPartner]
+ *     tags: [BusinessPartner]
  *     parameters:
  *       - in: path
  *         name: id
@@ -116,27 +116,27 @@ router.post('/', BussinessPartnerController.create);
  *       content:
  *         application/json:
  *           schema:
- *             $ref: '#/components/schemas/UpdateBussinessPartner'
+ *             $ref: '#/components/schemas/UpdateBusinessPartner'
  *     responses:
  *       200:
  *         description: Socio de negocio actualizado
  *         content:
  *           application/json:
  *             schema:
- *               $ref: '#/components/schemas/BussinessPartner'
+ *               $ref: '#/components/schemas/BusinessPartner'
  *       404:
  *         description: Socio de negocio no encontrado
  *       409:
  *         description: Email ya registrado
  */
-router.put('/:id', BussinessPartnerController.update);
+router.put('/:id', BusinessPartnerController.update);
 
 /**
  * @openapi
- * /bussinesspartners/{id}:
+ * /business-partners/{id}:
  *   delete:
  *     summary: Eliminar un socio de negocio (soft delete)
- *     tags: [BussinessPartner]
+ *     tags: [BusinessPartner]
  *     parameters:
  *       - in: path
  *         name: id
@@ -150,6 +150,6 @@ router.put('/:id', BussinessPartnerController.update);
  *       404:
  *         description: Socio de negocio no encontrado
  */
-router.delete('/:id', BussinessPartnerController.delete);
+router.delete('/:id', BusinessPartnerController.delete);
 
 export default router;

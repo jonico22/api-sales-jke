@@ -3,6 +3,8 @@ import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { Upload } from '@aws-sdk/lib-storage';
 import { r2Client } from '@/config/r2';
 import { envs } from '@/config/envs';
+import logger from '@/config/logger';
+import { AppError } from '@/utils/AppError';
 import { v4 as uuidv4 } from 'uuid';
 import path from 'path';
 
@@ -60,8 +62,14 @@ export const StorageService = {
                 originalName,
             };
         } catch (error) {
-            console.error('Error uploading file to R2:', error);
-            throw new Error('Error al subir archivo al almacenamiento');
+            logger.error({
+                msg: 'Failed to upload file to storage',
+                originalName,
+                folder,
+                mimeType,
+                err: error,
+            });
+            throw new AppError('Error al subir archivo al almacenamiento', 500, 'STORAGE_UPLOAD_ERROR');
         }
     },
 
@@ -78,8 +86,12 @@ export const StorageService = {
             await r2Client.send(command);
             return true;
         } catch (error) {
-            console.error('Error deleting file from R2:', error);
-            throw new Error('Error al eliminar archivo del almacenamiento');
+            logger.error({
+                msg: 'Failed to delete file from storage',
+                key,
+                err: error,
+            });
+            throw new AppError('Error al eliminar archivo del almacenamiento', 500, 'STORAGE_DELETE_ERROR');
         }
     },
 };

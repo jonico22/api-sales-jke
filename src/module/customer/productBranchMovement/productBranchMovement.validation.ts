@@ -47,3 +47,8 @@ export const productBranchMovementFiltersSchema = z.object({
   dateFrom: z.string().optional(),
   dateTo: z.string().optional(),
 });
+
+export type CreateProductBranchMovementInput = z.infer<typeof createProductBranchMovementSchema>;
+export type BulkCreateProductBranchMovementInput = z.infer<typeof bulkCreateProductBranchMovementSchema>;
+export type TransferAllInput = z.infer<typeof transferAllSchema>;
+export type UpdateProductBranchMovementInput = z.infer<typeof updateProductBranchMovementSchema>;

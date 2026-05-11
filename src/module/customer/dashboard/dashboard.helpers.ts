@@ -1,0 +1,106 @@
+import { Prisma } from '@prisma/client';
+import { format } from 'date-fns';
+import { formatInTimeZone, toZonedTime } from 'date-fns-tz';
+import { convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
+import { ValidationAppError } from '@/utils/domain-errors';
+
+export interface DashboardFilters {
+  month?: number;
+  year?: number;
+  branchId?: string;
+  dateFrom?: string;
+  dateTo?: string;
+}
+
+const DATE_ONLY_REGEX = /^\d{4}-\d{2}-\d{2}$/;
+
+export const normalizeDashboardFilters = (filters?: DashboardFilters): DashboardFilters => {
+  if (!filters) {
+    return {};
+  }
+
+  if (filters.month !== undefined && (!Number.isInteger(filters.month) || filters.month < 1 || filters.month > 12)) {
+    throw new ValidationAppError('Month must be an integer between 1 and 12', { month: filters.month });
+  }
+
+  if (filters.year !== undefined && (!Number.isInteger(filters.year) || filters.year < 2000 || filters.year > 2100)) {
+    throw new ValidationAppError('Year must be an integer between 2000 and 2100', { year: filters.year });
+  }
+
+  if (filters.dateFrom !== undefined && !DATE_ONLY_REGEX.test(filters.dateFrom)) {
+    throw new ValidationAppError('dateFrom must use YYYY-MM-DD format', { dateFrom: filters.dateFrom });
+  }
+
+  if (filters.dateTo !== undefined && !DATE_ONLY_REGEX.test(filters.dateTo)) {
+    throw new ValidationAppError('dateTo must use YYYY-MM-DD format', { dateTo: filters.dateTo });
+  }
+
+  return filters;
+};
+
+export const buildDashboardCacheKey = (
+  metric: string,
+  societyId: string,
+  filters?: DashboardFilters
+) =>
+  [
+    'dashboard',
+    metric,
+    societyId,
+    filters?.dateFrom || 'all',
+    filters?.dateTo || 'all',
+    filters?.year || 'all',
+    filters?.month || 'all',
+    filters?.branchId || 'all',
+  ].join(':');
+
+export const getDashboardMonthRange = (filters?: DashboardFilters) => {
+  const now = new Date();
+  const year = filters?.year ?? now.getFullYear();
+  const month = filters?.month ?? now.getMonth() + 1;
+  const lastDay = new Date(year, month, 0).getDate();
+
+  const { from, to } = convertLimaDateRangeToUTC(
+    `${year}-${String(month).padStart(2, '0')}-01`,
+    `${year}-${String(month).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`
+  );
+
+  return {
+    year,
+    month,
+    start: from!,
+    end: to!,
+  };
+};
+
+export const getDashboardYearRange = (filters?: DashboardFilters) => {
+  const year = filters?.year ?? new Date().getFullYear();
+  const { from, to } = convertLimaDateRangeToUTC(`${year}-01-01`, `${year}-12-31`);
+
+  return {
+    year,
+    start: from!,
+    end: to!,
+  };
+};
+
+export const buildBranchFilterSql = (columnName: string, branchId?: string) =>
+  branchId ? Prisma.sql` AND ${Prisma.raw(columnName)} = ${branchId}` : Prisma.empty;
+
+export const getCurrentDashboardDateContexts = () => {
+  const now = new Date();
+  const limaNow = toZonedTime(now, 'America/Lima');
+  const today = formatInTimeZone(now, 'America/Lima', 'yyyy-MM-dd');
+  const currentDay = new Date(limaNow);
+  const dayOfWeek = currentDay.getDay();
+  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+  const weekStart = new Date(currentDay);
+  weekStart.setDate(currentDay.getDate() + diffToMonday);
+
+  return {
+    today,
+    weekStart: format(weekStart, 'yyyy-MM-dd'),
+    month: limaNow.getMonth() + 1,
+    year: limaNow.getFullYear(),
+  };
+};

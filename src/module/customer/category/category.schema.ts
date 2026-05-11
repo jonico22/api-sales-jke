@@ -82,3 +82,7 @@ export const categoryFiltersSchema = z.object({
     }),
   })
 });
+
+export type CreateCategoryInput = z.infer<typeof createCategorySchema>['body'];
+export type UpdateCategoryInput = z.infer<typeof updateCategorySchema>['body'];
+export type CategoryFilters = z.infer<typeof categoryFiltersSchema>['query'];

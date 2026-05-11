@@ -108,7 +108,7 @@ export const productFiltersSchema = z.object({
     }),
 
     // Búsqueda por nombre o código
-    search: z.string().optional().openapi({
+    search: z.string().trim().optional().openapi({
       example: 'laptop',
       description: 'Búsqueda por nombre o código del producto (case-insensitive)'
     }),
@@ -205,6 +205,10 @@ export const productSelectFiltersSchema = z.object({
     categoryCode: z.string().optional().openapi({ example: 'CAT-001' }),
     categoryId: z.string().optional().openapi({ example: 'CAT-001' }),
     branchId: z.string().uuid().optional().openapi({ example: '550e8400-e29b-41d4-a716-446655440000', description: 'ID de la sucursal (opcional, por defecto ALM-PRINCIPAL)' }),
+    search: z.string().trim().optional().openapi({
+      example: 'coca',
+      description: 'Búsqueda parcial por nombre, código, marca o código de barras'
+    }),
   })
 });
 

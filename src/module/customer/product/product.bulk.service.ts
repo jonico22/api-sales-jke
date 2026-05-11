@@ -3,6 +3,7 @@ import csv from 'csv-parser';
 import prisma from '@/config/prisma';
 import { Product } from '@prisma/client';
 import { redis } from '@/config/redis';
+import { NotFoundAppError, ValidationAppError } from '@/utils/domain-errors';
 
 interface ProductCsvRow {
     NombreProducto: string;
@@ -37,7 +38,7 @@ export class ProductBulkService {
         fs.unlink(filePath, () => { });
 
         if (results.length === 0) {
-            throw new Error('El archivo CSV está vacío.');
+            throw new ValidationAppError('El archivo CSV está vacío.');
         }
 
         // ─── 2. PARALLEL: Pre-fetch all needed data at once ─────────────
@@ -58,12 +59,14 @@ export class ProductBulkService {
             })
         ]);
 
-        if (!society) throw new Error('Sociedad no encontrada.');
-        if (!mainBranch) throw new Error('No se encontró una Sucursal Principal habilitada para esta sociedad.');
+        if (!society) throw new NotFoundAppError('Sociedad no encontrada.', { societyId });
+        if (!mainBranch) {
+            throw new NotFoundAppError('No se encontró una Sucursal Principal habilitada para esta sociedad.', { societyId });
+        }
         // ─── 3. Validate limits ─────────────────────────────────────────
         const newProductsCount = results.length;
         if (society.totalProducts + newProductsCount > society.maxProducts) {
-            throw new Error(`Límite de productos excedido. Actualmente tienes ${society.totalProducts} productos y estás intentando subir ${newProductsCount}. El límite permitido es de ${society.maxProducts}.`);
+            throw new ValidationAppError(`Límite de productos excedido. Actualmente tienes ${society.totalProducts} productos y estás intentando subir ${newProductsCount}. El límite permitido es de ${society.maxProducts}.`);
         }
 
         const categoryMap = new Map(categories.map(c => [c.code, c.id]));

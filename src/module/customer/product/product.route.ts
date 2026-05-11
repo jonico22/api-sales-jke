@@ -54,6 +54,11 @@ router.get('/best-sellers', ProductController.getBestSellers);
  *         schema:
  *           type: string
  *         description: Código de la categoría (opcional)
+ *       - in: query
+ *         name: search
+ *         schema:
+ *           type: string
+ *         description: Búsqueda parcial por nombre, código, marca o código de barras
  *     responses:
  *       200:
  *         description: Lista de productos (id, name, price, stock, category)

@@ -1,5 +1,6 @@
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
+import logger from '@/config/logger';
 import { z } from 'zod';
 import { createFileSchema, updateFileSchema, fileFiltersSchema } from './file.schema';
 import {
@@ -11,6 +12,8 @@ import {
 import { File } from '@prisma/client';
 import { formatToLimaTime, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
 import { StorageService } from './storage.service';
+import { ConflictAppError, NotFoundAppError } from '@/utils/domain-errors';
+import { runInBackground } from '@/utils/background-task';
 
 type CreateFileInput = z.infer<typeof createFileSchema>['body'];
 type UpdateFileInput = z.infer<typeof updateFileSchema>['body'];
@@ -19,6 +22,25 @@ type FileFilters = z.infer<typeof fileFiltersSchema>['query'];
 const CACHE_PREFIX = 'files:';
 const CACHE_TTL_LIST = 300; // 5 minutos
 const CACHE_TTL_SINGLE = 600; // 10 minutos
+
+const invalidateFileCaches = async (input?: { fileId?: string; societyId?: string }) => {
+    const operations = [
+        redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+        redis.deleteKeysByPrefix('categories:'),
+    ];
+
+    if (input?.fileId) {
+        operations.push(redis.del(`${CACHE_PREFIX}${input.fileId}`));
+    }
+
+    if (input?.societyId) {
+        operations.push(redis.del(`societies:${input.societyId}`));
+        operations.push(redis.deleteKeysByPrefix('societies:list:'));
+        operations.push(redis.deleteKeysByPrefix('societies:select:'));
+    }
+
+    await Promise.all(operations);
+};
 
 export const FileService = {
     /**
@@ -165,9 +187,15 @@ export const FileService = {
         const finalResult = { ...result, storageInfo };
 
         // Set Cache (background)
-        setImmediate(async () => {
-            try { await redis.set(cacheKey, finalResult, CACHE_TTL_LIST); } catch (_) { }
-        });
+        runInBackground(
+            {
+                taskName: 'file.list.cache-set',
+                context: { cacheKey },
+            },
+            async () => {
+                await redis.set(cacheKey, finalResult, CACHE_TTL_LIST);
+            }
+        );
 
         return finalResult;
     },
@@ -220,20 +248,15 @@ export const FileService = {
         }
 
         // ─── BACKGROUND: Cache Invalidation ────────────────────────────
-        const societyId = created.societyId;
-        setImmediate(async () => {
-            try {
-                await Promise.all([
-                    redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
-                    redis.deleteKeysByPrefix('categories:'),
-                    redis.del(`societies:${societyId}`),
-                    redis.deleteKeysByPrefix('societies:list:'),
-                    redis.deleteKeysByPrefix('societies:select:')
-                ]);
-            } catch (e) {
-                console.error('[FileService] Error background (create):', e);
+        runInBackground(
+            {
+                taskName: 'file.create.side-effects',
+                context: { fileId: created.id, societyId: created.societyId },
+            },
+            async () => {
+                await invalidateFileCaches({ societyId: created.societyId });
             }
-        });
+        );
 
         return created;
     },
@@ -248,17 +271,15 @@ export const FileService = {
         });
 
         // ─── BACKGROUND: Cache Invalidation ────────────────────────────
-        setImmediate(async () => {
-            try {
-                await Promise.all([
-                    redis.del(`${CACHE_PREFIX}${id}`),
-                    redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
-                    redis.deleteKeysByPrefix('categories:')
-                ]);
-            } catch (e) {
-                console.error('[FileService] Error background (update):', e);
+        runInBackground(
+            {
+                taskName: 'file.update.side-effects',
+                context: { fileId: id },
+            },
+            async () => {
+                await invalidateFileCaches({ fileId: id });
             }
-        });
+        );
 
         return updated;
     },
@@ -284,7 +305,7 @@ export const FileService = {
         });
 
         if (!fileWithRelations) {
-            throw new Error('Archivo no encontrado');
+            throw new NotFoundAppError('Archivo no encontrado', { fileId: id });
         }
 
         const counts = fileWithRelations._count;
@@ -295,7 +316,10 @@ export const FileService = {
         if (counts.receiptPdf > 0 || counts.receiptXml > 0) relations.push('Recibos Electrónicos');
 
         if (relations.length > 0) {
-            throw new Error(`No se puede eliminar el archivo porque está vinculado a: ${relations.join(', ')}. Por favor, remueva las relaciones antes de eliminar.`);
+            throw new ConflictAppError(
+                `No se puede eliminar el archivo porque está vinculado a: ${relations.join(', ')}. Por favor, remueva las relaciones antes de eliminar.`,
+                { fileId: id, relations }
+            );
         }
 
         const deleted = await prisma.file.delete({
@@ -311,33 +335,28 @@ export const FileService = {
         }
 
         // ─── BACKGROUND: R2 Delete + Cache Invalidation ───────────────
-        const deletedKey = deleted.key;
-        const deletedSocietyId = deleted.societyId;
-
-        setImmediate(async () => {
-            try {
-                // Physical delete from R2 (non-blocking)
-                if (deletedKey) {
+        runInBackground(
+            {
+                taskName: 'file.delete.side-effects',
+                context: { fileId: id, societyId: deleted.societyId, key: deleted.key },
+            },
+            async () => {
+                if (deleted.key) {
                     try {
-                        await StorageService.deleteFile(deletedKey);
-                    } catch (e) {
-                        console.error(`[FileService] Error deleting from R2 (${deletedKey}):`, e);
+                        await StorageService.deleteFile(deleted.key);
+                    } catch (error) {
+                        logger.error({
+                            msg: 'Failed to delete physical file after DB delete',
+                            fileId: id,
+                            key: deleted.key,
+                            err: error,
+                        });
                     }
                 }
 
-                // Cache invalidation
-                await Promise.all([
-                    redis.del(`${CACHE_PREFIX}${id}`),
-                    redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
-                    redis.deleteKeysByPrefix('categories:'),
-                    redis.del(`societies:${deletedSocietyId}`),
-                    redis.deleteKeysByPrefix('societies:list:'),
-                    redis.deleteKeysByPrefix('societies:select:')
-                ]);
-            } catch (e) {
-                console.error('[FileService] Error background (delete):', e);
+                await invalidateFileCaches({ fileId: id, societyId: deleted.societyId });
             }
-        });
+        );
 
         return deleted;
     }

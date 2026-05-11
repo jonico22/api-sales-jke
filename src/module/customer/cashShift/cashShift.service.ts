@@ -1,24 +1,33 @@
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
-import { CashShift, CashMovement, ShiftStatus, MovementType, PaymentMethodOrder } from '@prisma/client';
+import logger from '@/config/logger';
+import { ShiftStatus, MovementType } from '@prisma/client';
 import {
     PaginatedResult,
     getPrismaPaginationParams,
     buildPaginatedResult,
     PaginationQuery,
 } from '@/utils/pagination';
-import { z } from 'zod';
-import { formatToLimaTime, convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
-import { openShiftSchema, closeShiftSchema, addManualMovementSchema, cashShiftFiltersSchema } from './cashShift.schema'; // [UPDATED] from .validation
-
-type OpenShiftInput = z.infer<typeof openShiftSchema>['body']; // [UPDATED] schema has body wrapper
-type CloseShiftInput = z.infer<typeof closeShiftSchema>['body'] & { id: string }; // [UPDATED] body + params logic in service
-type AddManualMovementInput = z.infer<typeof addManualMovementSchema>['body']; // [UPDATED]
-type CashShiftFilters = z.infer<typeof cashShiftFiltersSchema>['query']; // [UPDATED]
-
-const CACHE_PREFIX = 'cashShifts:';
-const CACHE_TTL_LIST = 300;
-const CACHE_TTL_SINGLE = 600;
+import { formatToLimaTime } from '@/utils/dateFormatter';
+import { AddManualMovementInput, CashShiftFilters, CloseShiftInput, OpenShiftInput } from './cashShift.schema';
+import { ConflictAppError, NotFoundAppError } from '@/utils/domain-errors';
+import {
+    aggregateCashShiftMovements,
+    buildCashShiftListCacheKey,
+    buildCashShiftSelectCacheKey,
+    buildCashShiftSelectWhereClause,
+    buildCashShiftWhereClause,
+    buildCurrentShiftWhereClause,
+    CASH_SHIFT_CACHE_PREFIX,
+    CASH_SHIFT_CACHE_TTL_LIST,
+    CASH_SHIFT_CACHE_TTL_SINGLE,
+    CASH_SHIFT_SELECT_TTL,
+    resolveCashShiftSocietyId,
+    resolveMovementFieldToUpdate,
+} from './cashShift.helpers';
+import {
+    scheduleCashShiftCacheInvalidation,
+} from './cashShift.service.support';
 
 export const CashShiftService = {
 
@@ -34,7 +43,10 @@ export const CashShiftService = {
         });
 
         if (existingOpen) {
-            throw new Error(`El usuario ya tiene una caja abierta (ID: ${existingOpen.id}) en esta sucursal.`);
+            throw new ConflictAppError(
+                `El usuario ya tiene una caja abierta (ID: ${existingOpen.id}) en esta sucursal.`,
+                { shiftId: existingOpen.id, branchId: data.branchId, userId: data.userId }
+            );
         }
 
         const shift = await prisma.cashShift.create({
@@ -48,56 +60,41 @@ export const CashShiftService = {
             }
         });
 
-        // BACKGROUND: Invalidate cache
-        setImmediate(async () => {
-            try {
-                await redis.deleteKeysByPrefix(`${CACHE_PREFIX}`);
-            } catch (e) {
-                console.error('[CashShiftService] Error background (openShift):', e);
-            }
-        });
+        scheduleCashShiftCacheInvalidation(
+            'cashShift.open.side-effects',
+            { shiftId: shift.id, branchId: shift.branchId, userId: shift.userId }
+        );
 
         return shift;
     },
 
     closeShift: async (data: CloseShiftInput) => {
         const shift = await prisma.cashShift.findUnique({ where: { id: data.id } });
-        if (!shift) throw new Error('Caja no encontrada.');
-        if (shift.status === ShiftStatus.CLOSED) throw new Error('Esta caja ya está cerrada.');
+        if (!shift) throw new NotFoundAppError('Caja no encontrada.', { shiftId: data.id });
+        if (shift.status === ShiftStatus.CLOSED) {
+            throw new ConflictAppError('Esta caja ya está cerrada.', { shiftId: data.id });
+        }
 
         // Validate Closing User (Optional/Strict mode)
         if (data.userId && shift.userId !== data.userId) {
-            // Allow Admin override? For now, warn or throw.
-            // console.warn('Different user closing shift');
+            // Allow Admin override for now; this remains a business-policy decision.
         }
 
         // 1. Calculate Aggregates from Database (Source of Truth)
-        // We sum all movements by PaymentMethod and Type
-        const movements = await prisma.cashMovement.findMany({
+        const movementGroups = await prisma.cashMovement.groupBy({
+            by: ['type', 'paymentMethod'],
+            _sum: { amount: true },
             where: { shiftId: shift.id }
         });
 
-        let incomeCash = 0;
-        let incomeCard = 0;
-        let incomeYape = 0;
-        let incomePlin = 0;
-        let incomeTransfer = 0;
-        let expenseCash = 0;
-
-        for (const mov of movements) {
-            const amount = Number(mov.amount);
-
-            if (mov.type === MovementType.INCOME) {
-                if (mov.paymentMethod === PaymentMethodOrder.CASH) incomeCash += amount;
-                else if (mov.paymentMethod === PaymentMethodOrder.CARD) incomeCard += amount;
-                else if (mov.paymentMethod === PaymentMethodOrder.YAPE) incomeYape += amount;
-                else if (mov.paymentMethod === PaymentMethodOrder.PLIN) incomePlin += amount;
-                else if (mov.paymentMethod === PaymentMethodOrder.TRANSFER) incomeTransfer += amount;
-                else if (mov.paymentMethod === PaymentMethodOrder.OTHER) incomeTransfer += amount;
-            } else if (mov.type === MovementType.EXPENSE) {
-                if (mov.paymentMethod === PaymentMethodOrder.CASH) expenseCash += amount;
-            }
-        }
+        const {
+            incomeCash,
+            incomeCard,
+            incomeYape,
+            incomePlin,
+            incomeTransfer,
+            expenseCash,
+        } = aggregateCashShiftMovements(movementGroups);
 
         // System Total Cash in Drawer = Initial + IncomeCash - ExpenseCash
         const initial = Number(shift.initialAmount);
@@ -131,21 +128,17 @@ export const CashShiftService = {
             }
         });
 
-        // BACKGROUND: Invalidate cache
-        setImmediate(async () => {
-            try {
-                await redis.del(`${CACHE_PREFIX}${shift.id}`);
-                await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-            } catch (e) {
-                console.error('[CashShiftService] Error background (closeShift):', e);
-            }
-        });
+        scheduleCashShiftCacheInvalidation(
+            'cashShift.close.side-effects',
+            { shiftId: shift.id },
+            { shiftId: shift.id }
+        );
 
         return closedShift;
     },
 
     getById: async (id: string) => {
-        const cacheKey = `${CACHE_PREFIX}${id}`;
+        const cacheKey = `${CASH_SHIFT_CACHE_PREFIX}${id}`;
         const cached = await redis.get<any>(cacheKey); // Type 'any' due to include
         if (cached) return cached;
 
@@ -160,7 +153,7 @@ export const CashShiftService = {
             }
         });
 
-        if (shift) await redis.set(cacheKey, shift, CACHE_TTL_SINGLE);
+        if (shift) await redis.set(cacheKey, shift, CASH_SHIFT_CACHE_TTL_SINGLE);
         return shift;
     },
 
@@ -173,36 +166,19 @@ export const CashShiftService = {
         // Resolve societyId from filters
         let resolvedSocietyId = filters?.societyId;
         if (!resolvedSocietyId && filters?.societyCode) {
-            const society = await prisma.society.findUnique({ where: { code: filters.societyCode } });
-            if (society) {
-                resolvedSocietyId = society.id;
-            } else {
+            const societyId = await resolveCashShiftSocietyId(filters.societyCode);
+            if (!societyId) {
                 return buildPaginatedResult([], page, limit, 0);
             }
+            resolvedSocietyId = societyId;
         }
 
-        const prefix = resolvedSocietyId || 'all';
-        const cacheKey = `${CACHE_PREFIX}list:${prefix}:${JSON.stringify({ paginationQuery, filters })}`;
+        const cacheKey = buildCashShiftListCacheKey(resolvedSocietyId, paginationQuery, filters);
         const cached = await redis.get(cacheKey);
         if (cached) return cached;
 
         const prismaParams = getPrismaPaginationParams(page, limit, sortBy, sortOrder);
-        const whereClause: any = {};
-
-        if (resolvedSocietyId) {
-            whereClause.societyId = resolvedSocietyId;
-        }
-
-        if (filters?.branchId) whereClause.branchId = filters.branchId;
-        if (filters?.userId) whereClause.userId = filters.userId;
-        if (filters?.status) whereClause.status = filters.status;
-
-        if (filters?.dateFrom || filters?.dateTo) {
-            const dateRange = convertLimaDateRangeToUTC(filters.dateFrom, filters.dateTo);
-            whereClause.openedAt = {};
-            if (dateRange.from) whereClause.openedAt.gte = dateRange.from;
-            if (dateRange.to) whereClause.openedAt.lte = dateRange.to;
-        }
+        const whereClause = buildCashShiftWhereClause(resolvedSocietyId, filters);
 
         const [data, total] = await prisma.$transaction([
             prisma.cashShift.findMany({
@@ -224,29 +200,12 @@ export const CashShiftService = {
         }));
 
         const result = buildPaginatedResult(formattedData, page, limit, total);
-        await redis.set(cacheKey, result, CACHE_TTL_LIST);
+        await redis.set(cacheKey, result, CASH_SHIFT_CACHE_TTL_LIST);
         return result;
     },
 
     getCurrentShift: async (branchId: string, userId: string, societyIdOrCode?: string) => {
-        // Find OPEN shift for this user/branch
-        const where: any = {
-            userId,
-            branchId,
-            status: ShiftStatus.OPEN
-        };
-
-        if (societyIdOrCode) {
-            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyIdOrCode);
-            if (isUuid) {
-                where.societyId = societyIdOrCode;
-            } else {
-                const society = await prisma.society.findUnique({ where: { code: societyIdOrCode } });
-                if (society) {
-                    where.societyId = society.id;
-                }
-            }
-        }
+        const where = await buildCurrentShiftWhereClause(branchId, userId, societyIdOrCode);
 
         const shift = await prisma.cashShift.findFirst({
             where,
@@ -260,24 +219,12 @@ export const CashShiftService = {
 
     addManualMovement: async (data: AddManualMovementInput & { userId: string }) => {
         const shift = await prisma.cashShift.findUnique({ where: { id: data.shiftId } });
-        if (!shift || shift.status === ShiftStatus.CLOSED) throw new Error('Caja cerrada o no encontrada.');
-
-        // 1. Map payment method to the corresponding shift field
-        let fieldToUpdate: string | null = null;
-        if (data.type === MovementType.INCOME) {
-            const incomeFieldMap: Record<string, string> = {
-                CASH: 'incomeCash',
-                CARD: 'incomeCard',
-                YAPE: 'incomeYape',
-                PLIN: 'incomePlin',
-                TRANSFER: 'incomeTransfer',
-                OTHER: 'incomeTransfer',
-            };
-            fieldToUpdate = incomeFieldMap[data.paymentMethod];
-        } else if (data.type === MovementType.EXPENSE) {
-            // Expenses are usually CASH in this context
-            fieldToUpdate = 'expenseCash';
+        if (!shift) throw new NotFoundAppError('Caja no encontrada.', { shiftId: data.shiftId });
+        if (shift.status === ShiftStatus.CLOSED) {
+            throw new ConflictAppError('Caja cerrada o no encontrada.', { shiftId: data.shiftId });
         }
+
+        const fieldToUpdate = resolveMovementFieldToUpdate(data.type, data.paymentMethod);
 
         // 2. Create Movement and Update Shift totals in parallel
         const [movement] = await prisma.$transaction([
@@ -300,15 +247,11 @@ export const CashShiftService = {
             ] : [])
         ]);
 
-        // BACKGROUND: Invalidate Cache
-        setImmediate(async () => {
-            try {
-                await redis.del(`${CACHE_PREFIX}${shift.id}`);
-                await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
-            } catch (e) {
-                console.error('[CashShiftService] Error background (addManualMovement):', e);
-            }
-        });
+        scheduleCashShiftCacheInvalidation(
+            'cashShift.manual-movement.side-effects',
+            { shiftId: shift.id, movementType: data.type, paymentMethod: data.paymentMethod },
+            { shiftId: shift.id }
+        );
 
         return movement;
     },
@@ -320,17 +263,11 @@ export const CashShiftService = {
         const whereClause: any = { userId: { not: null } };
 
         if (societyIdOrCode) {
-            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyIdOrCode);
-            if (isUuid) {
-                whereClause.societyId = societyIdOrCode;
-            } else {
-                const society = await prisma.society.findUnique({ where: { code: societyIdOrCode } });
-                if (society) {
-                    whereClause.societyId = society.id;
-                } else {
-                    return [];
-                }
+            const resolvedSocietyId = await resolveCashShiftSocietyId(societyIdOrCode);
+            if (!resolvedSocietyId) {
+                return [];
             }
+            whereClause.societyId = resolvedSocietyId;
         }
 
         const result = await prisma.cashShift.findMany({
@@ -349,29 +286,14 @@ export const CashShiftService = {
      * Filtra por sociedad y/o sucursal, retorna data mínima para dropdowns
      */
     getForSelect: async (societyIdOrCode?: string, branchId?: string, status?: string) => {
-        // Default to OPEN if no status is provided, as selects usually want active shifts
         const targetStatus = status || ShiftStatus.OPEN;
-        const cacheKey = `${CACHE_PREFIX}select:${societyIdOrCode || 'all'}:${branchId || 'all'}:${targetStatus}`;
+        const cacheKey = buildCashShiftSelectCacheKey(societyIdOrCode, branchId, targetStatus);
 
         const cached = await redis.get<any[]>(cacheKey);
         if (cached) return cached;
 
-        const whereClause: any = { status: targetStatus };
-
-        // Resolver sociedad por código o UUID
-        if (societyIdOrCode) {
-            const isUuid = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/.test(societyIdOrCode);
-            if (isUuid) {
-                whereClause.societyId = societyIdOrCode;
-            } else {
-                const society = await prisma.society.findUnique({ where: { code: societyIdOrCode } });
-                if (!society) return [];
-                whereClause.societyId = society.id;
-            }
-        }
-
-        if (branchId) whereClause.branchId = branchId;
-        if (status) whereClause.status = status;
+        const whereClause = await buildCashShiftSelectWhereClause(societyIdOrCode, branchId, status);
+        if (!whereClause) return [];
 
         const shifts = await prisma.cashShift.findMany({
             where: whereClause,
@@ -393,12 +315,18 @@ export const CashShiftService = {
         }));
 
         // Cache corto (30 seg) porque el estado cambia frecuentemente
-        await redis.set(cacheKey, formatted, 30);
+        await redis.set(cacheKey, formatted, CASH_SHIFT_SELECT_TTL);
         return formatted;
     },
 
     registerPaymentMovement: async (paymentData: any, userId: string, branchId: string, societyId: string) => {
-        console.log(`[CashShift] 🔍 registerPaymentMovement: userId=${userId}, branchId=${branchId}, societyId=${societyId}, paymentId=${paymentData?.id}`);
+        logger.debug({
+            msg: 'Registering cash shift payment movement',
+            userId,
+            branchId,
+            societyId,
+            paymentId: paymentData?.id,
+        });
 
         // Find OPEN shift for this user/branch
         const shift = await prisma.cashShift.findFirst({
@@ -411,12 +339,15 @@ export const CashShiftService = {
         });
 
         if (!shift) {
-            // Log a visible warning to diagnose No-shift cases
-            console.warn(`[CashShift] ⚠️ No se encontró turno ABIERTO para userId=${userId}, branchId=${branchId}, societyId=${societyId}. El movimiento NO se registró.`);
+            logger.warn({
+                msg: 'Open cash shift not found for payment movement',
+                userId,
+                branchId,
+                societyId,
+                paymentId: paymentData?.id,
+            });
             return null;
         }
-
-        console.log(`[CashShift] ✅ Turno encontrado: shiftId=${shift.id}. Registrando movimiento...`);
 
         try {
             // Map payment method to the corresponding shift income field
@@ -453,11 +384,17 @@ export const CashShiftService = {
             ]);
 
             // Invalidate shift cache so the movement appears immediately on next query
-            await redis.del(`${CACHE_PREFIX}${shift.id}`);
+            await redis.del(`${CASH_SHIFT_CACHE_PREFIX}${shift.id}`);
             return movement;
-        } catch (err: any) {
-            console.error(`[CashShift] ❌ Error creando CashMovement: ${err.message}`, { paymentData, userId, shiftId: shift.id });
-            throw err;
+        } catch (error) {
+            logger.error({
+                msg: 'Failed to create cash movement from payment',
+                paymentData,
+                userId,
+                shiftId: shift.id,
+                err: error,
+            });
+            throw error;
         }
     }
 };

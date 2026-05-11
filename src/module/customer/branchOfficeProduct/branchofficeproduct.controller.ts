@@ -1,18 +1,17 @@
 import { Request, Response } from 'express';
 import { BranchOfficeProductService } from './branchofficeproduct.service';
-import { branchOfficeProductIdSchema, branchOfficeProductFiltersSchema } from './branchofficeproduct.validation';
+import { branchOfficeProductIdSchema, branchOfficeProductFiltersSchema } from './branchOfficeProduct.schema';
 import { paginationQuerySchema } from '@/schemas/pagination.schema';
+import { formatSafeParseErrors } from '@/utils/controller-helpers';
+import { asyncHandler } from '@/utils/asyncHandler';
 
 export const BranchOfficeProductController = {
-  getAll: async (req: Request, res: Response) => {
+  getAll: asyncHandler(async (req: Request, res: Response) => {
     const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
     const filtersParse = branchOfficeProductFiltersSchema.safeParse({ query: req.query });
 
     if (!paginationParse.success || !filtersParse.success) {
-      return res.status(400).json({
-        ...(paginationParse.error?.format?.() ?? {}),
-        ...(filtersParse.error?.format?.() ?? {}),
-      });
+      return res.status(400).json(formatSafeParseErrors(paginationParse, filtersParse));
     }
 
     const data = await BranchOfficeProductService.getAll(
@@ -20,41 +19,47 @@ export const BranchOfficeProductController = {
       filtersParse.data.query
     );
     res.json(data);
-  },
+  }),
 
-  getById: async (req: Request, res: Response) => {
-    const id = branchOfficeProductIdSchema.parse(req.params.id);
-    const result = await BranchOfficeProductService.getById(id);
+  getById: asyncHandler(async (req: Request, res: Response) => {
+    const parse = branchOfficeProductIdSchema.safeParse(req.params.id);
+    if (!parse.success) return res.status(400).json(parse.error.format());
+
+    const result = await BranchOfficeProductService.getById(parse.data);
     if (!result) return res.status(404).json({ message: 'BranchOfficeProduct not found' });
     res.json(result);
-  },
+  }),
 
-  create: async (req: Request, res: Response) => {
+  create: asyncHandler(async (req: Request, res: Response) => {
     const result = await BranchOfficeProductService.create(req.body);
     res.status(201).json(result);
-  },
+  }),
 
-  update: async (req: Request, res: Response) => {
-    const id = branchOfficeProductIdSchema.parse(req.params.id);
-    const result = await BranchOfficeProductService.update(id, req.body);
+  update: asyncHandler(async (req: Request, res: Response) => {
+    const parse = branchOfficeProductIdSchema.safeParse(req.params.id);
+    if (!parse.success) return res.status(400).json(parse.error.format());
+
+    const result = await BranchOfficeProductService.update(parse.data, req.body);
     res.json(result);
-  },
+  }),
 
-  delete: async (req: Request, res: Response) => {
-    const id = branchOfficeProductIdSchema.parse(req.params.id);
-    await BranchOfficeProductService.delete(id);
+  delete: asyncHandler(async (req: Request, res: Response) => {
+    const parse = branchOfficeProductIdSchema.safeParse(req.params.id);
+    if (!parse.success) return res.status(400).json(parse.error.format());
+
+    await BranchOfficeProductService.delete(parse.data);
     res.json({ message: 'BranchOfficeProduct deleted successfully' });
-  },
+  }),
 
-  getForSelect: async (req: Request, res: Response) => {
+  getForSelect: asyncHandler(async (req: Request, res: Response) => {
     const paginationParse = paginationQuerySchema.safeParse({ query: req.query });
-    const branchOfficeId = req.query.branchOfficeId as string;
-    const societyCode = req.query.societyCode as string | undefined;
-    const search = req.query.search as string | undefined;
-
     if (!paginationParse.success) {
       return res.status(400).json(paginationParse.error.format());
     }
+
+    const branchOfficeId = req.query.branchOfficeId as string;
+    const societyCode = req.query.societyCode as string | undefined;
+    const search = req.query.search as string | undefined;
 
     if (!branchOfficeId) {
       return res.status(400).json({ message: 'branchOfficeId is required' });
@@ -67,5 +72,5 @@ export const BranchOfficeProductController = {
       search
     );
     res.json(result);
-  },
+  }),
 };

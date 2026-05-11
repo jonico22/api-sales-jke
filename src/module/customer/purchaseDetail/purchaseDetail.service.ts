@@ -1,5 +1,5 @@
 import prisma from '@/config/prisma';
-import { createPurchaseDetailSchema, updatePurchaseDetailSchema, purchaseDetailFiltersSchema } from './purchaseDetail.validation';
+import { createPurchaseDetailSchema, updatePurchaseDetailSchema, purchaseDetailFiltersSchema } from './purchaseDetail.schema';
 import { z } from 'zod';
 import { redis } from '@/config/redis';
 import {
@@ -9,7 +9,7 @@ import {
   PaginationQuery,
 } from '@/utils/pagination';
 import { PurchaseDetail } from '@prisma/client';
-import { convertLimaDateRangeToUTC } from '@/utils/dateFormatter';
+import { ConflictAppError, NotFoundAppError } from '@/utils/domain-errors';
 
 type CreatePurchaseDetailInput = z.infer<typeof createPurchaseDetailSchema>;
 type UpdatePurchaseDetailInput = z.infer<typeof updatePurchaseDetailSchema>;
@@ -18,6 +18,64 @@ type PurchaseDetailFilters = z.infer<typeof purchaseDetailFiltersSchema>['query'
 const CACHE_PREFIX = 'purchaseDetails:';
 const CACHE_TTL_LIST = 300; // 5 minutos
 const CACHE_TTL_SINGLE = 600; // 10 minutos
+
+const PURCHASE_CACHE_PREFIX = 'purchases:';
+
+const recalculatePurchaseTotals = async (tx: any, purchaseId: string) => {
+  const aggregate = await tx.purchaseDetail.aggregate({
+    where: { purchaseId },
+    _sum: {
+      subtotal: true,
+      taxAmount: true,
+      total: true,
+    },
+  });
+
+  return tx.purchase.update({
+    where: { id: purchaseId },
+    data: {
+      subTotal: Number(aggregate._sum.subtotal || 0),
+      taxAmount: Number(aggregate._sum.taxAmount || 0),
+      totalAmount: Number(aggregate._sum.total || 0),
+      updatedAt: new Date(),
+    },
+  });
+};
+
+const ensureMutablePurchase = async (tx: any, purchaseId: string) => {
+  const purchase = await tx.purchase.findUnique({
+    where: { id: purchaseId },
+    select: { id: true, societyId: true, status: true },
+  });
+
+  if (!purchase) {
+    throw new NotFoundAppError('Compra no encontrada', { purchaseId });
+  }
+
+  if (purchase.status === 'COMPLETED') {
+    throw new ConflictAppError('No se puede modificar el detalle de una compra completada', {
+      purchaseId,
+    });
+  }
+
+  return purchase;
+};
+
+const invalidatePurchaseDetailCaches = async (purchaseId?: string, purchaseDetailId?: string, societyId?: string) => {
+  const cacheOperations = [
+    redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+    redis.deleteKeysByPrefix(`${PURCHASE_CACHE_PREFIX}list:`),
+  ];
+
+  if (purchaseDetailId) {
+    cacheOperations.unshift(redis.del(`${CACHE_PREFIX}${purchaseDetailId}`));
+  }
+
+  if (purchaseId) {
+    cacheOperations.push(redis.del(`${PURCHASE_CACHE_PREFIX}${purchaseId}`));
+  }
+  await Promise.all(cacheOperations);
+};
 
 export const getAllPurchaseDetails = async (
   paginationQuery?: PaginationQuery,
@@ -104,37 +162,78 @@ export const getPurchaseDetailById = async (id: string) => {
 }
 
 export const createPurchaseDetail = async (data: CreatePurchaseDetailInput) => {
-  const created = await prisma.purchaseDetail.create({
-    data,
-  })
+  const { created, purchase } = await prisma.$transaction(async tx => {
+    const purchase = await ensureMutablePurchase(tx, data.purchaseId);
 
-  // Invalidate List Cache
-  await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    const created = await tx.purchaseDetail.create({
+      data,
+    });
+
+    await recalculatePurchaseTotals(tx, data.purchaseId);
+
+    return { created, purchase };
+  });
+
+  await invalidatePurchaseDetailCaches(data.purchaseId, undefined, purchase.societyId);
 
   return created;
 }
 
 export const updatePurchaseDetail = async (id: string, data: UpdatePurchaseDetailInput) => {
-  const updated = await prisma.purchaseDetail.update({
-    where: { id },
-    data,
-  })
+  const { updated, purchaseId, societyId } = await prisma.$transaction(async tx => {
+    const existing = await tx.purchaseDetail.findUnique({
+      where: { id },
+      select: { id: true, purchaseId: true },
+    });
 
-  // Invalidate Cache
-  await redis.del(`${CACHE_PREFIX}${id}`);
-  await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    if (!existing) {
+      throw new NotFoundAppError('Detalle de compra no encontrado', { purchaseDetailId: id });
+    }
+
+    const targetPurchaseId = data.purchaseId ?? existing.purchaseId;
+    const purchase = await ensureMutablePurchase(tx, targetPurchaseId);
+
+    const updated = await tx.purchaseDetail.update({
+      where: { id },
+      data,
+    });
+
+    if (existing.purchaseId !== targetPurchaseId) {
+      await recalculatePurchaseTotals(tx, existing.purchaseId);
+    }
+    await recalculatePurchaseTotals(tx, targetPurchaseId);
+
+    return { updated, purchaseId: targetPurchaseId, societyId: purchase.societyId };
+  });
+
+  await invalidatePurchaseDetailCaches(purchaseId, id, societyId);
 
   return updated;
 }
 
 export const deletePurchaseDetail = async (id: string) => {
-  const deleted = await prisma.purchaseDetail.delete({
-    where: { id },
-  })
+  const { deleted, purchaseId, societyId } = await prisma.$transaction(async tx => {
+    const existing = await tx.purchaseDetail.findUnique({
+      where: { id },
+      select: { id: true, purchaseId: true },
+    });
 
-  // Invalidate Cache
-  await redis.del(`${CACHE_PREFIX}${id}`);
-  await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    if (!existing) {
+      throw new NotFoundAppError('Detalle de compra no encontrado', { purchaseDetailId: id });
+    }
+
+    const purchase = await ensureMutablePurchase(tx, existing.purchaseId);
+
+    const deleted = await tx.purchaseDetail.delete({
+      where: { id },
+    });
+
+    await recalculatePurchaseTotals(tx, existing.purchaseId);
+
+    return { deleted, purchaseId: existing.purchaseId, societyId: purchase.societyId };
+  });
+
+  await invalidatePurchaseDetailCaches(purchaseId, id, societyId);
 
   return deleted;
 }

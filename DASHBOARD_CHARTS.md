@@ -1,671 +1,746 @@
-# Guía de Endpoints para Gráficos del Dashboard
+# Guia de APIs de Dashboard y Analytics
 
-Esta guía detalla los endpoints disponibles para alimentar los gráficos analíticos del dashboard de la plataforma, basados en el esquema de Prisma actual.
+Esta guia define los contratos actuales para frontend durante la migracion por etapas.
 
-## 1. Rendimiento de Ventas (Sales Performance)
-**Objetivo:** Mostrar la tendencia de ventas por mes en el año actual.
-- **Endpoint:** `GET /dashboard/charts/sales-performance`
-- **Descripción:** Devuelve un arreglo con la suma del `totalAmount` de las órdenes completadas, agrupadas por mes.
-- **Estructura Esperada (Ejemplo):**
-  ```json
-  [
-    { "name": "Jan", "total": 15400.50 },
-    { "name": "Feb", "total": 18200.00 },
-    { "name": "Mar", "total": 9500.20 }
-  ]
-  ```
+## Guia visual para frontend
 
-## 2. Reporte de Ingresos por Categoría (Revenue Report)
-**Objetivo:** Visualizar qué categorías de productos generan más ingresos.
-- **Endpoint:** `GET /dashboard/charts/revenue-by-category`
-- **Descripción:** Calcula los ingresos basado en los items vendidos agrupados por su categoría principal.
-- **Estructura Esperada (Ejemplo):**
-  ```json
-  [
-    { "category": "Laptops", "revenue": 50000, "percentage": 54.72 },
-    { "category": "Accesorios", "revenue": 15000, "percentage": 16.41 }
-  ]
-  ```
+### Libreria recomendada por vista
 
-## 3. Top 5 Productos Más Vendidos (Best Sellers)
-**Objetivo:** Mostrar los productos de mayor rotación.
-- **Endpoint:** `GET /dashboard/charts/top-products`
-- **Descripción:** Retorna los productos ordenados por cantidad de ventas.
-- **Estructura Esperada (Ejemplo):**
-  ```json
-  [
-    { "id": "uuid-1", "name": "Teclado Mecánico RGB", "soldUnits": 340 },
-    { "id": "uuid-2", "name": "Mouse Inalámbrico", "soldUnits": 280 }
-  ]
-  ```
+- `Dashboard`: usar `Tremor`
+- `Analytics`: usar `ECharts`
 
-## 4. Métodos de Pago (Payment Methods)
-**Objetivo:** Analizar la preferencia de pago de los clientes.
-- **Endpoint:** `GET /dashboard/charts/payment-methods`
-- **Descripción:** Agrupa y suma las ventas según el método de pago utilizado.
-- **Estructura Esperada (Ejemplo):**
-  ```json
-  [
-    { "method": "EFECTIVO", "value": 8000 },
-    { "method": "YAPE", "value": 12000 },
-    { "method": "TARJETA", "value": 5500 }
-  ]
-  ```
+### Regla de uso
 
-## 5. Rendimiento por Sucursal (Branch Performance)
-**Objetivo:** Identificar qué tienda o local genera más ingresos en el mes actual.
-- **Endpoint:** `GET /dashboard/charts/branch-performance`
-- **Descripción:** Agrupa y suma el `totalAmount` de las órdenes completadas por cada sucursal.
-- **Estructura Esperada (Ejemplo):**
-  ```json
-  [
-    { "branch": "Sede Principal (Lima)", "revenue": 12500.00 },
-    { "branch": "Sede Norte", "revenue": 8300.50 }
-  ]
-  ```
+- usar `Tremor` para cards, metricas resumidas, sparklines, donuts pequeños, barras compactas y bloques de lectura rapida;
+- usar `ECharts` para series historicas, comparativos por dia/semana/mes, cash flow detallado, distribuciones grandes y vistas exploratorias;
+- no mezclar componentes pesados de `ECharts` en el dashboard principal si existe una version compacta suficiente en `Tremor`.
 
-## 6. Flujo de Caja Mensual (Cash Flow)
-**Objetivo:** Comparar la entrada de dinero por ventas versus la salida por compras a proveedores.
-- **Endpoint:** `GET /dashboard/charts/cash-flow`
-- **Descripción:** Compara la suma de `Order.totalAmount` (Ventas/Ingresos) vs `Purchase.totalAmount` (Compras/Egresos) a lo largo del año.
-- **Estructura Esperada (Ejemplo):**
-  ```json
-  [
-    { "period": "Ene", "income": 15000.00, "expense": 12000.50 },
-    { "period": "Feb", "income": 18200.00, "expense": 9500.00 }
-  ]
-  ```
+### Objetivo visual
 
+El frontend debe verse moderno, consistente y alineado con la identidad actual de la aplicacion.
 
-## 7. API de Sucursales (Branch Offices)
+Lineamientos:
+- reutilizar la paleta principal de la aplicacion para estados y series;
+- mantener una sola escala de colores por dominio:
+  - ventas: color primario de la marca
+  - ingresos positivos: verde de la app
+  - egresos: rojo o color de alerta de la app
+  - advertencias o low stock: amarillo/naranja de la app
+- evitar colores genericos que no existan ya en el sistema visual;
+- conservar el mismo radio, sombra, spacing y tipografia de las cards actuales;
+- priorizar fondos limpios y contraste alto;
+- evitar dashboards saturados de colores o efectos.
 
-Base URL: `GET /api/branch-offices`
+### Distribucion recomendada
 
-### 7.1 Listar Sucursales (Paginado)
-- **Endpoint:** `GET /api/branch-offices`
-- **Descripción:** Obtiene todas las sucursales con paginación, filtros y búsqueda.
-- **Query Parameters:**
+- `Dashboard`:
+  - cards KPI
+  - micrograficos
+  - comparaciones compactas
+  - alertas cortas
+- `Analytics`:
+  - graficos amplios
+  - filtros por rango
+  - comparativos
+  - tablas de apoyo
 
-| Parámetro | Tipo | Requerido | Descripción |
-|-----------|------|-----------|-------------|
-| `societyId` | `uuid` | No | Filtrar por ID de sociedad |
-| `societyCode` | `string` | No | Filtrar por código de sociedad |
-| `search` | `string` | No | Buscar por nombre, código o dirección |
-| `isMain` | `boolean` | No | Filtrar por sucursal principal |
-| `isActive` | `boolean` | No | Filtrar por estado activo |
-| `code` | `string` | No | Filtrar por código interno |
-| `createdBy` | `string` | No | Filtrar por usuario creador |
-| `createdAtFrom` | `string` | No | Fecha inicio de creación (YYYY-MM-DD) |
-| `createdAtTo` | `string` | No | Fecha fin de creación |
-| `updatedAtFrom` | `string` | No | Fecha inicio de actualización |
-| `updatedAtTo` | `string` | No | Fecha fin de actualización |
-| `page` | `number` | No | Página (default: 1) |
-| `limit` | `number` | No | Resultados por página (default: 10) |
-| `sortBy` | `string` | No | Campo para ordenar (default: `createdAt`) |
-| `sortOrder` | `string` | No | `asc` o `desc` (default: `desc`) |
+### Mapeo visual recomendado
 
-- **Respuesta:**
-  ```json
-  {
-    "data": [
-      {
-        "id": "uuid",
-        "name": "Sede Principal",
-        "address": "Av. Lima 123",
-        "phone": "01-234567",
-        "code": "SP-001",
-        "email": "sede@empresa.com",
-        "isMain": true,
-        "isActive": true,
-        "societyId": "uuid",
-        "society": { "id": "uuid", "name": "Mi Empresa SAC", ... },
-        "createdAt": "01/02/2025 08:30",
-        "updatedAt": "15/02/2025 14:20"
-      }
-    ],
-    "meta": {
-      "page": 1,
-      "limit": 10,
-      "total": 3,
-      "totalPages": 1,
-      "hasNextPage": false,
-      "hasPreviousPage": false
-    }
-  }
-  ```
+| Vista | Libreria | Tipo de componente |
+|-------|----------|--------------------|
+| Dashboard | Tremor | KPI cards |
+| Dashboard | Tremor | Spark area / line |
+| Dashboard | Tremor | Donut compacto de metodos de pago |
+| Dashboard | Tremor | Barras compactas ingreso vs egreso |
+| Dashboard | Tremor | Lista corta de top productos / sucursales |
+| Analytics | ECharts | Line / area de ventas por periodo |
+| Analytics | ECharts | Barra comparativa por sucursal |
+| Analytics | ECharts | Donut o rose chart de pagos/categorias |
+| Analytics | ECharts | Grafico combinado income vs expense |
+| Analytics | ECharts | Graficos con filtros y comparacion de periodos |
 
-### 7.2 Selector de Sucursales (Select/Dropdown)
-- **Endpoint:** `GET /api/branch-offices/select`
-- **Query Parameters:** `societyCode` (opcional)
-- **Descripción:** Retorna lista simplificada para dropdowns/selects (solo `id`, `name`, `code`).
-- **Respuesta:**
-  ```json
-  [
-    { "id": "uuid-1", "name": "Sede Principal", "code": "SP-001" },
-    { "id": "uuid-2", "name": "Sede Norte", "code": "SN-002" }
-  ]
-  ```
+## Etapa 1: Dashboard APIs
 
-### 7.3 Detalle de Sucursal
-- **Endpoint:** `GET /api/branch-offices/:id`
-- **Respuesta:** Objeto completo de la sucursal con datos de la sociedad.
+El dashboard queda orientado a widgets compactos, micrograficos y alertas operativas. Debe poder dibujar 4, 5 o 6 bloques sin depender todavia del modulo `analytics`.
 
-### 7.4 Crear Sucursal
-- **Endpoint:** `POST /api/branch-offices`
-- **Body:**
-  ```json
-  {
-    "name": "Sede Sur",
-    "address": "Av. Sur 456",
-    "phone": "01-987654",
-    "code": "SS-003",
-    "email": "sur@empresa.com",
-    "isMain": false,
-    "societyId": "uuid-sociedad",
-    "isActive": true,
-    "createdBy": "user-id"
-  }
-  ```
+### 1. `GET /dashboard/stats`
+Bloques pequeños con KPIs dinamicos.
 
-### 7.5 Actualizar Sucursal
-- **Endpoint:** `PUT /api/branch-offices/:id`
-- **Body:** Mismos campos que crear (todos opcionales).
+Query params:
+- `societyCode` o `societyId` requerido
+- `branchId` opcional
 
-### 7.6 Eliminar Sucursal (Soft Delete)
-- **Endpoint:** `DELETE /api/branch-offices/:id`
-- **Descripción:** Marca `isDeleted=true` e `isActive=false`. No borra físicamente.
+Respuesta:
+```json
+{
+  "salesToday": 0,
+  "salesThisWeek": 0,
+  "salesThisMonth": 0,
+  "completedOrdersToday": 0,
+  "completedOrdersThisWeek": 0,
+  "completedOrdersThisMonth": 0,
+  "averageTicketToday": 0,
+  "averageTicketThisWeek": 0,
+  "averageTicketThisMonth": 0
+}
+```
 
----
+Uso recomendado:
+- cards superiores
+- 4 a 6 bloques pequeños
 
-## 8. API de Caja / Turnos (Cash Shifts)
+### 2. `GET /dashboard/overview`
+Endpoint agregado para graficos compactos del dashboard.
 
-Base URL: `GET /api/cash-shifts`
+Query params:
+- `societyCode` o `societyId` requerido
+- `branchId` opcional
+- `dateFrom` opcional `YYYY-MM-DD`
+- `dateTo` opcional `YYYY-MM-DD`
+- `granularity` opcional `day | week | month`
+- `limit` opcional
 
-### Enums de Referencia
-| Enum | Valores |
-|------|---------|
-| `ShiftStatus` | `OPEN`, `CLOSED` |
-| `MovementType` | `INCOME`, `EXPENSE` |
-| `PaymentMethodOrder` | `CASH`, `CARD`, `YAPE`, `PLIN`, `TRANSFER`, `OTHER` |
+Comportamiento del rango:
+- `day` en dashboard se interpreta como una vista intradia y la API responde por horas (`00:00` a `23:00`) tomando `dateTo` como dia de referencia
+- `week` y `month` muestran el periodo actual en formato diario cuando no llega un rango completo explicito
+- si el cliente envia `dateFrom` y `dateTo`, la API respeta ese rango
+- este comportamiento aplica a `salesTrend` y `cashFlowMini`
+- para vistas historicas completas usar `GET /analytics/*`
 
-### 8.1 Abrir Caja
-- **Endpoint:** `POST /api/cash-shifts/open`
-- **Descripción:** Abre un nuevo turno de caja. Solo se permite **una caja abierta por usuario/sucursal** (retorna `409` si ya existe una abierta).
-- **Body:**
-  ```json
-  {
-    "societyId": "uuid-sociedad",
-    "branchId": "uuid-sucursal",
-    "userId": "user-id-cajero",
-    "initialAmount": 100.00
-  }
-  ```
-- **Respuesta (201):**
-  ```json
-  {
-    "id": "uuid-shift",
-    "societyId": "uuid",
-    "branchId": "uuid",
-    "userId": "user-id",
-    "status": "OPEN",
-    "openedAt": "2025-02-01T13:00:00.000Z",
-    "initialAmount": 100.00,
-    "incomeCash": 0,
-    "incomeCard": 0,
-    "incomeYape": 0,
-    "incomePlin": 0,
-    "incomeTransfer": 0,
-    "expenseCash": 0
-  }
-  ```
-- **Errores:**
-  - `409`: `El usuario ya tiene una caja abierta (ID: xxx) en esta sucursal.`
-
-### 8.2 Consultar Estado de Caja Actual
-- **Endpoint:** `GET /api/cash-shifts/current`
-- **Descripción:** Verifica si el usuario tiene una caja abierta en la sucursal seleccionada. Útil para que el frontend decida si mostrar "Abrir" o "Cerrar" caja.
-- **Query Parameters:** `branchId` (requerido), `userId` (requerido), `societyId` (opcional).
-- **Respuesta (200):** Retorna el objeto de la caja si existe, o `null` si no hay caja abierta.
-  ```json
-  {
-    "id": "uuid",
-    "status": "OPEN",
-    "openedAt": "2025-02-01T13:00:00.000Z",
-    "branch": { "name": "Sede Principal" }
-  }
-  ```
-
-### 8.3 Cerrar Caja
-- **Endpoint:** `POST /api/cash-shifts/close/:id`
-- **Descripción:** Cierra un turno de caja. Calcula automáticamente los acumulados (ingresos/egresos por método) y la diferencia entre lo reportado y lo calculado por el sistema.
-- **Body:**
-  ```json
-  {
-    "finalReportedAmount": 1500.00,
-    "reportedCashAmount": 1000.00,
-    "reportedCardAmount": 300.00,
-    "reportedYapeAmount": 100.00,
-    "reportedPlinAmount": 50.00,
-    "reportedTransferAmount": 50.00,
-    "userId": "user-id",
-    "observations": "Todo conforme"
-  }
-  ```
-- **Respuesta:**
-  ```json
-  {
-    "id": "uuid-shift",
-    "status": "CLOSED",
-    "openedAt": "2025-02-01T13:00:00.000Z",
-    "closedAt": "2025-02-01T23:00:00.000Z",
-    "initialAmount": 100.00,
-    "finalReportedAmount": 1500.00,
-    "finalSystemAmount": 1480.00,
-    "difference": 20.00,
-    "incomeCash": 1200.00,
-    "incomeCard": 300.00,
-    "incomeYape": 100.00,
-    "incomePlin": 80.00,
-    "incomeTransfer": 150.00,
-    "expenseCash": 270.00,
-    "reportedCashAmount": 1000.00,
-    "reportedCardAmount": 300.00,
-    "observations": "Todo conforme"
-  }
-  ```
-- **Cálculos automáticos:**
-  - `finalSystemAmount` = `initialAmount` + `incomeCash` - `expenseCash`
-  - `difference` = `finalReportedAmount` - `finalSystemAmount`
-  - Valores positivos de `difference` = sobrante, negativos = faltante
-- **Errores:**
-  - `400`: `Esta caja ya está cerrada.`
-  - `400`: `Caja no encontrada.`
-
-### 8.4 Listar Turnos (Paginado)
-- **Endpoint:** `GET /api/cash-shifts`
-- **Query Parameters:**
-
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `societyId` | `uuid` | Filtrar por sociedad (UUID) |
-| `societyCode` | `string` | Filtrar por sociedad (Código) |
-| `branchId` | `uuid` | Filtrar por sucursal |
-| `userId` | `string` | Filtrar por cajero |
-| `status` | `OPEN/CLOSED` | Filtrar por estado |
-| `dateFrom` | `string` | Fecha inicio (YYYY-MM-DD) |
-| `dateTo` | `string` | Fecha fin |
-| `page` | `number` | Página (default: 1) |
-| `limit` | `number` | Resultados por página (default: 10) |
-| `sortBy` | `string` | Campo de orden (default: `createdAt`) |
-| `sortOrder` | `string` | `asc/desc` (default: `desc`) |
-
-- **Respuesta:**
-  ```json
-  {
-    "data": [
-      {
-        "id": "uuid-shift",
-        "status": "OPEN",
-        "userId": "user-id",
-        "openedAt": "14/03/2026 08:30",
-        "initialAmount": 100.00,
-        "branch": { "name": "Sede Principal" },
-        "incomeCash": 800.00,
-        "incomeCard": 200.00,
-        "incomeYape": 50.00,
-        "incomePlin": 50.00,
-        "incomeTransfer": 100.00,
-        "expenseCash": 50.00
-      }
-    ],
-    "meta": { "page": 1, "limit": 10, "total": 5, "totalPages": 1 }
-  }
-  ```
-
-### 8.5 Detalle de Turno
-- **Endpoint:** `GET /api/cash-shifts/:id`
-- **Descripción:** Retorna el turno con **todos sus movimientos** (ventas, gastos manuales) ordenados por fecha.
-- **Respuesta:**
-  ```json
-  {
-    "id": "uuid-shift",
-    "status": "OPEN",
-    "initialAmount": 100.00,
-    "branch": { "name": "Sede Principal" },
-    "incomeYape": 50.00,
-    "incomePlin": 50.00,
-    "movements": [
-      {
-        "id": "uuid-mov",
-        "type": "INCOME",
-        "amount": 250.00,
-        "paymentMethod": "CASH",
-        "description": "Venta (Pago uuid-pago)",
-        "createdAt": "14/03/2026 10:30",
-        "orderPayment": {
-          "id": "uuid-pago",
-          "amount": 250.00,
-          "paymentMethod": "CASH"
-        }
-      },
-      {
-        "id": "uuid-mov-2",
-        "type": "EXPENSE",
-        "amount": 30.00,
-        "paymentMethod": "CASH",
-        "description": "Pago de limpieza",
-        "createdAt": "2025-02-01T16:00:00.000Z",
-        "orderPayment": null
-      }
-    ]
-  }
-  ```
-
-### 8.6 Agregar Movimiento Manual
-- **Endpoint:** `POST /api/cash-shifts/movements`
-- **Descripción:** Registra un ingreso o egreso manual en una caja abierta. Solo funciona si el turno está `OPEN`.
-- **Body:**
-  ```json
-  {
-    "shiftId": "uuid-shift",
-    "type": "EXPENSE",
-    "amount": 50.00,
-    "description": "Pago de limpieza",
-    "currencyId": "uuid-moneda",
-    "paymentMethod": "CASH",
-    "userId": "user-id"
-  }
-  ```
-- **Respuesta (201):**
-  ```json
-  {
-    "id": "uuid-movement",
-    "shiftId": "uuid-shift",
-    "type": "EXPENSE",
-    "amount": 50.00,
-    "paymentMethod": "CASH",
-    "description": "Pago de limpieza",
-    "createdAt": "14/03/2026 11:00"
-  }
-  ```
-- **Errores:**
-  - `500`: `Caja cerrada o no encontrada.`
-
-### 8.7 Registro Automático de Pagos (Interno)
-> **Nota:** Este método (`registerPaymentMovement`) es utilizado internamente por `OrderPaymentService` cuando se registra un pago. No es un endpoint público. Automáticamente crea un movimiento `INCOME` en la caja abierta del usuario que procesa el pago.
-
-### 8.8 Listar Usuarios de Cajas (Filtro)
-- **Endpoint:** `GET /api/cash-shifts/created-by`
-- **Descripción:** Retorna la lista de IDs de usuarios únicos que han abierto cajas. Útil para el filtro de usuario en el frontend.
-- **Query Parameters:** `societyCode` o `societyId` (opcional).
-- **Respuesta:** `["user-id-1", "user-id-2"]`
-
----
-
-## 9. API de Movimientos entre Sucursales (Internal Transfers)
-
-Base URL: `/api/branch-movements`
-
-### 9.1 Listar Movimientos (Paginado)
-- **Endpoint:** `GET /api/branch-movements`
-- **Descripción:** Obtiene el historial de traslados entre sucursales.
-- **Query Parameters:**
-
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `societyId` | `uuid` | Filtrar por ID de sociedad |
-| `societyCode` | `string` | Filtrar por código de sociedad |
-| `originBranchId` | `uuid` | Sucursal de salida |
-| `destinationBranchId` | `uuid` | Sucursal de destino |
-| `productId` | `uuid` | Producto trasladado |
-| `status` | `enum` | `PENDING`, `COMPLETED`, `CANCELLED` |
-| `dateFrom` | `string` | Fecha inicio (YYYY-MM-DD) |
-| `dateTo` | `string` | Fecha fin |
-| `page`, `limit` | `number` | Paginación |
-
-### 9.2 Crear Traslado (Paso 1: Reserva)
-- **Endpoint:** `POST /api/branch-movements`
-- **Descripción:** Inicia un traslado. **Reserva** el stock en la sucursal de origen (lo quita de `availableStock` y lo pone en `reservedStock`). El estado inicial es `PENDING`.
-- **Body:**
-  ```json
-  {
-    "originBranchId": "uuid",
-    "destinationBranchId": "uuid",
-    "productId": "uuid",
-    "quantityMoved": 10,
-    "notes": "Traslado semanal",
-    "referenceCode": "GUIA-001",
-    "createdBy": "user-uuid"
-  }
-  ```
-
-### 9.3 Confirmar Recepción (Paso 2: Completar)
-- **Endpoint:** `PUT /api/branch-movements/:id`
-- **Descripción:** Confirma la llegada de los productos a la sucursal de destino.
-- **Acción:** Resta definitivamente el stock de la sucursal de origen y lo suma a la de destino.
-- **Body:**
-  ```json
-  {
-    "status": "COMPLETED"
-  }
-  ```
-
-### 9.4 Cancelar Traslado
-- **Endpoint:** `PUT /api/branch-movements/:id`
-- **Descripción:** Revierte el traslado mientras esté `PENDING`. Devuelve el stock reservado a `availableStock` en el origen.
-- **Body:**
-  ```json
-  {
-    "status": "CANCELLED",
-    "cancellationReason": "Error en pedido"
-  }
-  ```
-
-### 9.5 Traslados en Bloque (Bulk Transfer)
-- **Endpoint:** `POST /api/branch-movements/bulk`
-- **Descripción:** Permite mover varios productos a la vez entre las mismas sucursales. La operación es **atómica** (se procesan todos o ninguno).
-- **Body:**
-  ```json
-  {
-    "originBranchId": "uuid",
-    "destinationBranchId": "uuid",
-    "items": [
-      { "productId": "uuid-1", "quantityMoved": 5, "notes": "Item 1" },
-      { "productId": "uuid-2", "quantityMoved": 15 }
-    ],
-    "referenceCode": "GUIA-BULK-001",
-    "createdBy": "user-uuid"
-  }
-  ```
-- **Respuesta:**
-  ```json
-  {
-    "batchId": "BATCH-XXXXX",
-    "count": 2,
-    "movements": [ ... ]
-  }
-  ```
-
-### 9.6 Traslado Total de Almacén (Transfer All)
-- **Endpoint:** `POST /api/branch-movements/transfer-all`
-- **Descripción:** Mueve **todo** el stock disponible de la sucursal de origen a la de destino en una sola operación.
-- **Body:**
-  ```json
-  {
-    "originBranchId": "uuid",
-    "destinationBranchId": "uuid",
-    "notes": "Cierre de sucursal o traslado total",
-    "referenceCode": "GUIA-TOTAL-001",
-    "createdBy": "user-uuid"
-  }
-  ```
-- **Respuesta:** Retorna el `batchId` y la lista de todos los movimientos generados.
-
----
-
-## 10. API de Inventario por Sucursal (Branch Office Products)
-
-Base URL: `/api/branch-office-products`
-
-### 10.1 Listar Inventario (Paginado)
-- **Endpoint:** `GET /api/branch-office-products`
-- **Descripción:** Obtiene el stock disponible y físico de productos por sucursal.
-- **Query Parameters:**
-
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `societyId` | `uuid` | Filtrar por ID de sociedad |
-| `societyCode` | `string` | Filtrar por código de sociedad |
-| `branchOfficeId` | `uuid` | Filtrar por sucursal específica |
-| `productId` | `uuid` | Filtrar por un producto específico |
-| `productName` | `string` | Buscar por nombre de producto (parcial) |
-| `location` | `string` | Filtrar por ubicación en almacén |
-| `lowStock` | `boolean` | Filtrar productos con stock bajo |
-| `isActive` | `boolean` | Filtrar por estado activo |
-| `stockFrom` | `number` | Stock físico mínimo |
-| `stockTo` | `number` | Stock físico máximo |
-| `page`, `limit` | `number` | Paginación |
-
-- **Respuesta:**
-  ```json
-  {
-    "data": [
-      {
-        "id": "uuid",
-        "productId": "uuid",
-        "branchOfficeId": "uuid",
-        "availableStock": 45,
-        "physicalStock": 50,
-        "reservedStock": 5,
-        "location": "A-01-05",
-        "product": { "name": "Producto A", "code": "PROD-001", ... },
-        "branchOffice": { "name": "Sede Principal", ... }
-      }
-    ]
-  }
-  ```
-
-### 10.2 Selector de Inventario por Sucursal (Select - Paginado)
-- **Endpoint:** `GET /api/branch-office-products/select`
-- **Descripción:** Retorna una lista ligera y **paginada** de productos en una sucursal específica (id, name, stock). Ideal para movimientos en bloque.
-- **Query Parameters:**
-  - `branchOfficeId` (requerido): ID de la sucursal.
-  - `societyCode` (opcional): Código de la sociedad.
-  - `page` (opcional): Número de página (default: 1).
-  - `limit` (opcional): Resultados por página (default: 100).
-- **Respuesta:**
-  ```json
-  {
-    "data": [
-      {
-        "id": "uuid-producto",
-        "name": "Producto ABC",
-        "code": "SKU-001",
-        "stock": 25
-      }
-    ],
-    "meta": { "page": 1, "limit": 100, "total": 120, "totalPages": 2 }
-  }
-  ```
-
-### 10.3 Detalle de Inventario
-- **Endpoint:** `GET /api/branch-office-products/:id`
-- **Respuesta:** Incluye el detalle del producto y la sucursal.
-
-### 10.4 Actualizar Stock/Ubicación
-- **Endpoint:** `PUT /api/branch-office-products/:id`
-- **Body:** Campos opcionales para actualizar stock o ubicación.
-
----
-
-## 11. API de Inventario y Kardex (Inventory & Kardex)
-
-Base URL: `/api/inventory`
-
-### 11.1 Ver Kardex / Historial de Movimientos
-- **Endpoint:** `GET /api/inventory/kardex`
-- **Descripción:** Retorna el historial detallado de entradas y salidas de stock (Kardex / InventoryTransaction).
-- **Query Parameters:**
-
-| Parámetro | Tipo | Descripción |
-|-----------|------|-------------|
-| `branchId` | `uuid` | Filtrar por sucursal |
-| `productId` | `uuid` | Filtrar por producto específico |
-| `type` | `enum` | Tipo de movimiento (`SALE_EXIT`, `TRANSFER_IN`, `TRANSFER_OUT`, `ADJUSTMENT_ADD`, `ADJUSTMENT_SUB`, etc.) |
-| `startDate` | `string` | Fecha de inicio (YYYY-MM-DD) |
-| `endDate` | `string` | Fecha de fin |
-| `search` | `string` | Búsqueda por documento o nombre de producto |
-| `page`, `limit` | `number` | Paginación (Default: page=1, limit=20) |
-
-- **Respuesta:**
-  ```json
-  {
-    "data": [
-      {
-        "id": "uuid",
-        "date": "2024-03-14T12:00:00Z",
-        "type": "SALE_EXIT",
-        "quantity": -2,
-        "previousStock": 10,
-        "newStock": 8,
-        "unitCost": 15.50,
-        "totalCost": 31.00,
-        "documentNumber": "NV-001",
-        "product": { "name": "Producto A", "code": "P-001" },
-        "branchOffice": { "name": "Sede Principal" }
-      }
-    ],
-    "meta": { "total": 150, "page": 1, "limit": 20, "totalPages": 8 }
-  }
-  ```
-
-### 11.2 Ajuste Manual de Stock
-- **Endpoint:** `POST /api/inventory/adjustment`
-- **Descripción:** Permite corregir el stock de forma manual (sobrantes o faltantes).
-- **Body:**
-  ```json
-  {
-    "productId": "uuid",
-    "branchOfficeId": "uuid",
-    "type": "ADJUSTMENT_ADD", 
-    "quantity": 5,
-    "unitCost": 10.00,
-    "notes": "Corrección por inventario físico"
-  }
-  ```
-
----
-*Nota: Estos endpoints se han diseñado para alimentar componentes de gráficos modernos como Recharts, Tremor o Chart.js en el frontend.*
-
-## 9. API de Productos (Products)
-
-### 9.1 Selector de Productos (Select/Dropdown)
-- **Endpoint:** `GET /api/products/select`
-- **Descripción:** Retorna una lista ligera de productos activos para dropdowns/selects.
-- **Query Parameters:**
-
-| Parámetro | Tipo | Requerido | Descripción |
-|-----------|------|-----------|-------------|
-| `societyCode` | `string` | No | Filtrar por código de sociedad |
-| `societyId` | `uuid` | No | Filtrar por ID de sociedad (legacy) |
-| `categoryCode` | `string` | No | Filtrar por código de categoría |
-| `categoryId` | `uuid` | No | Filtrar por ID de categoría (legacy) |
-| `branchId` | `uuid` | No | ID de la sucursal para obtener stock específico (Default: Principal) |
-
-- **Respuesta:**
-  ```json
-  [
+Respuesta:
+```json
+{
+  "salesTrend": [
+    { "label": "2026-04-01", "value": 0 }
+  ],
+  "paymentMethods": [
+    { "method": "CASH", "amount": 0, "percentage": 0, "transactions": 0 }
+  ],
+  "cashFlowMini": [
+    { "label": "2026-04-01", "income": 0, "expense": 0, "net": 0 }
+  ],
+  "topProducts": [
     {
-      "id": "uuid",
-      "name": "Laptop HP",
-      "price": 1500.00,
-      "stock": 10,
-      "code": "PROD-001",
-      "category": {
-        "id": "uuid",
-        "name": "Electrónica",
-        "code": "CAT-001"
+      "productId": "uuid",
+      "productName": "Producto",
+      "category": "Categoria",
+      "soldUnits": 0,
+      "revenue": 0,
+      "stockRemaining": 0
+    }
+  ],
+  "topBranches": [
+    {
+      "branchId": "uuid",
+      "branch": "Sucursal",
+      "revenue": 0,
+      "orders": 0,
+      "averageTicket": 0
+    }
+  ]
+}
+```
+
+Uso recomendado:
+- 2 graficos medianos
+- 2 graficos chicos
+- mini tendencia de ventas
+- metodos de pago compactos
+- comparacion compacta ingreso vs egreso
+- top productos
+- top sucursales
+
+### 3. `GET /dashboard/alerts/low-stock`
+Bloque final operativo.
+
+Query params:
+- `societyCode` o `societyId` requerido
+- `branchId` opcional
+- `limit` opcional
+
+Respuesta:
+```json
+{
+  "count": 2,
+  "items": [
+    {
+      "productId": "uuid",
+      "productName": "Producto",
+      "branchId": "uuid",
+      "branchName": "Sucursal",
+      "availableStock": 1,
+      "minStock": 5,
+      "status": "warning"
+    }
+  ]
+}
+```
+
+Uso recomendado:
+- lista corta
+- panel de atencion inmediata
+
+### 4. `GET /dashboard/catalog-summary`
+Bloque secundario para metricas lentas o acumuladas.
+
+Query params:
+- `societyCode` o `societyId` requerido
+- `branchId` opcional
+
+Respuesta:
+```json
+{
+  "totalStockValue": 0,
+  "lowStockItems": 0,
+  "newProductsThisMonth": 0,
+  "activeProducts": 0
+}
+```
+
+Uso recomendado:
+- modulo secundario de inventario/catalogo
+- no usar como KPI principal del dashboard
+
+## Mapeo de widgets del dashboard
+
+| Widget | Endpoint recomendado |
+|--------|----------------------|
+| Bloque pequeño 1 | `GET /dashboard/stats` |
+| Bloque pequeño 2 | `GET /dashboard/stats` |
+| Bloque pequeño 3 | `GET /dashboard/stats` |
+| Bloque pequeño 4 | `GET /dashboard/stats` |
+| Bloque pequeño 5 opcional | `GET /dashboard/stats` |
+| Bloque pequeño 6 opcional | `GET /dashboard/stats` |
+| Grafico mediano 1 | `GET /dashboard/overview` |
+| Grafico mediano 2 | `GET /dashboard/overview` |
+| Grafico chico 1 | `GET /dashboard/overview` |
+| Grafico chico 2 | `GET /dashboard/overview` |
+| Bloque final operativo | `GET /dashboard/alerts/low-stock` |
+| Bloque secundario de catalogo | `GET /dashboard/catalog-summary` |
+
+## Etapa 2: Analytics APIs
+
+El modulo `analytics` concentrara las vistas detalladas y filtrables. Estas rutas son las oficiales para la pantalla de analitica y para migrar progresivamente los charts legacy.
+
+### Filtros comunes
+
+Query params soportados por `GET /analytics/*`:
+- `societyCode` o `societyId` requerido
+- `branchId` opcional
+- `dateFrom` opcional `YYYY-MM-DD`
+- `dateTo` opcional `YYYY-MM-DD`
+- `granularity` opcional `day | week | month`
+- `comparePrevious` opcional `true | false`
+- `limit` opcional
+
+Defaults:
+- si no llega rango, usa ultimos 30 dias
+- `granularity` se resuelve automaticamente segun el rango
+- timezone oficial: `America/Lima`
+
+### 1. `GET /analytics/summary`
+```json
+{
+  "range": {
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "day"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "day"
+    }
+  },
+  "totals": {
+    "sales": 0,
+    "expenses": 0,
+    "grossProfitEstimate": 0,
+    "orders": 0,
+    "averageTicket": 0,
+    "unitsSold": 0
+  },
+  "previousTotals": {
+    "sales": 0,
+    "expenses": 0,
+    "grossProfitEstimate": 0,
+    "orders": 0,
+    "averageTicket": 0,
+    "unitsSold": 0
+  },
+  "comparison": {
+    "salesPct": 0,
+    "ordersPct": 0,
+    "averageTicketPct": 0
+  },
+  "comparisonByMetric": {
+    "sales": {
+      "current": 0,
+      "previous": 0,
+      "delta": 0,
+      "deltaPct": 0
+    }
+  }
+}
+```
+
+Notas:
+- `totals` mantiene el periodo actual.
+- `previousTotals` expone el bloque anterior completo para comparacion.
+- `comparison` conserva los porcentajes historicos para compatibilidad.
+- `comparisonByMetric` es el contrato recomendado para cards comparativas en analytics.
+
+Uso recomendado en frontend:
+- usar `comparisonByMetric.sales`, `comparisonByMetric.orders` y `comparisonByMetric.averageTicket` como cards principales de comparacion;
+- usar `comparisonByMetric.expenses`, `comparisonByMetric.grossProfitEstimate` y `comparisonByMetric.unitsSold` como cards secundarias o panel de detalle;
+- evitar renderizar `totals` y `previousTotals` como dos bloques separados si ya se muestra `comparisonByMetric`, porque eso duplica informacion;
+- si `comparePrevious=false`, tratar `previous`, `previousTotals`, `delta` y `deltaPct` como `null` y mostrar solo el valor actual.
+
+Ejemplo de mapeo para cards:
+```json
+[
+  {
+    "title": "Ventas",
+    "value": "comparisonByMetric.sales.current",
+    "previous": "comparisonByMetric.sales.previous",
+    "delta": "comparisonByMetric.sales.delta",
+    "deltaPct": "comparisonByMetric.sales.deltaPct"
+  },
+  {
+    "title": "Ordenes",
+    "value": "comparisonByMetric.orders.current",
+    "previous": "comparisonByMetric.orders.previous",
+    "delta": "comparisonByMetric.orders.delta",
+    "deltaPct": "comparisonByMetric.orders.deltaPct"
+  },
+  {
+    "title": "Ticket promedio",
+    "value": "comparisonByMetric.averageTicket.current",
+    "previous": "comparisonByMetric.averageTicket.previous",
+    "delta": "comparisonByMetric.averageTicket.delta",
+    "deltaPct": "comparisonByMetric.averageTicket.deltaPct"
+  }
+]
+```
+
+### 2. `GET /analytics/sales/trend`
+```json
+{
+  "range": {
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "week"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "week"
+    }
+  },
+  "series": [
+    {
+      "label": "2026-04-07",
+      "sales": 0,
+      "orders": 0,
+      "averageTicket": 0
+    }
+  ],
+  "previousPeriod": [
+    { "label": "2026-03-10", "sales": 0 }
+  ],
+  "previousPeriodAligned": [
+    {
+      "label": "2026-04-07",
+      "sourceLabel": "2026-03-31",
+      "sales": 0
+    }
+  ]
+}
+```
+
+Notas:
+- `previousPeriod` representa el bloque historico anterior completo.
+- `previousPeriodAligned` alinea la comparacion al eje visible del grafico usando el periodo inmediatamente anterior a cada punto visible.
+- para graficos de barras o lineas con `comparePrevious=true`, frontend debe preferir `previousPeriodAligned`.
+
+Uso recomendado en frontend:
+- usar `series` como serie principal visible;
+- usar `previousPeriodAligned` como segunda serie cuando el objetivo sea comparar sobre el mismo eje del grafico;
+- usar `previousPeriod` solo para tooltips avanzados, tablas auxiliares o vistas donde importe mostrar el rango historico real sin alinear;
+- para comparacion visual principal, no mezclar `summary` con una segunda serie inventada en frontend: la comparacion del grafico debe salir de este endpoint;
+- ejemplo mensual: si el rango visible es `2026-03` a `2026-04`, la serie alineada sera `2026-03 <- 2026-02` y `2026-04 <- 2026-03`.
+
+### 3. `GET /analytics/cash-flow/trend`
+```json
+{
+  "range": {
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "week"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "week"
+    }
+  },
+  "series": [
+    { "label": "2026-04-07", "income": 0, "expense": 0, "net": 0 }
+  ],
+  "previousPeriod": [
+    { "label": "2026-03-07", "income": 0, "expense": 0, "net": 0 }
+  ],
+  "previousPeriodAligned": [
+    {
+      "label": "2026-04-07",
+      "sourceLabel": "2026-03-07",
+      "income": 0,
+      "expense": 0,
+      "net": 0
+    }
+  ]
+}
+```
+
+Notas:
+- usar `series` para el periodo actual;
+- usar `previousPeriodAligned` como segunda serie en graficos comparativos de cash flow;
+- `previousPeriod` queda disponible para tooltips o tablas historicas;
+- ejemplo mensual: si el rango visible es `2026-03` a `2026-04`, la serie alineada sera `2026-03 <- 2026-02` y `2026-04 <- 2026-03`.
+
+### 4. `GET /analytics/sales/by-category`
+```json
+{
+  "range": {
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "month"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "month"
+    }
+  },
+  "items": [
+    {
+      "categoryId": "uuid",
+      "category": "Categoria",
+      "revenue": 0,
+      "unitsSold": 0,
+      "percentage": 0,
+      "previous": {
+        "revenue": 0,
+        "unitsSold": 0,
+        "percentage": 0
+      },
+      "comparison": {
+        "revenue": {
+          "current": 0,
+          "previous": 0,
+          "delta": 0,
+          "deltaPct": 0
+        },
+        "unitsSold": {
+          "current": 0,
+          "previous": 0,
+          "delta": 0,
+          "deltaPct": 0
+        }
       }
     }
   ]
-  ```
+}
+```
+
+Uso recomendado en frontend:
+- barra 1: `revenue`
+- barra 2: `previous.revenue`
+- label auxiliar: `comparison.revenue.deltaPct`
+- para un grafico de barras comparativas, usar una categoria por item y dos series: `Actual` y `Anterior`;
+- si el espacio es reducido, ordenar por `revenue` actual y mostrar la variacion porcentual en tooltip o badge;
+- si `previous` es `null`, renderizar solo la barra actual.
+
+### 5. `GET /analytics/sales/by-branch`
+```json
+{
+  "range": {
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "month"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "month"
+    }
+  },
+  "items": [
+    {
+      "branchId": "uuid",
+      "branch": "Sucursal",
+      "revenue": 0,
+      "orders": 0,
+      "averageTicket": 0,
+      "previous": {
+        "revenue": 0,
+        "orders": 0,
+        "averageTicket": 0
+      },
+      "comparison": {
+        "revenue": {
+          "current": 0,
+          "previous": 0,
+          "delta": 0,
+          "deltaPct": 0
+        }
+      }
+    }
+  ]
+}
+```
+
+Uso recomendado en frontend:
+- serie principal: `revenue`
+- serie comparativa: `previous.revenue`
+- metrica auxiliar en tooltip: `comparison.orders.deltaPct` o `comparison.averageTicket.deltaPct`
+- recomendado para barras horizontales o columnas agrupadas por sucursal.
+
+### 6. `GET /analytics/payments/distribution`
+```json
+{
+  "range": {
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "month"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "month"
+    }
+  },
+  "items": [
+    {
+      "method": "CASH",
+      "amount": 0,
+      "percentage": 0,
+      "transactions": 0,
+      "previous": {
+        "amount": 0,
+        "percentage": 0,
+        "transactions": 0
+      },
+      "comparison": {
+        "amount": {
+          "current": 0,
+          "previous": 0,
+          "delta": 0,
+          "deltaPct": 0
+        }
+      }
+    }
+  ]
+}
+```
+
+Uso recomendado en frontend:
+- si quieres comparacion clara, preferir barras agrupadas por metodo en vez de donut;
+- serie principal: `amount`
+- serie comparativa: `previous.amount`
+- usar `percentage` y `previous.percentage` solo como apoyo visual o tooltip;
+- mostrar `comparison.amount.deltaPct` como etiqueta de variacion por metodo.
+
+### 7. `GET /analytics/products/top`
+```json
+{
+  "range": {
+    "current": {
+      "dateFrom": "2026-04-01",
+      "dateTo": "2026-04-30",
+      "granularity": "month"
+    },
+    "previous": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-03-31",
+      "granularity": "month"
+    }
+  },
+  "items": [
+    {
+      "productId": "uuid",
+      "productName": "Producto",
+      "category": "Categoria",
+      "soldUnits": 0,
+      "revenue": 0,
+      "stockRemaining": 0,
+      "previous": {
+        "soldUnits": 0,
+        "revenue": 0
+      },
+      "comparison": {
+        "soldUnits": {
+          "current": 0,
+          "previous": 0,
+          "delta": 0,
+          "deltaPct": 0
+        },
+        "revenue": {
+          "current": 0,
+          "previous": 0,
+          "delta": 0,
+          "deltaPct": 0
+        }
+      }
+    }
+  ]
+}
+```
+
+### 8. `GET /analytics/inventory/low-stock`
+```json
+{
+  "items": [
+    {
+      "productId": "uuid",
+      "productName": "Producto",
+      "category": "Categoria",
+      "branchId": "uuid",
+      "branchName": "Sucursal",
+      "availableStock": 0,
+      "physicalStock": 0,
+      "minStock": 0,
+      "gap": 0
+    }
+  ]
+}
+```
+
+Uso recomendado:
+- tabla operativa o lista de atencion inmediata;
+- no usar este endpoint para historico comparativo, porque representa el estado actual.
+- esta ruta se mantiene y no debe ser reemplazada por la ruta `trend`;
+- usar `GET /analytics/inventory/low-stock` para el estado actual;
+- usar `GET /analytics/inventory/low-stock/trend` para el grafico historico/comparativo.
+
+### 9. `GET /analytics/inventory/low-stock/trend`
+```json
+{
+  "range": {
+    "current": {
+      "dateFrom": "2026-03-01",
+      "dateTo": "2026-04-30",
+      "granularity": "month"
+    },
+    "previous": {
+      "dateFrom": "2026-01-01",
+      "dateTo": "2026-02-28",
+      "granularity": "month"
+    }
+  },
+  "series": [
+    {
+      "label": "2026-03",
+      "lowStockCount": 12,
+      "criticalCount": 4
+    }
+  ],
+  "previousPeriod": [
+    {
+      "label": "2026-02",
+      "lowStockCount": 10,
+      "criticalCount": 3
+    }
+  ],
+  "previousPeriodAligned": [
+    {
+      "label": "2026-03",
+      "sourceLabel": "2026-02",
+      "lowStockCount": 10,
+      "criticalCount": 3
+    }
+  ]
+}
+```
+
+Notas:
+- `lowStockCount` cuenta productos cuyo stock historico estimado al cierre del bucket queda en o por debajo del minimo configurado;
+- `criticalCount` cuenta productos con stock en `0` o negativo al cierre del bucket;
+- la serie historica se apoya en `InventoryTransaction` como snapshot de stock por fecha;
+- cuando un producto no tiene movimientos historicos, el sistema toma el stock actual como snapshot base disponible.
+
+Uso recomendado en frontend:
+- grafico principal: barras o lineas con `series.lowStockCount`;
+- segunda serie comparativa: `previousPeriodAligned.lowStockCount`;
+- serie secundaria opcional: `criticalCount`;
+- combinar este endpoint con `GET /analytics/inventory/low-stock` si se quiere drilldown desde el grafico a la lista actual.
+
+## Recomendacion de composicion para la pantalla de Analytics
+
+Objetivo:
+- que `dashboard` siga siendo compacto y operativo;
+- que `analytics` sea comparativo, historico y grafico.
+
+Distribucion sugerida:
+- fila 1:
+  - card `Ventas` desde `GET /analytics/summary`
+  - card `Ordenes` desde `GET /analytics/summary`
+  - card `Ticket promedio` desde `GET /analytics/summary`
+- fila 2:
+  - grafico principal `Ventas por periodo` desde `GET /analytics/sales/trend?comparePrevious=true`
+- fila 3:
+  - grafico `Cash flow` desde `GET /analytics/cash-flow/trend?comparePrevious=true`
+  - grafico `Ventas por sucursal` desde `GET /analytics/sales/by-branch?comparePrevious=true`
+- fila 4:
+  - grafico `Ventas por categoria` desde `GET /analytics/sales/by-category?comparePrevious=true`
+  - grafico `Distribucion de pagos` desde `GET /analytics/payments/distribution?comparePrevious=true`
+- fila 5 opcional:
+  - tabla o barras `Top productos` desde `GET /analytics/products/top?comparePrevious=true`
+  - grafico `Tendencia low stock` desde `GET /analytics/inventory/low-stock/trend?comparePrevious=true`
+  - tabla `Low stock actual` desde `GET /analytics/inventory/low-stock`
+
+## Regla rapida para frontend
+
+- si necesitas cards comparativas: usar `GET /analytics/summary`;
+- si necesitas lineas, barras o areas con comparacion entre periodos: usar `GET /analytics/*` con `comparePrevious=true`;
+- si necesitas vista compacta de dashboard: usar `GET /dashboard/stats` y `GET /dashboard/overview`;
+- no usar `GET /analytics/summary` para construir una grafica historica.
+
+## Handoff Corto Para Frontend
+
+- `Ventas por categoria`: endpoint `GET /analytics/sales/by-category?comparePrevious=true`
+- `Ventas por categoria`: eje/categorias `item.category`
+- `Ventas por categoria`: serie `Actual` `item.revenue`
+- `Ventas por categoria`: serie `Anterior` `item.previous?.revenue ?? 0`
+- `Ventas por categoria`: badge o tooltip `item.comparison.revenue.deltaPct`
+
+- `Distribucion de pagos`: endpoint `GET /analytics/payments/distribution?comparePrevious=true`
+- `Distribucion de pagos`: eje/categorias `item.method`
+- `Distribucion de pagos`: serie `Actual` `item.amount`
+- `Distribucion de pagos`: serie `Anterior` `item.previous?.amount ?? 0`
+- `Distribucion de pagos`: badge o tooltip `item.comparison.amount.deltaPct`
+
+- `Ventas por sucursal`: endpoint `GET /analytics/sales/by-branch?comparePrevious=true`
+- `Ventas por sucursal`: eje/categorias `item.branch`
+- `Ventas por sucursal`: serie `Actual` `item.revenue`
+- `Ventas por sucursal`: serie `Anterior` `item.previous?.revenue ?? 0`
+- `Ventas por sucursal`: badge o tooltip `item.comparison.revenue.deltaPct`
+
+- `Tendencia low stock`: endpoint `GET /analytics/inventory/low-stock/trend?comparePrevious=true`
+- `Tendencia low stock`: eje/categorias `point.label`
+- `Tendencia low stock`: serie `Actual` `point.lowStockCount`
+- `Tendencia low stock`: serie `Anterior` `previousPeriodAligned[index]?.lowStockCount ?? 0`
+- `Tendencia low stock`: serie opcional `Critico` `point.criticalCount`
+
+## Decision Rapida Para Frontend En Low Stock
+
+- `GET /analytics/inventory/low-stock`: usar para tabla, lista o panel operativo del estado actual
+- `GET /analytics/inventory/low-stock/trend`: usar para grafico historico o comparativo
+- no reemplazar la ruta actual `low-stock`;
+- ambas rutas se complementan y cumplen objetivos distintos.

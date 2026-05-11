@@ -1,7 +1,7 @@
 
 import prisma from '@/config/prisma';
 import { redis } from '@/config/redis';
-import { PaymentStatus } from '@prisma/client';
+import { PaymentMethodOrder, PaymentStatus } from '@prisma/client';
 import {
   PaginatedResult,
   getPrismaPaginationParams,
@@ -11,9 +11,20 @@ import {
 import { convertLimaDateRangeToUTC, formatToLimaTime, toLimaTimezone } from '@/utils/dateFormatter';
 import { CashShiftService } from '../cashShift/cashShift.service';
 import { CreateOrderPaymentInput, PaymentFilters } from './orderPayment.schema';
+import { NotFoundAppError } from '@/utils/domain-errors';
 
 const CACHE_PREFIX = 'order_payments:';
 const CACHE_TTL_LIST = 300; // 5 min
+
+const invalidatePaymentCaches = async (societyId: string) => {
+  await Promise.all([
+    redis.deleteKeysByPrefix(`dashboard:overview:${societyId}`),
+    redis.deleteKeysByPrefix(`dashboard:overview:v2:${societyId}`),
+    redis.deleteKeysByPrefix(`dashboard:overview:v3:${societyId}`),
+    redis.deleteKeysByPrefix(`dashboard:overview:v4:${societyId}`),
+    redis.deleteKeysByPrefix(`analytics:payments-distribution:${societyId}`),
+  ]);
+};
 
 export const OrderPaymentService = {
   create: async (data: CreateOrderPaymentInput) => {
@@ -23,14 +34,22 @@ export const OrderPaymentService = {
       (async () => {
         let society = await prisma.society.findUnique({ where: { id: data.societyId } });
         if (!society) society = await prisma.society.findUnique({ where: { code: data.societyId } });
-        if (!society) throw new Error(`Sociedad no encontrada (ID/Code: ${data.societyId})`);
+        if (!society) {
+          throw new NotFoundAppError(`Sociedad no encontrada (ID/Code: ${data.societyId})`, {
+            societyIdOrCode: data.societyId,
+          });
+        }
         return society;
       })(),
       // Currency (ID or Code)
       (async () => {
         let currency = await prisma.currency.findUnique({ where: { id: data.currencyId } });
         if (!currency) currency = await prisma.currency.findUnique({ where: { code: data.currencyId } });
-        if (!currency) throw new Error(`Moneda no encontrada (ID/Code: ${data.currencyId})`);
+        if (!currency) {
+          throw new NotFoundAppError(`Moneda no encontrada (ID/Code: ${data.currencyId})`, {
+            currencyIdOrCode: data.currencyId,
+          });
+        }
         return currency;
       })(),
       // Order (Optional, ID or Code)
@@ -38,19 +57,27 @@ export const OrderPaymentService = {
         if (!data.orderId) return null;
         let order = await prisma.order.findUnique({ where: { id: data.orderId } });
         if (!order) order = await prisma.order.findUnique({ where: { orderCode: data.orderId } });
-        if (!order) throw new Error(`Pedido no encontrado (ID/Code: ${data.orderId})`);
+        if (!order) {
+          throw new NotFoundAppError(`Pedido no encontrado (ID/Code: ${data.orderId})`, {
+            orderIdOrCode: data.orderId,
+          });
+        }
         return order;
       })()
     ]);
 
     // ─── 2. Crear el pago ─────────────────────────────────────────────
+    const paymentDate = data.paymentDate ? toLimaTimezone(data.paymentDate) : toLimaTimezone(new Date());
+    const resolvedStatus =
+      data.status ?? (data.paymentMethod === PaymentMethodOrder.CARD ? PaymentStatus.CONFIRMED : PaymentStatus.PENDING);
     const finalData = {
       ...data,
       societyId: societyResult.id,
       currencyId: currencyResult.id,
       orderId: orderResult?.id || undefined,
-      status: data.status || PaymentStatus.PENDING,
-      paymentDate: data.paymentDate ? toLimaTimezone(data.paymentDate) : toLimaTimezone(new Date())
+      status: resolvedStatus,
+      paymentDate,
+      confirmedAt: resolvedStatus === PaymentStatus.CONFIRMED ? paymentDate : undefined,
     };
 
     const created = await prisma.orderPayment.create({
@@ -65,7 +92,10 @@ export const OrderPaymentService = {
     setImmediate(async () => {
       try {
         // A. Invalidar cache
-        await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+        await Promise.all([
+          redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+          invalidatePaymentCaches(resolvedSocietyId),
+        ]);
 
         if (resolvedOrderId) {
           await redis.del(`orders:${resolvedOrderId}`);
@@ -200,7 +230,10 @@ export const OrderPaymentService = {
     const updated = await prisma.orderPayment.update({ where: { id }, data: { ...data } });
 
     // Invalidar cache
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await Promise.all([
+      redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+      invalidatePaymentCaches(updated.societyId),
+    ]);
     if (updated.orderId) {
       await redis.del(`orders:${updated.orderId}`);
     }
@@ -211,7 +244,10 @@ export const OrderPaymentService = {
   delete: async (id: string) => {
     const deleted = await prisma.orderPayment.delete({ where: { id } });
 
-    await redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`);
+    await Promise.all([
+      redis.deleteKeysByPrefix(`${CACHE_PREFIX}list:`),
+      invalidatePaymentCaches(deleted.societyId),
+    ]);
     if (deleted.orderId) {
       await redis.del(`orders:${deleted.orderId}`);
     }
