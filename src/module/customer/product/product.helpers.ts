@@ -156,13 +156,19 @@ export const buildProductWhereClause = (
     whereClause.categoryId = resolvedCategoryId;
   }
 
-  if (filters?.search) {
-    whereClause.OR = [
-      { name: { contains: filters.search, mode: 'insensitive' } },
-      { code: { contains: filters.search, mode: 'insensitive' } },
-      { barcode: { contains: filters.search, mode: 'insensitive' } },
-      { brand: { contains: filters.search, mode: 'insensitive' } },
-      { color: { contains: filters.search, mode: 'insensitive' } },
+  const normalizedSearch = filters?.search?.trim();
+
+  if (normalizedSearch) {
+    const searchTerms = normalizedSearch.split(/\s+/).filter(Boolean);
+    const searchableFields = ['name', 'code', 'barcode', 'brand', 'color'] as const;
+
+    whereClause.AND = [
+      ...(whereClause.AND ?? []),
+      ...searchTerms.map((term) => ({
+        OR: searchableFields.map((field) => ({
+          [field]: { contains: term, mode: 'insensitive' },
+        })),
+      })),
     ];
   }
 
@@ -269,8 +275,9 @@ export const buildProductWhereClause = (
 export const buildProductSelectCacheKey = (
   resolvedSocietyId: string,
   categoryCode?: string,
-  branchId?: string
-) => `${PRODUCT_CACHE_PREFIX}${resolvedSocietyId}:select:${categoryCode || 'all'}:${branchId || 'all'}`;
+  branchId?: string,
+  search?: string
+) => `${PRODUCT_CACHE_PREFIX}${resolvedSocietyId}:select:${categoryCode || 'all'}:${branchId || 'all'}:${search || 'all'}`;
 
 export const resolveDefaultProductBranchId = async (societyId: string, branchId?: string) => {
   if (branchId) {

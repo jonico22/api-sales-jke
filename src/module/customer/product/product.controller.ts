@@ -124,12 +124,13 @@ export const ProductController = {
    */
   getForSelect: asyncHandler(async (req: Request, res: Response) => {
     const { query } = productSelectFiltersSchema.parse({ query: req.query });
-    const { societyCode, societyId, categoryCode, categoryId, branchId } = query;
+    const { societyCode, societyId, categoryCode, categoryId, branchId, search } = query;
 
     const result = await ProductService.getForSelect(
       societyCode || societyId,
       categoryCode || categoryId,
-      branchId
+      branchId,
+      search
     );
     res.json(result);
   }),

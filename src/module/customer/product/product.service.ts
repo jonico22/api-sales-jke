@@ -518,11 +518,17 @@ export const ProductService = {
   /**
    * Obtener productos para select/dropdown con cache largo
    */
-  getForSelect: async (societyCode?: string, categoryCode?: string, branchId?: string) => {
+  getForSelect: async (
+    societyCode?: string,
+    categoryCode?: string,
+    branchId?: string,
+    search?: string
+  ) => {
     const resolvedSocietyId = await resolveSocietyId(societyCode, branchId);
     if (!resolvedSocietyId) return [];
 
-    const cacheKey = buildProductSelectCacheKey(resolvedSocietyId, categoryCode, branchId);
+    const normalizedSearch = search?.trim();
+    const cacheKey = buildProductSelectCacheKey(resolvedSocietyId, categoryCode, branchId, normalizedSearch);
     const cached = await redis.get<any[]>(cacheKey);
     if (cached) return cached;
 
@@ -546,6 +552,20 @@ export const ProductService = {
           availableStock: { gt: 0 },
         },
       };
+    }
+
+    if (normalizedSearch) {
+      const searchTerms = normalizedSearch.split(/\s+/).filter(Boolean);
+      const searchableFields = ['name', 'code', 'barcode', 'brand', 'color'] as const;
+
+      whereClause.AND = [
+        ...(whereClause.AND ?? []),
+        ...searchTerms.map((term) => ({
+          OR: searchableFields.map((field) => ({
+            [field]: { contains: term, mode: 'insensitive' },
+          })),
+        })),
+      ];
     }
 
     const products = await prisma.product.findMany({

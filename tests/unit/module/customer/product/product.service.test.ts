@@ -131,4 +131,42 @@ describe('product.service', () => {
       where: { code: 'CAT-001', isDeleted: false, societyId: 'soc-1' }
     });
   });
+
+  it('applies partial search terms in product select queries', async () => {
+    prismaMock.society.findUnique.mockResolvedValueOnce({ id: 'soc-1' });
+    prismaMock.branchOffice.findFirst.mockResolvedValueOnce(null);
+    prismaMock.product.findMany.mockResolvedValueOnce([]);
+
+    await ProductService.getForSelect('SOC-001', undefined, undefined, 'coca cola');
+
+    expect(prismaMock.product.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          isDeleted: false,
+          isActive: true,
+          societyId: 'soc-1',
+          AND: [
+            {
+              OR: [
+                { name: { contains: 'coca', mode: 'insensitive' } },
+                { code: { contains: 'coca', mode: 'insensitive' } },
+                { barcode: { contains: 'coca', mode: 'insensitive' } },
+                { brand: { contains: 'coca', mode: 'insensitive' } },
+                { color: { contains: 'coca', mode: 'insensitive' } },
+              ],
+            },
+            {
+              OR: [
+                { name: { contains: 'cola', mode: 'insensitive' } },
+                { code: { contains: 'cola', mode: 'insensitive' } },
+                { barcode: { contains: 'cola', mode: 'insensitive' } },
+                { brand: { contains: 'cola', mode: 'insensitive' } },
+                { color: { contains: 'cola', mode: 'insensitive' } },
+              ],
+            },
+          ],
+        }),
+      })
+    );
+  });
 });
