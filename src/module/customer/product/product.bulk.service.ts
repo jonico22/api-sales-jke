@@ -21,6 +21,78 @@ interface ProductCsvRow {
     [key: string]: string | undefined;
 }
 
+const REQUIRED_PRODUCT_CSV_HEADERS = [
+    'NombreProducto',
+    'CodigoInterno',
+    'CodigoCategoria',
+    'PrecioVenta',
+    'PrecioCosto',
+    'StockInicial',
+    'StockMinimo',
+] as const;
+
+const OPTIONAL_PRODUCT_CSV_HEADERS = [
+    'CodigoBarras',
+    'CodigoBarras(Opcional)',
+    'Marca',
+    'Marca(Opcional)',
+    'Descripcion',
+    'Descripcion(Opcional)',
+    'Color',
+    'Color(Opcional)',
+    'ColorCode',
+    'ColorCode(Opcional)',
+] as const;
+
+const PRODUCT_CSV_HEADER_ORDER = [
+    ...REQUIRED_PRODUCT_CSV_HEADERS,
+    'CodigoBarras',
+    'Marca',
+    'Descripcion',
+    'Color',
+    'ColorCode',
+] as const;
+
+const normalizeCsvHeader = (header?: string | null) => header?.replace(/^\uFEFF/, '').trim() ?? '';
+
+const normalizeHeaderForOrder = (header: string) => header.replace('(Opcional)', '');
+
+const validateProductCsvHeaders = (headers: string[]) => {
+    const normalizedHeaders = headers.map(normalizeCsvHeader).filter(Boolean);
+
+    const missingRequiredHeaders = REQUIRED_PRODUCT_CSV_HEADERS.filter(
+        (header) => !normalizedHeaders.includes(header)
+    );
+
+    if (missingRequiredHeaders.length > 0) {
+        throw new ValidationAppError(
+            `Faltan columnas obligatorias en el CSV: ${missingRequiredHeaders.join(', ')}.`
+        );
+    }
+
+    const allowedHeaders = new Set([...REQUIRED_PRODUCT_CSV_HEADERS, ...OPTIONAL_PRODUCT_CSV_HEADERS]);
+    const invalidHeaders = normalizedHeaders.filter((header) => !allowedHeaders.has(header as any));
+
+    if (invalidHeaders.length > 0) {
+        throw new ValidationAppError(
+            `Columnas no reconocidas en el CSV: ${invalidHeaders.join(', ')}.`
+        );
+    }
+
+    const orderedHeaders = normalizedHeaders.map(normalizeHeaderForOrder);
+    let lastHeaderIndex = -1;
+
+    for (const header of orderedHeaders) {
+        const currentHeaderIndex = PRODUCT_CSV_HEADER_ORDER.indexOf(header as typeof PRODUCT_CSV_HEADER_ORDER[number]);
+        if (currentHeaderIndex < lastHeaderIndex) {
+            throw new ValidationAppError(
+                `Las columnas del CSV deben estar en este orden: ${PRODUCT_CSV_HEADER_ORDER.join(', ')}.`
+            );
+        }
+        lastHeaderIndex = currentHeaderIndex;
+    }
+};
+
 export class ProductBulkService {
     static async processBulkUpload(filePath: string, societyId: string, createdBy: string) {
         const results: ProductCsvRow[] = [];
@@ -28,7 +100,16 @@ export class ProductBulkService {
         // 1. Read CSV
         await new Promise((resolve, reject) => {
             fs.createReadStream(filePath)
-                .pipe(csv())
+                .pipe(csv({
+                    mapHeaders: ({ header }) => normalizeCsvHeader(header),
+                }))
+                .on('headers', (headers) => {
+                    try {
+                        validateProductCsvHeaders(headers);
+                    } catch (error) {
+                        reject(error);
+                    }
+                })
                 .on('data', (data) => results.push(data))
                 .on('end', resolve)
                 .on('error', reject);
